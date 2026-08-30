@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+library/
+out/
+*.tsbuildinfo
+.env
+Reference/
+.DS_Store
+.library/

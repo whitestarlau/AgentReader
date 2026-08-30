@@ -1,0 +1,8 @@
+{
+	"name": "@agentreader/agent",
+	"version": "0.1.0",
+	"type": "module",
+	"exports": { ".": "./src/index.ts" },
+	"scripts": { "build": "tsgo --noEmit", "typecheck": "tsgo --noEmit" },
+	"dependencies": { "@agentreader/ai": "0.1.0" }
+}
