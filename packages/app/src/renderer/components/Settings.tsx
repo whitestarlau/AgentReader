@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AiConfig, CustomProvider, SkillsPayload, WebSearchTestResult } from "../types.ts";
+import type {
+	AiConfig,
+	CustomProvider,
+	SkillRuntimeInfo,
+	SkillsPayload,
+	SkillTrustPayload,
+	WebSearchTestResult,
+} from "../types.ts";
 import { Icon } from "./Icons.tsx";
 
 const EMPTY_FORM = { id: "", name: "", baseUrl: "", models: "", key: "" };
@@ -41,16 +48,21 @@ export function Settings({
 	const [wsTest, setWsTest] = useState<WebSearchTestResult | null>(null);
 	const [skills, setSkills] = useState<SkillsPayload>({ skills: [], diagnostics: [] });
 	const [enabledSkills, setEnabledSkills] = useState<string[]>([]);
+	const [trustedSkills, setTrustedSkills] = useState<string[]>([]);
+	const [executionEnabled, setExecutionEnabled] = useState(false);
+	const [runtime, setRuntime] = useState<SkillRuntimeInfo | null>(null);
 	const [section, setSection] = useState<SectionId>("models");
 	const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
 	const load = useCallback(async () => {
-		const [config, settings, customs, skillsData, docSkills] = await Promise.all([
+		const [config, settings, customs, skillsData, docSkills, trust, rt] = await Promise.all([
 			window.api.getAiConfig(),
 			window.api.getSettings(),
 			window.api.listCustomProviders(),
 			window.api.listSkills(),
 			docId ? window.api.getDocSkills(docId) : Promise.resolve<string[]>([]),
+			window.api.getSkillTrust(),
+			window.api.getSkillRuntime(),
 		]);
 		setAi(config);
 		setCustom(customs);
@@ -62,6 +74,9 @@ export function Settings({
 		setWsMax(config.webSearch.maxResults);
 		setSkills(skillsData);
 		setEnabledSkills(docSkills);
+		setTrustedSkills(trust.trusted);
+		setExecutionEnabled(trust.executionEnabled);
+		setRuntime(rt);
 		setProviderId((prev) => {
 			if (prev) return prev;
 			const active = config.defaultModel?.split("/")[0];
@@ -217,6 +232,15 @@ export function Settings({
 		const next = on ? [...new Set([...enabledSkills, name])] : enabledSkills.filter((n) => n !== name);
 		setEnabledSkills(next);
 		await window.api.setDocSkills(docId, next);
+	};
+
+	const toggleExecution = async (on: boolean) => {
+		setExecutionEnabled(on);
+		await window.api.setSkillExecution(on);
+	};
+
+	const toggleTrust = async (name: string, on: boolean) => {
+		setTrustedSkills(await window.api.setSkillTrust(name, on));
 	};
 
 	const refresh = async () => {
@@ -609,11 +633,32 @@ export function Settings({
 						>
 							<h3>技能</h3>
 							<p className="section-desc">
-								导入 SKILL.md 技能，并按书启用。技能正文由模型按需用 read_skill 读取；当前版本仅提供说明文本，
-								其中的脚本不会被自动执行。
+								导入 SKILL.md 技能并按书启用。技能说明由模型按需用 read_skill 读取；脚本执行默认每次都会弹窗确认具体命令。
 							</p>
 
-							<div className="button-row" style={{ marginBottom: 10 }}>
+							<div className="setting">
+								<div className="setting-label">
+									允许执行技能脚本
+									<span className="hint">关闭时模型看不到 run_skill_script</span>
+								</div>
+								<div className="setting-control">
+									<label className="checkbox-line">
+										<input
+											type="checkbox"
+											checked={executionEnabled}
+											onChange={(e) => toggleExecution(e.target.checked)}
+										/>
+										允许执行（每次弹窗确认）
+									</label>
+									{runtime && (
+										<span className="hint">
+											Python：{runtime.python ?? "未检测到"} · Node：{runtime.node}
+										</span>
+									)}
+								</div>
+							</div>
+
+							<div className="button-row" style={{ margin: "12px 0" }}>
 								<button type="button" className="primary" onClick={importSkill} disabled={busy}>
 									导入技能（文件夹 / .md / .zip）
 								</button>
@@ -626,25 +671,44 @@ export function Settings({
 							{skills.skills.length === 0 ? (
 								<div className="hint">还没有导入任何技能。</div>
 							) : (
-								<div className="skill-list">
-									{skills.skills.map((s) => (
-										<div key={s.name} className="skill-item">
-											<label className="skill-item-main">
-												<input
-													type="checkbox"
-													checked={enabledSkills.includes(s.name)}
-													disabled={!docId}
-													onChange={(e) => toggleSkill(s.name, e.target.checked)}
-												/>
-												<span className="skill-name">{s.name}</span>
-												<span className="hint">{s.description}</span>
-											</label>
-											<button type="button" onClick={() => removeSkill(s.name)}>
-												删除
-											</button>
-										</div>
-									))}
-								</div>
+								<>
+									<div className="skill-list-head">
+										已安装技能（左侧勾选 = 本书启用
+										{executionEnabled ? "；右侧「免确认」= 执行时不再询问" : ""}）
+									</div>
+									<div className="skill-list">
+										{skills.skills.map((s) => (
+											<div key={s.name} className="skill-item">
+												<label className="skill-item-main">
+													<input
+														type="checkbox"
+														checked={enabledSkills.includes(s.name)}
+														disabled={!docId}
+														onChange={(e) => toggleSkill(s.name, e.target.checked)}
+													/>
+													<span className="skill-item-text">
+														<span className="skill-name">{s.name}</span>
+														<span className="skill-desc">{s.description}</span>
+													</span>
+												</label>
+												<span className="skill-item-actions">
+													<label className="checkbox-line" title="此后该技能执行脚本不再弹窗确认">
+														<input
+															type="checkbox"
+															checked={trustedSkills.includes(s.name)}
+															disabled={!executionEnabled}
+															onChange={(e) => toggleTrust(s.name, e.target.checked)}
+														/>
+														免确认
+													</label>
+													<button type="button" onClick={() => removeSkill(s.name)}>
+														删除
+													</button>
+												</span>
+											</div>
+										))}
+									</div>
+								</>
 							)}
 							{!docId && <div className="hint">打开一本书后，即可针对该书勾选启用的技能。</div>}
 						</div>

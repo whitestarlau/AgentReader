@@ -235,22 +235,28 @@ packages/app/src/renderer
 | M1 地基 | 功能一全部 + 功能二的全局切换 | 切换提供商/模型后对话可用；`models.json` 可被 AI 编辑并校验 | 无 |
 | M2 联网 | 功能三 | 免 key 的 Exa/Parallel MCP 后端 + 自带 key 后端，结果带来源 | M1 |
 | M3 技能 | 功能四（仅提示词） | 可导入 skill，按书启用后模型能用 `read_skill` 读取正文 | M1（提示层） |
-| M3.5 脚本技能 | 让模型执行技能内脚本 | 逐技能授权 + cwd 限制 + 超时/输出截断 + 网络开关；可选容器 | M3 |
+| M3.5 脚本技能 | 让模型执行技能内脚本 | 总开关 + 逐技能授权 + cwd 锁定 + 超时/截断（host 模式） | M3 |
 | M4 打磨 | 迁移、文档、提示词、错误提示 | 旧配置无损升级；附录 A/B 落地 | M1–M3 |
 
 M2 与 M3 相互独立，可并行；M1 是硬前置。
 
-> 进度：M1、M2、M3 已完成（见 `docs/progress.md`）；下一步 M3.5（脚本技能执行）或 M4 打磨。
+> 进度：M1、M2、M3、M3.5（host 执行）已完成（见 `docs/progress.md`）；容器隔离 / 网络限制待定，下一步 M4。
 
-## 14. M3.5 脚本技能（待设计）
+## 14. M3.5 脚本技能
 
-很多技能（如 Anthropic 的文档处理、pi 的 brave-search）靠模型调用 `python`/`node` 脚本实现。执行脚本 = 本机任意代码执行，能读取 `library/` 与联网外传，必须先有边界：
+很多技能（如 Anthropic 的文档处理、pi 的 brave-search）靠模型调用 `python`/`node` 脚本实现。执行脚本 = 本机任意代码执行，能读取 `library/` 与联网外传。设计为**默认关闭 + 执行时逐条确认**：
 
-- 新增**默认关闭**的 `run_skill_script` 工具，逐技能弹窗授权后才可用；
-- `cwd` 锁在该技能目录，只允许额外写一个独立临时目录；
-- 超时、输出截断、可选择关闭网络；JS 用 `ELECTRON_RUN_AS_NODE` + Electron 自带 Node，Python 需检测系统 `python3`；
-- 依赖安装（`pip install` / `npm install`）同样算执行，需单独确认；
-- 隔离强度选项：macOS `sandbox-exec`（弱）或 Docker 容器（强，需用户安装 Docker）。
+- **总开关**：`settings.json` 的 `skillsExecutionEnabled`，默认关；关闭时 `run_skill_script` 工具根本不注入。
+- **执行时确认**：主进程在执行前向渲染进程发 `permission:request`（含技能名、**完整命令**、cwd、超时），弹出确认框；用户选「允许一次 / 始终允许此技能 / 拒绝」。与 OpenCode / Claude Code 的做法一致。
+- **免确认**：选「始终允许」的技能写入 `{userData}/skills-trust.json`，之后该技能直接执行、不再询问；设置里也可手动勾选/取消「免确认」。
+- **执行边界**：`/bin/sh -c` 在技能目录内运行（cwd 锁定），超时（默认 30s，上限 120s）后杀进程组，stdout/stderr 各截断 20k 字符。
+- **运行时**：JS 用 `ELECTRON_RUN_AS_NODE` + Electron 自带 Node（生成 `{userData}/bin/node` shim，无需系统 node）；Python 检测系统 `python3`/`python`。额外提供 `SKILL_DIR` 与 `AGENTREADER_SKILL_WORKDIR` 环境变量。
+- **UI**：设置「技能」分区有总开关与每技能「免确认」勾选，并显示检测到的 Python/Node；对话中执行时另弹确认框。
+
+尚未做（后续）：
+- **网络隔离**：host 模式无法关闭技能的网络访问；需要 macOS `sandbox-exec` 或 Docker 才能限制。
+- **Docker 模式**：把脚本放进容器跑（强隔离，需用户安装 Docker）。
+- **依赖安装确认**：`pip install` / `npm install` 目前和普通命令一样，需用户主动授权该技能。
 
 ## 11. 非目标（本版不做）
 

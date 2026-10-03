@@ -46,6 +46,11 @@ contextBridge.exposeInMainWorld("api", {
 	getDocSkills: (docId: string) => ipcRenderer.invoke("skills:doc:get", docId),
 	setDocSkills: (docId: string, enabled: string[]) =>
 		ipcRenderer.invoke("skills:doc:set", docId, enabled),
+	getSkillTrust: () => ipcRenderer.invoke("skills:trust:get"),
+	setSkillTrust: (name: string, trusted: boolean) =>
+		ipcRenderer.invoke("skills:trust:set", name, trusted),
+	setSkillExecution: (enabled: boolean) => ipcRenderer.invoke("skills:execution:set", enabled),
+	getSkillRuntime: () => ipcRenderer.invoke("skills:runtime"),
 	getReading: (docId: string) => ipcRenderer.invoke("reading:get", docId),
 	saveReading: (docId: string, patch: unknown) => ipcRenderer.invoke("reading:save", docId, patch),
 	onChatDelta: (cb: (d: string) => void) => {
@@ -73,4 +78,11 @@ contextBridge.exposeInMainWorld("api", {
 		ipcRenderer.on("chat:tool_result", h);
 		return () => ipcRenderer.removeListener("chat:tool_result", h);
 	},
+	onPermissionRequest: (cb: (d: unknown) => void) => {
+		const h = (_e: unknown, d: unknown) => cb(d);
+		ipcRenderer.on("permission:request", h);
+		return () => ipcRenderer.removeListener("permission:request", h);
+	},
+	replyPermission: (id: string, decision: string) =>
+		ipcRenderer.invoke("permission:reply", id, decision),
 });

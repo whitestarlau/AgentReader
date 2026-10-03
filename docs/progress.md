@@ -1,5 +1,23 @@
 # 进度记录
 
+## 2026-10-03 M3.5 脚本技能（host 执行）
+
+- [x] `main/skills.ts` 增加 `runSkillCommand`：`/bin/sh -c` 在技能目录内运行（cwd 锁定），
+  超时（默认 30s，上限 120s）杀进程组，stdout/stderr 各截断 20k 字符
+- [x] 运行时：生成 `{userData}/bin/node` shim（`ELECTRON_RUN_AS_NODE=1` + Electron 自带 Node，
+  无需系统 node）；`detectRuntimes()` 检测系统 `python3`/`python`
+- [x] 信任存储 `{userData}/skills-trust.json`（`readTrusted`/`writeTrusted`）；
+  总开关 `settings.json` 的 `skillsExecutionEnabled`（默认关）
+- [x] **执行时逐条确认**：主进程执行前发 `permission:request`（技能名 + 完整命令 + cwd），
+  弹窗选「允许一次 / 始终允许此技能 / 拒绝」；「始终允许」写入信任表，之后免确认
+- [x] 工具 `run_skill_script`：仅当总开关开启且技能「本书启用」时才注入；
+  参数 `{skill, command, timeoutMs}`，返回 exit/stdout/stderr
+- [x] 系统提示：标注技能是「免确认」还是「执行时需用户确认」
+- [x] 设置「技能」分区：总开关（执行前确认）+ 每技能「免确认」勾选 + 显示检测到的 Python/Node
+- [x] 安全边界：无沙箱、以当前用户权限运行；网络隔离与 Docker 容器留待后续
+- [x] 验证：typecheck/build 通过；真实主进程模块验证 node 脚本执行（cwd/参数/workdir 正确）、
+  超时被杀、信任存储、运行时检测
+
 ## 2026-10-03 M3 技能（提示词版）
 
 - [x] `packages/app/src/main/skills.ts`：技能库 `{userData}/skills/{name}/SKILL.md`，frontmatter

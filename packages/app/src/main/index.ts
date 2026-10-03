@@ -39,11 +39,15 @@ import {
 import { readSettings, updateSettings } from "./settings.ts";
 import {
 	deleteSkill,
+	detectRuntimes,
 	importSkillFromPath,
 	loadSkills,
 	readDocSkills,
 	readSkillBody,
+	readTrusted,
+	runSkillCommand,
 	writeDocSkills,
+	writeTrusted,
 } from "./skills.ts";
 import { BACKEND_ENV, searchWeb } from "./web-search.ts";
 
@@ -795,6 +799,59 @@ ipcMain.handle("skills:doc:set", (_e, docId: string, enabled: string[]) => {
 	return true;
 });
 
+ipcMain.handle("skills:trust:get", () => ({
+	trusted: readTrusted(),
+	executionEnabled: readSettings().skillsExecutionEnabled === "1",
+}));
+
+ipcMain.handle("skills:trust:set", (_e, name: string, trusted: boolean) => {
+	const list = readTrusted();
+	const next = trusted ? [...list, name] : list.filter((n) => n !== name);
+	return writeTrusted(next);
+});
+
+ipcMain.handle("skills:execution:set", (_e, enabled: boolean) => {
+	updateSettings({ skillsExecutionEnabled: enabled ? "1" : "0" });
+	return true;
+});
+
+ipcMain.handle("skills:runtime", () => detectRuntimes());
+
+type PermissionDecision = "once" | "always" | "deny";
+const pendingPermissions = new Map<string, (decision: PermissionDecision) => void>();
+
+/** Ask the renderer to confirm a concrete command before executing it. */
+function requestPermission(
+	win: BrowserWindow | null,
+	payload: { kind: "skill_exec"; skill: string; command: string; cwd: string; timeoutMs: number },
+	signal?: AbortSignal,
+): Promise<PermissionDecision> {
+	if (!win || win.isDestroyed()) return Promise.resolve("deny");
+	const id = randomUUID();
+	return new Promise((resolve) => {
+		let settled = false;
+		const done = (decision: PermissionDecision) => {
+			if (settled) return;
+			settled = true;
+			pendingPermissions.delete(id);
+			signal?.removeEventListener("abort", onAbort);
+			resolve(decision);
+		};
+		const onAbort = () => done("deny");
+		signal?.addEventListener("abort", onAbort, { once: true });
+		pendingPermissions.set(id, done);
+		win.webContents.send("permission:request", { id, ...payload });
+	});
+}
+
+ipcMain.handle("permission:reply", (_e, id: string, decision: string) => {
+	const resolve = pendingPermissions.get(id);
+	if (resolve && (decision === "once" || decision === "always" || decision === "deny")) {
+		resolve(decision);
+	}
+	return true;
+});
+
 ipcMain.handle("ai:models:refresh", async (_e, providerId?: string) => {
 	const { runtime } = buildRuntime();
 	const cache = readModelCache();
@@ -939,14 +996,33 @@ ipcMain.handle(
 			(model.api ?? "openai-completions") === "anthropic-messages";
 		const enabledSkillNames = readDocSkills(getDocDir(docId));
 		const enabledSkills = loadSkills().skills.filter((s) => enabledSkillNames.includes(s.name));
+		const skillsExecution = readSettings().skillsExecutionEnabled === "1";
+		const trustedSkills = new Set(readTrusted());
+		// When execution is enabled, expose the tool for every enabled skill;
+		// each run is confirmed with the user unless the skill is trusted.
+		const executableSkills = skillsExecution ? enabledSkills : [];
 		const toolNames = ["get_document_info", "search_document", "read_page"];
 		if (webSearch.enabled) toolNames.push("web_search");
 		if (enabledSkills.length) toolNames.push("read_skill");
+		if (executableSkills.length) toolNames.push("run_skill_script");
 
 		const skillPrompt = enabledSkills.length
 			? `\n本对话启用的技能（当任务匹配某个技能描述时，先调用 read_skill 读取完整步骤再执行）：\n${enabledSkills
-					.map((s) => `- ${s.name}: ${s.description}`)
-					.join("\n")}\n注：当前版本技能仅提供说明文本，无法执行其中的脚本。`
+					.map(
+						(s) =>
+							`- ${s.name}: ${s.description}${
+								skillsExecution
+									? trustedSkills.has(s.name)
+										? "（已信任，可直接执行脚本）"
+										: "（执行脚本时需用户确认）"
+									: ""
+							}`,
+					)
+					.join("\n")}${
+					executableSkills.length
+						? `\n已启用的技能可用 run_skill_script 运行其自带脚本（在技能目录内执行，如 \`python scripts/x.py\` 或 \`./search.js\`）；除非技能已信任，否则每次都会请用户确认具体命令。`
+						: "\n注：当前版本技能仅提供说明文本，无法执行其中的脚本。"
+				}`
 			: "";
 
 		const systemPrompt = `你是 AgentReader 文档助手。基于以下书籍上下文回答，必要时可调用工具进一步检索。
@@ -973,6 +1049,7 @@ ${currentPageHint ? `\n${currentPageHint}` : ""}
 			title: docText.title,
 		});
 
+		const win = BrowserWindow.fromWebContents(event.sender);
 		const tools: AgentTool[] = [
 			{
 				name: "get_document_info",
@@ -1139,7 +1216,56 @@ ${currentPageHint ? `\n${currentPageHint}` : ""}
 			});
 		}
 
-		const win = BrowserWindow.fromWebContents(event.sender);
+		if (executableSkills.length) {
+			tools.push({
+				name: "run_skill_script",
+				description:
+					"在已启用技能的目录内运行 shell 命令，用于执行技能自带脚本（如 `python scripts/x.py`、`./search.js`）。命令在技能目录下执行，超时或输出过长会被截断；未信任的技能每次都会请用户确认。",
+				parameters: {
+					type: "object",
+					properties: {
+						skill: { type: "string", description: "技能名" },
+						command: { type: "string", description: "要运行的命令，在技能目录内执行" },
+						timeoutMs: { type: "number", description: "超时毫秒，默认 30000，上限 120000" },
+					},
+					required: ["skill", "command"],
+				},
+				execute: async (params: unknown, signal: AbortSignal) => {
+					const { skill, command, timeoutMs } = params as {
+						skill?: string;
+						command?: string;
+						timeoutMs?: number;
+					};
+					const s = executableSkills.find((x) => x.name === String(skill ?? "").trim());
+					if (!s) return `技能未启用或不存在：${String(skill ?? "")}`;
+					const cmd = String(command ?? "").trim();
+					if (!cmd) return "命令为空";
+					const t = typeof timeoutMs === "number" ? timeoutMs : 30000;
+
+					const trusted = trustedSkills.has(s.name);
+					if (!trusted) {
+						const decision = await requestPermission(
+							win,
+							{ kind: "skill_exec", skill: s.name, command: cmd, cwd: s.dir, timeoutMs: t },
+							signal,
+						);
+						if (decision === "deny") return "用户拒绝执行该命令。";
+						if (decision === "always") {
+							writeTrusted([...readTrusted(), s.name]);
+							trustedSkills.add(s.name);
+						}
+					}
+
+					const res = await runSkillCommand(s.name, cmd, { timeoutMs: t, signal });
+					const parts = [`exit=${res.code ?? "null"}${res.timedOut ? "（超时被杀）" : ""}`];
+					if (res.stdout) parts.push(`--- stdout ---\n${res.stdout}`);
+					if (res.stderr) parts.push(`--- stderr ---\n${res.stderr}`);
+					if (res.error) parts.push(`--- error ---\n${res.error}`);
+					return parts.join("\n");
+				},
+			});
+		}
+
 		let full = "";
 		const streamFn: StreamFn = (m, c, o) => runtime.stream(m, c, { ...o, sessionId: convId });
 

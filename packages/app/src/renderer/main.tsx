@@ -20,8 +20,12 @@ import type {
   AiConfig,
   CustomProvider,
   DocMeta,
+  PermissionDecision,
+  PermissionRequest,
   SkillImportResult,
+  SkillRuntimeInfo,
   SkillsPayload,
+  SkillTrustPayload,
   WebSearchTestResult,
 } from "./types.ts";
 import "./styles.css";
@@ -63,6 +67,12 @@ declare global {
       deleteSkill: (name: string) => Promise<SkillsPayload>;
       getDocSkills: (docId: string) => Promise<string[]>;
       setDocSkills: (docId: string, enabled: string[]) => Promise<boolean>;
+      getSkillTrust: () => Promise<SkillTrustPayload>;
+      setSkillTrust: (name: string, trusted: boolean) => Promise<string[]>;
+      setSkillExecution: (enabled: boolean) => Promise<boolean>;
+      getSkillRuntime: () => Promise<SkillRuntimeInfo>;
+      onPermissionRequest: (cb: (req: PermissionRequest) => void) => () => void;
+      replyPermission: (id: string, decision: PermissionDecision) => Promise<boolean>;
       getReading: (docId: string) => Promise<{ page: number | null; location: string | null }>;
       saveReading: (docId: string, patch: { page?: number; location?: string }) => Promise<void>;
       onChatDelta: (cb: (d: string) => void) => () => void;
@@ -91,6 +101,7 @@ function App() {
   const [zoom, setZoom] = useState(1.2);
   const [ocrJob, setOcrJob] = useState<{ running: boolean; page: number; total: number; progress: number } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [permission, setPermission] = useState<PermissionRequest | null>(null);
 
   // shell layout state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -115,6 +126,14 @@ function App() {
     window.api.getAiConfig().then(setAi).catch(() => {});
   }, []);
   useEffect(() => { loadSettings(); loadAiConfig(); }, [loadSettings, loadAiConfig]);
+
+  useEffect(
+    () =>
+      window.api.onPermissionRequest((req) => {
+        setPermission(req);
+      }),
+    [],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -362,6 +381,43 @@ function App() {
       />
 
       {showSettings && <Settings docId={selected} onClose={() => setShowSettings(false)} onSaved={() => { loadSettings(); loadAiConfig(); }} />}
+
+      {permission && (
+        <div className="modal-backdrop">
+          {/* biome-ignore lint/a11y/useSemanticElements: custom modal surface */}
+          <div className="modal" role="dialog" aria-modal="true" aria-label="执行确认">
+            <div className="modal-header">
+              <Icon name="settings" size={15} />
+              <span className="modal-title">允许执行技能脚本？</span>
+            </div>
+            <div className="modal-body">
+              <div className="field">
+                <label>技能</label>
+                <div>{permission.skill}</div>
+              </div>
+              <div className="field">
+                <label>即将执行的命令</label>
+                <pre className="perm-command">{permission.command}</pre>
+                <span className="hint">目录：{permission.cwd}</span>
+              </div>
+              <div className="hint">
+                该命令以当前用户权限在本机运行，可读写文件与联网。请确认无误后再允许。
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" onClick={() => { window.api.replyPermission(permission.id, "deny"); setPermission(null); }}>
+                拒绝
+              </button>
+              <button type="button" onClick={() => { window.api.replyPermission(permission.id, "once"); setPermission(null); }}>
+                允许一次
+              </button>
+              <button type="button" className="primary" onClick={() => { window.api.replyPermission(permission.id, "always"); setPermission(null); }}>
+                始终允许此技能
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

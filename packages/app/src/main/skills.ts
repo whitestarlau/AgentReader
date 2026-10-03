@@ -1,4 +1,7 @@
+import { spawn } from "node:child_process";
 import {
+	accessSync,
+	constants,
 	cpSync,
 	existsSync,
 	mkdirSync,
@@ -208,4 +211,153 @@ export function readDocSkills(docDir: string): string[] {
 
 export function writeDocSkills(docDir: string, enabled: string[]): void {
 	writeFileSync(join(docDir, "skills.json"), JSON.stringify({ enabled }, null, 2));
+}
+
+// ------------------------------------------------------------- execution
+
+export type RuntimeInfo = { python: string | null; node: string };
+
+function trustFilePath(): string {
+	return join(app.getPath("userData"), "skills-trust.json");
+}
+
+/** Skills the user has explicitly authorized to execute code. */
+export function readTrusted(): string[] {
+	const p = trustFilePath();
+	if (!existsSync(p)) return [];
+	try {
+		const parsed = JSON.parse(readFileSync(p, "utf-8")) as { authorized?: unknown };
+		if (!Array.isArray(parsed.authorized)) return [];
+		return parsed.authorized.filter((x): x is string => typeof x === "string");
+	} catch {
+		return [];
+	}
+}
+
+export function writeTrusted(names: string[]): string[] {
+	const next = [...new Set(names)];
+	writeFileSync(trustFilePath(), JSON.stringify({ authorized: next }, null, 2));
+	return next;
+}
+
+function shellQuote(value: string): string {
+	return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Provide a `node` on PATH that runs Electron's bundled Node, so JS skills work
+ * without a system Node install.
+ */
+function ensureNodeShim(): string {
+	const binDir = join(app.getPath("userData"), "bin");
+	mkdirSync(binDir, { recursive: true });
+	writeFileSync(
+		join(binDir, "node"),
+		`#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${shellQuote(process.execPath)} "$@"\n`,
+		{ mode: 0o755 },
+	);
+	return binDir;
+}
+
+function findExecutable(candidates: string[]): string | null {
+	const dirs = (process.env.PATH ?? "").split(":").filter(Boolean);
+	for (const name of candidates) {
+		for (const dir of dirs) {
+			const candidate = join(dir, name);
+			try {
+				accessSync(candidate, constants.X_OK);
+				return candidate;
+			} catch {}
+		}
+	}
+	return null;
+}
+
+export function detectRuntimes(): RuntimeInfo {
+	return {
+		python: findExecutable(["python3", "python"]),
+		node: `内置 Node（${process.execPath}）`,
+	};
+}
+
+export type SkillRunResult = {
+	code: number | null;
+	stdout: string;
+	stderr: string;
+	timedOut: boolean;
+	error?: string;
+};
+
+const MAX_OUTPUT = 20000;
+
+/** Run a shell command inside a trusted skill's directory. Caller must check trust. */
+export function runSkillCommand(
+	name: string,
+	command: string,
+	options: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<SkillRunResult> {
+	const skillDir = join(skillsRoot(), name);
+	if (!existsSync(skillDir)) {
+		return Promise.resolve({
+			code: null,
+			stdout: "",
+			stderr: "",
+			timedOut: false,
+			error: `技能不存在：${name}`,
+		});
+	}
+	const workDir = join(app.getPath("userData"), "skill-work", name);
+	mkdirSync(workDir, { recursive: true });
+	const binDir = ensureNodeShim();
+	const timeoutMs = Math.max(1000, Math.min(120000, options.timeoutMs ?? 30000));
+
+	return new Promise((resolve) => {
+		const child = spawn(command, {
+			cwd: skillDir,
+			shell: "/bin/sh",
+			detached: true,
+			stdio: ["ignore", "pipe", "pipe"],
+			env: {
+				...process.env,
+				PATH: `${binDir}:${process.env.PATH ?? ""}`,
+				SKILL_DIR: skillDir,
+				AGENTREADER_SKILL_WORKDIR: workDir,
+			},
+		});
+		let stdout = "";
+		let stderr = "";
+		let timedOut = false;
+		const cap = (current: string, chunk: Buffer) =>
+			(current + chunk.toString("utf8")).slice(0, MAX_OUTPUT);
+		child.stdout?.on("data", (c: Buffer) => {
+			stdout = cap(stdout, c);
+		});
+		child.stderr?.on("data", (c: Buffer) => {
+			stderr = cap(stderr, c);
+		});
+
+		const kill = () => {
+			try {
+				if (child.pid) process.kill(-child.pid, "SIGKILL");
+			} catch {
+				try {
+					child.kill("SIGKILL");
+				} catch {}
+			}
+		};
+		const timer = setTimeout(() => {
+			timedOut = true;
+			kill();
+		}, timeoutMs);
+		const onAbort = () => kill();
+		options.signal?.addEventListener("abort", onAbort, { once: true });
+
+		const finish = (result: SkillRunResult) => {
+			clearTimeout(timer);
+			options.signal?.removeEventListener("abort", onAbort);
+			resolve(result);
+		};
+		child.on("error", (e) => finish({ code: null, stdout, stderr, timedOut, error: String(e) }));
+		child.on("close", (code) => finish({ code, stdout, stderr, timedOut }));
+	});
 }

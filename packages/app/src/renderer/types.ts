@@ -10,6 +10,21 @@ export type SkillImportResult = {
 	skills: SkillsPayload;
 };
 
+export type SkillTrustPayload = { trusted: string[]; executionEnabled: boolean };
+
+export type SkillRuntimeInfo = { python: string | null; node: string };
+
+export type PermissionDecision = "once" | "always" | "deny";
+
+export type PermissionRequest = {
+	id: string;
+	kind: "skill_exec";
+	skill: string;
+	command: string;
+	cwd: string;
+	timeoutMs: number;
+};
+
 export type DocMeta = { id: string; title: string; ext?: string };
 
 export type ActivityView = "explorer" | "search" | "annotations";
