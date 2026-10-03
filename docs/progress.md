@@ -1,5 +1,34 @@
 # 进度记录
 
+## 2026-10-03 M1 提供商预设 + 配置文件 + 全局模型切换
+
+- [x] `packages/ai` 重构：`Model` 增加 `api`/`baseUrl`/`maxTokens`/`reasoning`；新增 `ApiType`，`StreamOptions` 携带 `apiKey`/`baseUrl`/`headers`/`sessionId`
+- [x] 适配器拆分：`api/openai-completions.ts`（原 `providers/openai-compatible.ts`）+
+  `api/anthropic-messages.ts`（新增，含文本/思考/工具流与 tool_result 合并）
+- [x] 内置预设与目录：`config/builtin.ts`（openai/anthropic/deepseek/opencode/opencode-go），
+  opencode 两个提供商的目录用脚本从公开 `/models` 生成到 `config/catalog-opencode.ts`
+- [x] `config/schema.ts`：JSONC（注释/尾逗号）解析 + 字段级校验错误定位 + 起始模板
+- [x] `runtime.ts`：`createModelRuntime` 合并「内置 → 用户 models → 覆盖/禁用 → /models 缓存」，
+  按 `model.api` 分发；配置清洗保证坏配置不崩，`getModel`/`resolveApiKey`/`stream`
+- [x] 主进程新增 `ai-config.ts`（models.json 读写/迁移/缓存）、`ai-auth.ts`（auth.json +
+  safeStorage）、`settings.ts`；旧 `settings.json` 首次启动自动迁移为 `legacy` 提供商并转移密钥
+- [x] IPC：`ai:config` / `ai:config:save` / `ai:config:open` / `ai:model:set` / `ai:key:set` /
+  `ai:models:refresh`（拉取 `/models` 缓存到 `models-cache.json`，不污染 models.json）
+- [x] 设置界面重做：提供商/当前模型/API Key/刷新模型列表/models.json 编辑器（含错误定位）；
+  状态栏新增模型快速切换弹层
+- [x] 文档：`docs/config-schema.md`、`docs/prompts/config-editor.md`
+- [x] 验证：`npm run check` 通过、`vite build` 通过；本地 SSE 冒烟验证 openai/anthropic
+  两条流的文本/思考/工具解析；畸形配置不崩溃
+- [x] 修复（实测反馈）：模型下拉未按所选提供商过滤，导致把 5 个提供商的模型混在一起显示，
+  且当前模型可能落在别的提供商上而显示「未配置 Key」。现改为：
+  「当前模型」只列所选提供商的模型；保存 Key / 切换模型立即通知外层刷新；
+  状态栏只列已配置提供商的模型；Key 输入框回车或点「完成」也会保存
+- [x] 新增「OpenAI 兼容」手动配置：设置里填 ID/名称/Base URL/模型 ID/Key 即可，
+  写入独立的 `custom-providers.json`（不重写带注释的 models.json，冲突时 models.json 优先）；
+  支持编辑/删除，保存后自动切到该提供商的第一个模型
+- [x] 设置弹窗改版（参考 VS Code）：左侧分类导航 + 右侧可滚动内容区 + 固定底栏，
+  展开内容不再被裁切；弹窗垂直居中并自适应小屏；`.setting` 行「左标签 + 右控件」布局
+
 ## 2026-10-03 修复 EPUB 页码不显示
 
 - [x] 根因：`EpubViewer` 从不向上报告页码；`main.tsx` 又用

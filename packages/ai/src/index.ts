@@ -1,22 +1,6 @@
-export * from "./providers/openai-compatible.ts";
+export * from "./api/anthropic-messages.ts";
+export * from "./api/openai-completions.ts";
+export * from "./config/builtin.ts";
+export * from "./config/schema.ts";
+export * from "./runtime.ts";
 export * from "./types.ts";
-
-import type { Model, Provider } from "./types.ts";
-
-const registry = new Map<string, Provider>();
-
-export function registerProvider(provider: Provider) {
-	registry.set(provider.name, provider);
-}
-
-export function getProvider(name: string): Provider | undefined {
-	return registry.get(name);
-}
-
-export function listModels(): Model[] {
-	return [...registry.values()].flatMap((p) => p.models);
-}
-
-export function listProviders(): string[] {
-	return [...registry.keys()];
-}

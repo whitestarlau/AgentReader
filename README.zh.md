@@ -56,6 +56,7 @@ xattr -dr com.apple.quarantine /Applications/AgentReader.app
 
 - `docs/requirements.md` 需求文档
 - `docs/plan.md` 规划文档
+- `docs/plan-v0.2.md` 提供商/多模型/Web Search/Skill 规划
 - `docs/progress.md` 进度记录
 - `Reference/pi` 参考项目（已 gitignore，不提交）
 

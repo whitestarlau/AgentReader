@@ -56,6 +56,7 @@ xattr -dr com.apple.quarantine /Applications/AgentReader.app
 
 - `docs/requirements.md` requirements
 - `docs/plan.md` plan
+- `docs/plan-v0.2.md` providers / multi-model / web search / skills plan
 - `docs/progress.md` progress log
 - `Reference/pi` reference project (gitignored, not committed)
 

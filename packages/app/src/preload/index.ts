@@ -26,6 +26,17 @@ contextBridge.exposeInMainWorld("api", {
 		ipcRenderer.invoke("conversations:rename", docId, convId, title),
 	getSettings: () => ipcRenderer.invoke("settings:get"),
 	saveSettings: (s: unknown) => ipcRenderer.invoke("settings:save", s),
+	getAiConfig: () => ipcRenderer.invoke("ai:config"),
+	saveAiConfig: (text: string) => ipcRenderer.invoke("ai:config:save", text),
+	openAiConfig: () => ipcRenderer.invoke("ai:config:open"),
+	setModel: (ref: string) => ipcRenderer.invoke("ai:model:set", ref),
+	setProviderKey: (providerId: string, key: string) =>
+		ipcRenderer.invoke("ai:key:set", providerId, key),
+	refreshModels: (providerId?: string) => ipcRenderer.invoke("ai:models:refresh", providerId),
+	listCustomProviders: () => ipcRenderer.invoke("ai:custom:list"),
+	saveCustomProvider: (input: { id: string; name?: string; baseUrl: string; models: string[] }) =>
+		ipcRenderer.invoke("ai:custom:save", input),
+	removeCustomProvider: (id: string) => ipcRenderer.invoke("ai:custom:remove", id),
 	getReading: (docId: string) => ipcRenderer.invoke("reading:get", docId),
 	saveReading: (docId: string, patch: unknown) => ipcRenderer.invoke("reading:save", docId, patch),
 	onChatDelta: (cb: (d: string) => void) => {

@@ -13,8 +13,28 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runAgentLoop } from "@agentreader/agent";
-import { createOpenAICompatibleProvider } from "@agentreader/ai";
-import { app, BrowserWindow, dialog, ipcMain, safeStorage } from "electron";
+import {
+	createModelRuntime,
+	getBuiltinProvider,
+	type Model,
+	type ModelRuntime,
+	type ModelsFile,
+	type StreamFn,
+} from "@agentreader/ai";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { getProviderKey, hasStoredKey, setProviderKey } from "./ai-auth.ts";
+import {
+	type CustomProvider,
+	configPath,
+	ensureConfig,
+	readConfig,
+	readCustomProviders,
+	readModelCache,
+	writeConfigText,
+	writeCustomProviders,
+	writeModelCache,
+} from "./ai-config.ts";
+import { readSettings, writeSettings } from "./settings.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -166,32 +186,54 @@ function saveConversations(docId: string, list: unknown) {
 	writeFileSync(conversationsFile(docId), JSON.stringify(list, null, 2));
 }
 
-type AppSettings = Record<string, string> & { baseUrl: string; model: string };
-
-/** Read settings.json, decrypting the API key when encryption is available. */
-function readSettings(): AppSettings {
-	const p = join(app.getPath("userData"), "settings.json");
-	let settings: AppSettings = {
-		baseUrl: "https://api.openai.com/v1",
-		model: "gpt-4o-mini",
-		ocrLang: "chi_sim+eng",
-	};
-	if (existsSync(p)) {
-		try {
-			settings = { ...settings, ...JSON.parse(readFileSync(p, "utf-8")) };
-		} catch {}
-		if (settings.apiKey && safeStorage.isEncryptionAvailable()) {
-			try {
-				settings.apiKey = safeStorage.decryptString(Buffer.from(settings.apiKey, "base64"));
-			} catch {}
-		}
-	}
-	return settings;
+/** Merge GUI-managed custom providers under the models.json providers (file wins on id conflict). */
+function mergeCustomProviders(
+	file: ModelsFile,
+	custom: Record<string, CustomProvider>,
+): ModelsFile {
+	const declared =
+		file.providers && typeof file.providers === "object" && !Array.isArray(file.providers)
+			? file.providers
+			: {};
+	return { ...file, providers: { ...custom, ...declared } };
 }
 
-/** Normalize a base URL to its root (no trailing slash, no /chat/completions). */
-function normalizeBaseUrl(baseUrl: string): string {
-	return baseUrl.replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
+/** Build a model runtime from models.json + GUI providers + the encrypted auth store + env. */
+function buildRuntime(): {
+	runtime: ModelRuntime;
+	file: ModelsFile;
+	custom: Record<string, CustomProvider>;
+} {
+	const cfg = readConfig();
+	const custom = readCustomProviders();
+	const file = mergeCustomProviders(cfg.file, custom);
+	const runtime = createModelRuntime({
+		file,
+		configErrors: cfg.errors,
+		modelCache: readModelCache(),
+		resolveSecret: (providerId, provider) => {
+			const stored = getProviderKey(providerId);
+			if (stored) return stored;
+			for (const env of provider.envVars) {
+				const value = process.env[env];
+				if (value) return value;
+			}
+			return undefined;
+		},
+	});
+	return { runtime, file, custom };
+}
+
+/** Current model: app-selected ref → models.json defaultModel → first available. */
+function resolveCurrentModel(runtime: ModelRuntime, file: ModelsFile): Model | undefined {
+	const settings = readSettings();
+	return (
+		runtime.getModel(settings.model) ?? runtime.getModel(file.defaultModel) ?? runtime.models[0]
+	);
+}
+
+function modelRef(model: Model): string {
+	return `${model.provider}/${model.id}`;
 }
 
 /**
@@ -200,20 +242,16 @@ function normalizeBaseUrl(baseUrl: string): string {
  * keeps the placeholder title).
  */
 async function generateConversationTitle(
-	settings: AppSettings,
+	runtime: ModelRuntime,
+	model: Model,
 	userPrompt: string,
 ): Promise<string | null> {
-	if (!settings.apiKey) return null;
-	const modelId = settings.model.trim().replace(/^opencode-go\//, "");
-	const provider = createOpenAICompatibleProvider(
-		normalizeBaseUrl(settings.baseUrl),
-		settings.apiKey,
-	);
+	if (!runtime.resolveApiKey(model.provider)) return null;
 	let raw = "";
 	let reasoning = "";
 	try {
-		for await (const evt of provider.stream(
-			{ id: modelId, provider: "openai", label: modelId, contextWindow: 128000 },
+		for await (const evt of runtime.stream(
+			model,
 			{
 				systemPrompt:
 					"你是对话命名助手。请根据用户的第一条消息，用简短的中文（或与用户语言一致）为这次对话起一个标题。只输出标题本身，不要引号、不要标点、不要解释，最多 12 个字。",
@@ -504,11 +542,156 @@ ipcMain.handle("chat:append", (_e, docId: string, convId: string, entry: unknown
 ipcMain.handle("settings:get", () => readSettings());
 
 ipcMain.handle("settings:save", (_e, settings: Record<string, string>) => {
-	const p = join(app.getPath("userData"), "settings.json");
-	if (settings.apiKey && safeStorage.isEncryptionAvailable()) {
-		settings.apiKey = safeStorage.encryptString(settings.apiKey).toString("base64");
+	writeSettings(settings);
+});
+
+type ProviderSummary = {
+	id: string;
+	name: string;
+	baseUrl: string;
+	api: string;
+	isBuiltin: boolean;
+	source: "builtin" | "file" | "gui";
+	configured: boolean;
+	keySource: "stored" | "env" | null;
+	modelCount: number;
+};
+
+function buildConfigPayload() {
+	const cfg = readConfig();
+	const { runtime, file, custom } = buildRuntime();
+	const declared =
+		cfg.file.providers &&
+		typeof cfg.file.providers === "object" &&
+		!Array.isArray(cfg.file.providers)
+			? cfg.file.providers
+			: {};
+	const providers: ProviderSummary[] = runtime.providers.map((p) => {
+		const envVar = p.envVars.find((e) => process.env[e]);
+		const stored = hasStoredKey(p.id);
+		return {
+			id: p.id,
+			name: p.name,
+			baseUrl: p.baseUrl,
+			api: p.api,
+			isBuiltin: p.isBuiltin,
+			source: p.isBuiltin ? "builtin" : declared[p.id] ? "file" : custom[p.id] ? "gui" : "builtin",
+			configured: Boolean(p.apiKey || stored || envVar),
+			keySource: stored ? "stored" : envVar ? "env" : null,
+			modelCount: p.models.length,
+		};
+	});
+	const configuredById = new Map(providers.map((p) => [p.id, p.configured]));
+	const current = resolveCurrentModel(runtime, file);
+	return {
+		path: cfg.path,
+		text: cfg.text,
+		errors: runtime.errors,
+		defaultModel: current ? modelRef(current) : null,
+		providers,
+		models: runtime.models.map((m) => ({
+			ref: modelRef(m),
+			id: m.id,
+			provider: m.provider,
+			label: m.label,
+			contextWindow: m.contextWindow,
+			configured: configuredById.get(m.provider) ?? false,
+		})),
+	};
+}
+
+ipcMain.handle("ai:config", () => buildConfigPayload());
+
+ipcMain.handle("ai:config:save", (_e, text: string) => writeConfigText(text));
+
+ipcMain.handle("ai:config:open", async () => {
+	const settings = readSettings();
+	ensureConfig({ baseUrl: settings.baseUrl, model: settings.model });
+	await shell.openPath(configPath());
+	return configPath();
+});
+
+ipcMain.handle("ai:model:set", (_e, ref: string) => {
+	const settings = readSettings();
+	settings.model = ref;
+	writeSettings(settings);
+	return true;
+});
+
+ipcMain.handle("ai:key:set", (_e, providerId: string, key: string) => {
+	setProviderKey(providerId, key);
+	return true;
+});
+
+ipcMain.handle("ai:custom:list", () => readCustomProviders());
+
+ipcMain.handle(
+	"ai:custom:save",
+	(_e, input: { id: string; name?: string; baseUrl: string; models: string[] }) => {
+		const id = String(input?.id ?? "")
+			.trim()
+			.toLowerCase();
+		if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
+			return { ok: false, error: "标识 ID 只能包含小写字母、数字和连字符" };
+		}
+		if (getBuiltinProvider(id))
+			return { ok: false, error: `"${id}" 与内置提供商冲突，请换一个 ID` };
+		const baseUrl = String(input?.baseUrl ?? "").trim();
+		if (!baseUrl) return { ok: false, error: "请填写 Base URL" };
+		const modelIds = (input?.models ?? [])
+			.map((m) => String(m).trim())
+			.filter(Boolean)
+			.filter((m, i, arr) => arr.indexOf(m) === i);
+		if (modelIds.length === 0) return { ok: false, error: "请至少填写一个模型 ID" };
+		const data = readCustomProviders();
+		data[id] = {
+			name: String(input?.name ?? "").trim() || id,
+			baseUrl,
+			api: "openai-completions",
+			models: modelIds.map((m) => ({ id: m })),
+		};
+		writeCustomProviders(data);
+		return { ok: true, id };
+	},
+);
+
+ipcMain.handle("ai:custom:remove", (_e, id: string) => {
+	const data = readCustomProviders();
+	delete data[id];
+	writeCustomProviders(data);
+	return true;
+});
+
+ipcMain.handle("ai:models:refresh", async (_e, providerId?: string) => {
+	const { runtime } = buildRuntime();
+	const cache = readModelCache();
+	const results: { provider: string; added?: number; error?: string }[] = [];
+	for (const p of runtime.providers) {
+		if (providerId && p.id !== providerId) continue;
+		if (p.api !== "openai-completions" || !p.baseUrl) continue;
+		const key = runtime.resolveApiKey(p.id);
+		try {
+			const base = p.baseUrl.replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
+			// Fetching /models is a public read for most OpenAI-compatible gateways.
+			const res = await fetch(`${base}/models`, {
+				headers: key ? { Authorization: `Bearer ${key}` } : {},
+			});
+			if (!res.ok) {
+				results.push({ provider: p.id, error: `HTTP ${res.status}` });
+				continue;
+			}
+			const json = (await res.json()) as { data?: { id?: unknown }[] };
+			const ids = Array.isArray(json.data)
+				? json.data.map((m) => m?.id).filter((x): x is string => typeof x === "string")
+				: [];
+			cache[p.id] = ids;
+			results.push({ provider: p.id, added: ids.length });
+		} catch (e) {
+			results.push({ provider: p.id, error: e instanceof Error ? e.message : String(e) });
+		}
 	}
-	writeFileSync(p, JSON.stringify(settings, null, 2));
+	writeModelCache(cache);
+	return results;
 });
 
 // Remember the last read position so reopening a document resumes where the user left off.
@@ -544,12 +727,12 @@ ipcMain.handle(
 		history: { role: string; content: string }[],
 		page?: number,
 	) => {
-		const settings = readSettings();
-		if (!settings.apiKey) return { error: "未配置 API Key，请先在设置中配置" };
-
-		const rawModel = settings.model.trim();
-		const modelId = rawModel.replace(/^opencode-go\//, "");
-		const model = { id: modelId, provider: "openai", label: modelId, contextWindow: 128000 };
+		const { runtime, file } = buildRuntime();
+		const model = resolveCurrentModel(runtime, file);
+		if (!model) return { error: "未配置可用模型，请在设置中添加提供商与模型" };
+		if (!runtime.resolveApiKey(model.provider)) {
+			return { error: `未配置 ${model.provider} 的 API Key，请在设置中填写` };
+		}
 
 		// First user message in this conversation -> let the model name it.
 		// Determine "first" from the on-disk transcript rather than trusting the
@@ -564,7 +747,7 @@ ipcMain.handle(
 			isFirstMessage = history.length === 0;
 		}
 		if (isFirstMessage && prompt.trim()) {
-			generatedTitle = await generateConversationTitle(settings, prompt);
+			generatedTitle = await generateConversationTitle(runtime, model, prompt);
 			console.log("[chat] title generated", JSON.stringify(generatedTitle));
 			// Fall back to a snippet of the user's message so the title is never
 			// left as the generic "对话 N" placeholder.
@@ -630,15 +813,12 @@ ${currentPageHint ? `\n${currentPageHint}` : ""}
 			messages.map((m) => `${m.role}: ${String(m.content).slice(0, 120)}`),
 		);
 
-		const baseUrl = normalizeBaseUrl(settings.baseUrl);
 		console.log("[chat] request", {
-			baseUrl,
-			model: model.id,
+			model: modelRef(model),
 			historyLen: history.length,
 			title: docText.title,
 		});
 
-		const provider = createOpenAICompatibleProvider(baseUrl, settings.apiKey, convId);
 		const tools = [
 			{
 				name: "get_document_info",
@@ -737,7 +917,7 @@ ${currentPageHint ? `\n${currentPageHint}` : ""}
 
 		const win = BrowserWindow.fromWebContents(event.sender);
 		let full = "";
-		const streamFn = provider.stream;
+		const streamFn: StreamFn = (m, c, o) => runtime.stream(m, c, { ...o, sessionId: convId });
 
 		// 结构化记录本轮对话（思考 / 工具调用 / 最终回答），用于持久化与回放。
 		type StoredTimelineItem =
@@ -815,17 +995,12 @@ ${currentPageHint ? `\n${currentPageHint}` : ""}
 				console.log("[chat] retry without tools");
 				full = "";
 				try {
-					const fallbackProvider = createOpenAICompatibleProvider(baseUrl, settings.apiKey, convId);
-					const fallbackStream = fallbackProvider.stream;
+					const fallbackStream = streamFn;
 					const fallbackContext = {
 						systemPrompt,
 						messages: [...history, { role: "user", content: prompt }] as never,
 					};
-					for await (const e of fallbackStream(
-						model as never,
-						fallbackContext as never,
-						{} as never,
-					)) {
+					for await (const e of fallbackStream(model, fallbackContext as never, {} as never)) {
 						if (e.type === "text_delta") {
 							full += (e as { delta: string }).delta;
 							win?.webContents.send("chat:delta", (e as { delta: string }).delta);
@@ -882,7 +1057,14 @@ function createWindow() {
 	});
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+	// Seed models.json on first run, migrating the legacy single-provider settings
+	// (and moving its encrypted key into the auth store) when present.
+	const legacy = readSettings();
+	const created = ensureConfig({ baseUrl: legacy.baseUrl, model: legacy.model });
+	if (created && legacy.apiKey) setProviderKey("legacy", legacy.apiKey);
+	createWindow();
+});
 app.on("window-all-closed", () => {
 	if (process.platform !== "darwin") app.quit();
 });

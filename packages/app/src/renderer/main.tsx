@@ -15,7 +15,7 @@ import { EditorTabs } from "./components/shell/EditorTabs.tsx";
 import { StatusBar } from "./components/shell/StatusBar.tsx";
 import { Welcome } from "./components/shell/Welcome.tsx";
 import { Resizer } from "./components/shell/Resizer.tsx";
-import type { ActivityView, DocMeta } from "./types.ts";
+import type { ActivityView, AiConfig, CustomProvider, DocMeta } from "./types.ts";
 import "./styles.css";
 
 declare global {
@@ -39,6 +39,15 @@ declare global {
       renameConversation: (docId: string, convId: string, title: string) => Promise<unknown>;
       getSettings: () => Promise<Record<string, string>>;
       saveSettings: (s: unknown) => Promise<void>;
+      getAiConfig: () => Promise<AiConfig>;
+      saveAiConfig: (text: string) => Promise<{ ok: boolean; errors: string[] }>;
+      openAiConfig: () => Promise<string>;
+      setModel: (ref: string) => Promise<boolean>;
+      setProviderKey: (providerId: string, key: string) => Promise<boolean>;
+      refreshModels: (providerId?: string) => Promise<{ provider: string; added?: number; error?: string }[]>;
+      listCustomProviders: () => Promise<Record<string, CustomProvider>>;
+      saveCustomProvider: (input: { id: string; name?: string; baseUrl: string; models: string[] }) => Promise<{ ok: boolean; id?: string; error?: string }>;
+      removeCustomProvider: (id: string) => Promise<boolean>;
       getReading: (docId: string) => Promise<{ page: number | null; location: string | null }>;
       saveReading: (docId: string, patch: { page?: number; location?: string }) => Promise<void>;
       onChatDelta: (cb: (d: string) => void) => () => void;
@@ -60,7 +69,7 @@ function App() {
   const isEpub = selectedDoc?.ext === "epub";
   const [selection, setSelection] = useState<Selection | null>(null);
   const [ocrLang, setOcrLang] = useState("chi_sim+eng");
-  const [model, setModel] = useState("");
+  const [ai, setAi] = useState<AiConfig | null>(null);
   const [anns, setAnns] = useState<Annotation[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -85,10 +94,12 @@ function App() {
   const loadSettings = useCallback(() => {
     window.api.getSettings().then((s) => {
       if (s.ocrLang) setOcrLang(s.ocrLang);
-      if (s.model) setModel(s.model);
     }).catch(() => {});
   }, []);
-  useEffect(() => { loadSettings(); }, [loadSettings]);
+  const loadAiConfig = useCallback(() => {
+    window.api.getAiConfig().then(setAi).catch(() => {});
+  }, []);
+  useEffect(() => { loadSettings(); loadAiConfig(); }, [loadSettings, loadAiConfig]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -328,12 +339,14 @@ function App() {
         zoom={zoom}
         selectionLabel={selection?.text ? `${SELECTION_LABEL[selection.kind]} · P${selection.page}` : null}
         ocr={ocrJob}
-        model={model}
+        model={ai?.defaultModel ?? undefined}
+        models={ai?.models ?? []}
+        onSelectModel={(ref) => { window.api.setModel(ref).then(loadAiConfig).catch(() => {}); }}
         chatOpen={chatOpen}
         onToggleChat={() => setChatOpen((v) => !v)}
       />
 
-      {showSettings && <Settings onClose={() => setShowSettings(false)} onSaved={loadSettings} />}
+      {showSettings && <Settings onClose={() => setShowSettings(false)} onSaved={() => { loadSettings(); loadAiConfig(); }} />}
     </div>
   );
 }

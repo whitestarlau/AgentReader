@@ -110,6 +110,12 @@ AgentReader/
 - [ ] 扩展系统 `extensions/` + 示例 `translate` 插件
 - [ ] 深色模式、快捷键可配置（抄 Pi 的 `DEFAULT_KEYBINDINGS`）
 
+### Phase 4 — v0.2 AI 能力（见 `docs/plan-v0.2.md`）
+- [ ] 提供商预设 + `models.json` 配置文件（AI 可编辑 + 提示词）
+- [ ] 多模型切换（全局默认）
+- [ ] Web Search 工具（可插拔后端）
+- [ ] Skill 导入 + 按书启用
+
 ## 7. 关键决策记录（ADR）
 
 - **ADR-1 导入式而非 sidecar**：便于管理、原子化、支持 RAG/缩略图等衍生文件

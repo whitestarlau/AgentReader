@@ -23,11 +23,20 @@ export type ToolDefinition = {
 	parameters: Record<string, unknown>;
 };
 
+/** Wire protocol a provider speaks. Determines which stream adapter handles a model. */
+export type ApiType = "openai-completions" | "anthropic-messages";
+
 export type Model = {
 	id: string;
 	provider: string;
 	label: string;
 	contextWindow: number;
+	/** Protocol override; falls back to the owning provider's api when omitted. */
+	api?: ApiType;
+	baseUrl?: string;
+	maxTokens?: number;
+	reasoning?: boolean;
+	headers?: Record<string, string>;
 };
 
 export type AssistantMessageEvent =
@@ -40,6 +49,12 @@ export type StreamOptions = {
 	signal?: AbortSignal;
 	maxTokens?: number;
 	temperature?: number;
+	/** Resolved at call time by the runtime; adapters never read config themselves. */
+	apiKey?: string;
+	baseUrl?: string;
+	headers?: Record<string, string>;
+	/** Session/affinity id forwarded to providers that support it (e.g. opencode). */
+	sessionId?: string;
 };
 
 export type StreamFn = (
@@ -49,7 +64,9 @@ export type StreamFn = (
 ) => AsyncGenerator<AssistantMessageEvent, void, unknown>;
 
 export type Provider = {
+	id: string;
 	name: string;
-	stream: StreamFn;
+	baseUrl?: string;
+	api: ApiType;
 	models: Model[];
 };
