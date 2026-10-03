@@ -219,14 +219,14 @@ packages/app/src/renderer
 
 ## 9. 系统提示与工具编排（横切）
 
-把 `main/index.ts` 里内联的 system prompt 抽为 `packages/agent/src/prompt.ts` 的组合函数，输入：
+把 `main/index.ts` 里内联的 system prompt 抽为 `packages/agent/src/prompt.ts` 的组合函数 `buildDocumentSystemPrompt(input)`（纯函数、可测），输入：
 
 - 书籍元信息 / 目录 / 当前页 / OCR 状态（现有逻辑）；
-- 本对话启用的 skill 清单；
-- 可用工具及其启用状态（`get_document_info`/`search_document`/`read_page`/`web_search`/`read_skill`）；
+- 本对话启用的 skill 清单（含是否可执行、是否免确认）；
+- 可用工具列表（`get_document_info`/`search_document`/`read_page`/`web_search`/`read_skill`/`run_skill_script`）；
 - 不可信内容声明。
 
-工具装配改为按配置动态构建工具数组，避免在 `chat:send` 里堆 200 行。
+工具装配仍按配置动态构建工具数组；`maxTurns` 改为 `settings.json` 的 `agentMaxTurns`（默认 8，范围 1–20，设置里可改）。
 
 ## 10. 里程碑与依赖
 
@@ -240,7 +240,7 @@ packages/app/src/renderer
 
 M2 与 M3 相互独立，可并行；M1 是硬前置。
 
-> 进度：M1、M2、M3、M3.5（host 执行）已完成（见 `docs/progress.md`）；容器隔离 / 网络限制待定，下一步 M4。
+> 进度：M1、M2、M3、M3.5（host 执行）、M4（首轮打磨）已完成（见 `docs/progress.md`）。
 
 ## 14. M3.5 脚本技能
 

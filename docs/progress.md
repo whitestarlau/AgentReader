@@ -1,5 +1,17 @@
 # 进度记录
 
+## 2026-10-03 M4 打磨（首轮）
+
+- [x] 抽出系统提示：新增 `packages/agent/src/prompt.ts` 的纯函数 `buildDocumentSystemPrompt`，
+  把 `chat:send` 里内联的书籍上下文/目录/当前页/OCR/工具/联网/技能提示统一收拢，行为不变
+- [x] `maxTurns` 可配置：`settings.json` 的 `agentMaxTurns`（默认 8，范围 1–20），
+  设置新增「对话」分区可改，取代原先「有联网/技能就写死 8」的逻辑
+- [x] 设置导航新增「对话」分区
+- [x] 文档：`docs/plan-v0.2.md` §9 与里程碑进度更新
+- [x] 验证：typecheck/build 通过；`buildDocumentSystemPrompt` 输出与迁移前一致（含技能/联网标注）
+
+> 仍待做：容器/网络隔离、同名技能覆盖更新、旧 `settings.json` 中 legacy 字段清理。
+
 ## 2026-10-03 M3.5 脚本技能（host 执行）
 
 - [x] `main/skills.ts` 增加 `runSkillCommand`：`/bin/sh -c` 在技能目录内运行（cwd 锁定），

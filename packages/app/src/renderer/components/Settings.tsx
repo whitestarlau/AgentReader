@@ -16,6 +16,7 @@ const SECTIONS = [
 	{ id: "custom", label: "OpenAI 兼容" },
 	{ id: "websearch", label: "联网搜索" },
 	{ id: "skills", label: "技能" },
+	{ id: "agent", label: "对话" },
 	{ id: "reading", label: "阅读" },
 	{ id: "config", label: "配置文件" },
 ] as const;
@@ -51,6 +52,7 @@ export function Settings({
 	const [trustedSkills, setTrustedSkills] = useState<string[]>([]);
 	const [executionEnabled, setExecutionEnabled] = useState(false);
 	const [runtime, setRuntime] = useState<SkillRuntimeInfo | null>(null);
+	const [maxTurns, setMaxTurns] = useState(8);
 	const [section, setSection] = useState<SectionId>("models");
 	const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -77,6 +79,7 @@ export function Settings({
 		setTrustedSkills(trust.trusted);
 		setExecutionEnabled(trust.executionEnabled);
 		setRuntime(rt);
+		setMaxTurns(settings.agentMaxTurns ? Number(settings.agentMaxTurns) || 8 : 8);
 		setProviderId((prev) => {
 			if (prev) return prev;
 			const active = config.defaultModel?.split("/")[0];
@@ -711,6 +714,38 @@ export function Settings({
 								</>
 							)}
 							{!docId && <div className="hint">打开一本书后，即可针对该书勾选启用的技能。</div>}
+						</div>
+
+						<div
+							className="settings-section"
+							ref={(el) => {
+								sectionRefs.current.agent = el;
+							}}
+						>
+							<h3>对话</h3>
+							<p className="section-desc">
+								控制每条消息最多经过多少轮工具调用（读页、检索、联网、技能等）。
+							</p>
+							<div className="setting">
+								<div className="setting-label">
+									最大工具回合数
+									<span className="hint">1–20，默认 8</span>
+								</div>
+								<div className="setting-control">
+									<input
+										type="number"
+										min={1}
+										max={20}
+										value={maxTurns}
+										onChange={(e) => setMaxTurns(Number(e.target.value) || 8)}
+										onBlur={() =>
+											window.api.saveSettings({
+												agentMaxTurns: String(Math.max(1, Math.min(20, maxTurns))),
+											})
+										}
+									/>
+								</div>
+							</div>
 						</div>
 
 						<div
