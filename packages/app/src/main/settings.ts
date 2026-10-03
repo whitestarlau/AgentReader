@@ -29,14 +29,22 @@ export function readSettings(): AppSettings {
 	return settings;
 }
 
-/** Persist settings.json, encrypting the legacy API key when encryption is available. */
-export function writeSettings(settings: Record<string, string | undefined>): void {
-	const next: Record<string, string> = {};
-	for (const [k, v] of Object.entries(settings)) {
+/**
+ * Merge plain string fields into settings.json, preserving unrelated keys
+ * (model, webSearch*, OCR, ...). Never pass secrets here; use the auth store.
+ */
+export function updateSettings(patch: Record<string, string | undefined>): void {
+	const p = settingsPath();
+	let current: Record<string, unknown> = {};
+	if (existsSync(p)) {
+		try {
+			const parsed = JSON.parse(readFileSync(p, "utf-8"));
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) current = parsed;
+		} catch {}
+	}
+	const next = { ...current };
+	for (const [k, v] of Object.entries(patch)) {
 		if (typeof v === "string") next[k] = v;
 	}
-	if (next.apiKey && safeStorage.isEncryptionAvailable()) {
-		next.apiKey = safeStorage.encryptString(next.apiKey).toString("base64");
-	}
-	writeFileSync(settingsPath(), JSON.stringify(next, null, 2));
+	writeFileSync(p, JSON.stringify(next, null, 2));
 }

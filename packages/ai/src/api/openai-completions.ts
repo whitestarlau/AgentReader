@@ -50,11 +50,13 @@ export async function* openAICompletionsStream(
 		}),
 	] as { role: string; content: string | null; tool_call_id?: string; tool_calls?: unknown }[];
 
-	const tools = context.tools?.length
-		? context.tools.map((t) => ({
-				type: "function" as const,
-				function: { name: t.name, description: t.description, parameters: t.parameters },
-			}))
+	const tools = context.tools?.filter((t) => !t.native).length
+		? context.tools
+				.filter((t) => !t.native)
+				.map((t) => ({
+					type: "function" as const,
+					function: { name: t.name, description: t.description, parameters: t.parameters },
+				}))
 		: undefined;
 
 	const headers: Record<string, string> = {

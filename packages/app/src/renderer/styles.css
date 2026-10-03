@@ -1487,6 +1487,45 @@ textarea::placeholder {
 	font-size: 11px;
 	color: var(--vscode-fg-dim);
 }
+.checkbox-line {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	color: var(--vscode-fg);
+}
+.checkbox-line input {
+	width: auto;
+}
+.ws-test {
+	margin-top: 10px;
+	padding: 8px 10px;
+	border: 1px solid var(--vscode-border-soft);
+	border-radius: 4px;
+	font-size: 12px;
+}
+.ws-test-list {
+	margin: 6px 0 0;
+	padding-left: 18px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.ws-test-list li {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ws-test-text {
+	margin: 6px 0 0;
+	max-height: 200px;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: 11px;
+	line-height: 1.5;
+	color: var(--vscode-fg-dim);
+}
 
 /* ------------------------------------------------------------ model picker */
 .statusbar .status-model {

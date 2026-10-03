@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AiConfig, CustomProvider } from "../types.ts";
+import type { AiConfig, CustomProvider, WebSearchTestResult } from "../types.ts";
 import { Icon } from "./Icons.tsx";
 
 const EMPTY_FORM = { id: "", name: "", baseUrl: "", models: "", key: "" };
@@ -7,6 +7,7 @@ const EMPTY_FORM = { id: "", name: "", baseUrl: "", models: "", key: "" };
 const SECTIONS = [
 	{ id: "models", label: "模型与提供商" },
 	{ id: "custom", label: "OpenAI 兼容" },
+	{ id: "websearch", label: "联网搜索" },
 	{ id: "reading", label: "阅读" },
 	{ id: "config", label: "配置文件" },
 ] as const;
@@ -24,6 +25,11 @@ export function Settings({ onClose, onSaved }: { onClose: () => void; onSaved?: 
 	const [errors, setErrors] = useState<string[]>([]);
 	const [busy, setBusy] = useState(false);
 	const [note, setNote] = useState<string | null>(null);
+	const [wsEnabled, setWsEnabled] = useState(false);
+	const [wsBackend, setWsBackend] = useState("duckduckgo");
+	const [wsMax, setWsMax] = useState(5);
+	const [wsKey, setWsKey] = useState("");
+	const [wsTest, setWsTest] = useState<WebSearchTestResult | null>(null);
 	const [section, setSection] = useState<SectionId>("models");
 	const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -38,6 +44,9 @@ export function Settings({ onClose, onSaved }: { onClose: () => void; onSaved?: 
 		setConfigText((prev) => (prev === "" ? config.text : prev));
 		setErrors(config.errors);
 		if (settings.ocrLang) setOcrLang(settings.ocrLang);
+		setWsEnabled(config.webSearch.enabled);
+		setWsBackend(config.webSearch.backend);
+		setWsMax(config.webSearch.maxResults);
 		setProviderId((prev) => {
 			if (prev) return prev;
 			const active = config.defaultModel?.split("/")[0];
@@ -144,6 +153,29 @@ export function Settings({ onClose, onSaved }: { onClose: () => void; onSaved?: 
 		await load();
 		notify();
 		setNote(`已删除 ${id}`);
+	};
+
+	const saveWebSearch = async (patch: { enabled?: boolean; backend?: string; maxResults?: number }) => {
+		await window.api.setWebSearch(patch);
+		await load();
+	};
+
+	const saveWsKey = async () => {
+		if (!wsKey.trim()) return;
+		await window.api.setProviderKey(`websearch:${wsBackend}`, wsKey.trim());
+		setWsKey("");
+		setNote(`已保存 ${wsBackend} 的搜索 Key`);
+		await load();
+	};
+
+	const runWsTest = async () => {
+		setBusy(true);
+		setWsTest(null);
+		try {
+			setWsTest(await window.api.testWebSearch());
+		} finally {
+			setBusy(false);
+		}
 	};
 
 	const refresh = async () => {
@@ -395,6 +427,135 @@ export function Settings({ onClose, onSaved }: { onClose: () => void; onSaved?: 
 											</span>
 										</div>
 									))}
+								</div>
+							)}
+						</div>
+
+						<div
+							className="settings-section"
+							ref={(el) => {
+								sectionRefs.current.websearch = el;
+							}}
+						>
+							<h3>联网搜索</h3>
+							<p className="section-desc">
+								为对话提供 web_search 工具。默认「自动」走 Exa / Parallel 的公开 MCP（免 key，失败会互相切换）；
+								也可改用 Brave / Tavily / Exa API（需 key）；「服务商原生」由 Anthropic 协议模型在服务端执行。
+							</p>
+
+							<div className="setting">
+								<div className="setting-label">
+									启用
+									<span className="hint">允许模型在书中内容不足时联网</span>
+								</div>
+								<div className="setting-control">
+									<label className="checkbox-line">
+										<input
+											type="checkbox"
+											checked={wsEnabled}
+											onChange={(e) => saveWebSearch({ enabled: e.target.checked })}
+										/>
+										启用联网搜索
+									</label>
+								</div>
+							</div>
+
+							<div className="setting">
+								<div className="setting-label">后端</div>
+								<div className="setting-control">
+									<select
+										value={wsBackend}
+										onChange={(e) => saveWebSearch({ backend: e.target.value })}
+									>
+										<option value="auto">自动（Exa / Parallel 公开 MCP，免 key）</option>
+										<option value="exa-mcp">Exa（公开 MCP，免 key）</option>
+										<option value="parallel-mcp">Parallel（公开 MCP，免 key）</option>
+										<option value="brave">Brave Search（需 key）</option>
+										<option value="tavily">Tavily（需 key）</option>
+										<option value="exa">Exa API（需 key）</option>
+										<option value="duckduckgo">DuckDuckGo（免 key，兜底）</option>
+										<option value="native">服务商原生（仅 Anthropic 协议）</option>
+									</select>
+								</div>
+							</div>
+
+							<div className="setting">
+								<div className="setting-label">
+									API Key
+									<span className="hint">
+										{ai?.webSearch.keySource === "stored"
+											? "已保存（留空保持不变）"
+											: ai?.webSearch.keySource === "env"
+												? "来自环境变量"
+												: ai?.webSearch.keySource === "config"
+													? "来自 models.json"
+													: "DuckDuckGo / 原生无需"}
+									</span>
+								</div>
+								<div className="setting-control">
+									<input
+										type="password"
+										value={wsKey}
+										onChange={(e) => setWsKey(e.target.value)}
+										onKeyDown={(e) => {
+											if (e.key === "Enter") saveWsKey();
+										}}
+										placeholder="搜索服务 API Key"
+									/>
+									<div className="button-row" style={{ marginTop: 6 }}>
+										<button type="button" onClick={saveWsKey} disabled={busy || !wsKey.trim()}>
+											保存 Key
+										</button>
+										<button type="button" onClick={runWsTest} disabled={busy}>
+											测试搜索
+										</button>
+									</div>
+								</div>
+							</div>
+
+							<div className="setting">
+								<div className="setting-label">
+									返回条数
+									<span className="hint">1–10</span>
+								</div>
+								<div className="setting-control">
+									<input
+										type="number"
+										min={1}
+										max={10}
+										value={wsMax}
+										onChange={(e) => setWsMax(Number(e.target.value) || 5)}
+										onBlur={() => saveWebSearch({ maxResults: wsMax })}
+									/>
+								</div>
+							</div>
+
+							{wsTest && (
+								<div className="ws-test">
+									{wsTest.ok ? (
+										<>
+											<div className="hint">
+												后端 {wsTest.backend}
+												{wsTest.results?.length
+													? ` 返回 ${wsTest.results.length} 条：`
+													: " 返回文本："}
+											</div>
+											{wsTest.results?.length ? (
+												<ul className="ws-test-list">
+													{wsTest.results.slice(0, 3).map((r) => (
+														<li key={r.url}>
+															<span>{r.title}</span>
+															<span className="hint"> {r.url}</span>
+														</li>
+													))}
+												</ul>
+											) : (
+												<pre className="ws-test-text">{(wsTest.text ?? "（无内容）").slice(0, 1200)}</pre>
+											)}
+										</>
+									) : (
+										<div className="config-errors">测试失败：{wsTest.error}</div>
+									)}
 								</div>
 							)}
 						</div>

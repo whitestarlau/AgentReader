@@ -30,11 +30,27 @@ export type CustomProvider = {
 	models: { id: string }[];
 };
 
+export type AiWebSearchConfig = {
+	enabled: boolean;
+	backend: string;
+	maxResults: number;
+	keySource: "config" | "env" | "stored" | null;
+};
+
+export type WebSearchTestResult = {
+	ok: boolean;
+	backend?: string;
+	error?: string;
+	results?: { title: string; url: string; snippet: string }[];
+	text?: string;
+};
+
 export type AiConfig = {
 	path: string;
 	text: string;
 	errors: string[];
 	defaultModel: string | null;
 	providers: AiProviderSummary[];
+	webSearch: AiWebSearchConfig;
 	models: AiModelOption[];
 };

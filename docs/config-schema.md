@@ -95,14 +95,22 @@ AgentReader 从 `{userData}/models.json` 读取提供商与模型配置。文件
 
 密钥同样存在 `auth.json`，不在这个文件里。
 
-## tools.webSearch（后续版本）
+## tools.webSearch
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `enabled` | boolean | 是否启用联网搜索工具。 |
-| `backend` | string | `native` / `brave` / `tavily` / `exa` / `duckduckgo`。 |
+| `backend` | string | `auto`（默认：Exa / Parallel 公开 MCP，免 key，失败互相切换）/ `exa-mcp` / `parallel-mcp` / `brave` / `tavily` / `exa` / `duckduckgo` / `native`。 |
 | `apiKey` / `apiKeyEnv` | string | 第三方搜索密钥。 |
-| `maxResults` | number | 返回结果条数上限。 |
+| `maxResults` | number | 返回结果条数上限（1–10）。 |
+
+> 应用内「设置 → 联网搜索」修改的启用状态、后端与条数存在 `settings.json`（应用管理），
+> 搜索 Key 存 `auth.json`。这两处优先于本文件的 `tools.webSearch`，以免程序重写带注释的
+> `models.json`。若完全通过本文件配置，删掉设置里的对应值即可。
+> 默认后端 `auto` 直接调用 Exa（`https://mcp.exa.ai/mcp`）与 Parallel（`https://search.parallel.ai/mcp`）
+> 的公开 MCP 端点，**无需 key、不额外计费**（与 OpenCode 内置 websearch 同一做法）；这些是第三方公开
+> 端点，可能限流或变更，失败会自动切到另一家，也可改用自带 key 的 Brave/Tavily/Exa API。
+> DuckDuckGo 属尽力而为；`native` 仅 Anthropic 协议模型在服务端执行。
 
 ## 内置提供商默认值
 

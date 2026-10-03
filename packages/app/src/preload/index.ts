@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld("api", {
 	saveCustomProvider: (input: { id: string; name?: string; baseUrl: string; models: string[] }) =>
 		ipcRenderer.invoke("ai:custom:save", input),
 	removeCustomProvider: (id: string) => ipcRenderer.invoke("ai:custom:remove", id),
+	setWebSearch: (patch: { enabled?: boolean; backend?: string; maxResults?: number }) =>
+		ipcRenderer.invoke("ai:websearch:set", patch),
+	testWebSearch: (query?: string) => ipcRenderer.invoke("ai:websearch:test", query),
 	getReading: (docId: string) => ipcRenderer.invoke("reading:get", docId),
 	saveReading: (docId: string, patch: unknown) => ipcRenderer.invoke("reading:save", docId, patch),
 	onChatDelta: (cb: (d: string) => void) => {

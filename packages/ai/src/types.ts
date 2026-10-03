@@ -21,6 +21,8 @@ export type ToolDefinition = {
 	name: string;
 	description: string;
 	parameters: Record<string, unknown>;
+	/** Provider handles this tool server-side (e.g. Anthropic web_search); not sent as a function tool. */
+	native?: boolean;
 };
 
 /** Wire protocol a provider speaks. Determines which stream adapter handles a model. */

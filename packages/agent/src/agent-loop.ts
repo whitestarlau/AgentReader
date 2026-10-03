@@ -10,7 +10,7 @@ export async function* runAgentLoop(
 ): AsyncGenerator<AgentEvent> {
 	const currentMessages = [...messages];
 	let turn = 0;
-	const maxTurns = 5;
+	const maxTurns = config.maxTurns ?? 5;
 
 	while (turn < maxTurns) {
 		turn++;
@@ -23,6 +23,7 @@ export async function* runAgentLoop(
 				name: t.name,
 				description: t.description,
 				parameters: t.parameters,
+				...(t.native ? { native: true } : {}),
 			})),
 		};
 

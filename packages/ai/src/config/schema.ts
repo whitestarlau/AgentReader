@@ -34,7 +34,15 @@ export type UserProviderConfig = {
 	disabledModels?: string[];
 };
 
-export type WebSearchBackend = "native" | "brave" | "tavily" | "exa" | "duckduckgo";
+export type WebSearchBackend =
+	| "auto"
+	| "exa-mcp"
+	| "parallel-mcp"
+	| "brave"
+	| "tavily"
+	| "exa"
+	| "duckduckgo"
+	| "native";
 
 export type WebSearchConfig = {
 	enabled?: boolean;
@@ -176,7 +184,16 @@ function validateWebSearch(value: unknown, path: string, errors: string[]): void
 		errors.push(`${path}: 必须是对象`);
 		return;
 	}
-	const backends = new Set(["native", "brave", "tavily", "exa", "duckduckgo"]);
+	const backends = new Set([
+		"auto",
+		"exa-mcp",
+		"parallel-mcp",
+		"brave",
+		"tavily",
+		"exa",
+		"duckduckgo",
+		"native",
+	]);
 	if (value.backend !== undefined && !backends.has(String(value.backend))) {
 		errors.push(`${path}.backend: 取值无效`);
 	}

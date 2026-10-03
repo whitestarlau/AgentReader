@@ -112,11 +112,11 @@ export async function* anthropicMessagesStream(
 		.join("\n\n");
 
 	const tools = context.tools?.length
-		? context.tools.map((t) => ({
-				name: t.name,
-				description: t.description,
-				input_schema: t.parameters,
-			}))
+		? context.tools.map((t) =>
+				t.native
+					? { type: "web_search_20250305", name: t.name, max_uses: 5 }
+					: { name: t.name, description: t.description, input_schema: t.parameters },
+			)
 		: undefined;
 
 	const headers: Record<string, string> = {

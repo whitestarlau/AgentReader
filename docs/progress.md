@@ -1,5 +1,27 @@
 # 进度记录
 
+## 2026-10-03 M2 联网搜索（Web Search）
+
+- [x] `packages/ai` / `packages/agent`：`ToolDefinition`/`AgentTool` 增加 `native` 标记，
+  `AgentConfig` 增加 `maxTurns`；`agent-loop` 默认 5、可按配置提升
+- [x] 适配器：Anthropic 把 `native` 工具映射为服务端 `web_search_20250305`；
+  openai-completions 过滤掉 native 工具（该协议无服务端搜索）
+- [x] 后端（`app/src/main/web-search.ts`）：默认 `auto` —— 免 key 调用 Exa/Parallel 的公开 MCP
+  端点（`mcp.exa.ai/mcp`、`search.parallel.ai/mcp`，与 OpenCode 内置 websearch 同源），按会话稳定
+  选择并失败互相切换；另支持 brave / tavily / exa（自带 key）与 duckduckgo 兜底；
+  MCP 文本截断到 12k 字符；DuckDuckGo HTML 解析抽为 `parseDuckDuckGoHtml` 便于测试
+- [x] 修复（实测反馈）：`settings:save` 原本整份覆盖 `settings.json`，点「完成」保存 ocrLang 时
+  会把 `webSearchEnabled` 和当前 `model` 一起冲掉，导致「勾选启用搜索下次又变回未勾选」。现改为
+  主进程 `updateSettings()` 合并写入，`ai:model:set` / `ai:websearch:set` 也统一走合并
+- [x] 工具：`web_search` 注入系统提示；结果用 `<untrusted_web_result>` 边界包裹并声明不可信，
+  snippet 截断、条数受限；启用时 `maxTurns` 提升到 8
+- [x] 配置：启用/后端/条数存 `settings.json`（不重写 models.json），Key 存 `auth.json`
+  （`websearch:<backend>`），并支持 models.json 的 `tools.webSearch` 与默认环境变量
+- [x] IPC：`ai:websearch:set` / `ai:websearch:test`；`ai:config` 返回 webSearch 状态
+- [x] 设置界面新增「联网搜索」分区：启用、后端、Key、测试搜索（显示前几条结果）
+- [x] 验证：typecheck/build 通过；原生工具在 openai（过滤）与 anthropic（映射）两条协议验证；
+  DuckDuckGo HTML 解析用样本验证；DDG 在当前网络不可达（预期内的兜底）
+
 ## 2026-10-03 M1 提供商预设 + 配置文件 + 全局模型切换
 
 - [x] `packages/ai` 重构：`Model` 增加 `api`/`baseUrl`/`maxTokens`/`reasoning`；新增 `ApiType`，`StreamOptions` 携带 `apiKey`/`baseUrl`/`headers`/`sessionId`

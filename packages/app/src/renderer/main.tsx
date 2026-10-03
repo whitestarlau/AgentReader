@@ -15,7 +15,7 @@ import { EditorTabs } from "./components/shell/EditorTabs.tsx";
 import { StatusBar } from "./components/shell/StatusBar.tsx";
 import { Welcome } from "./components/shell/Welcome.tsx";
 import { Resizer } from "./components/shell/Resizer.tsx";
-import type { ActivityView, AiConfig, CustomProvider, DocMeta } from "./types.ts";
+import type { ActivityView, AiConfig, CustomProvider, DocMeta, WebSearchTestResult } from "./types.ts";
 import "./styles.css";
 
 declare global {
@@ -48,6 +48,8 @@ declare global {
       listCustomProviders: () => Promise<Record<string, CustomProvider>>;
       saveCustomProvider: (input: { id: string; name?: string; baseUrl: string; models: string[] }) => Promise<{ ok: boolean; id?: string; error?: string }>;
       removeCustomProvider: (id: string) => Promise<boolean>;
+      setWebSearch: (patch: { enabled?: boolean; backend?: string; maxResults?: number }) => Promise<boolean>;
+      testWebSearch: (query?: string) => Promise<WebSearchTestResult>;
       getReading: (docId: string) => Promise<{ page: number | null; location: string | null }>;
       saveReading: (docId: string, patch: { page?: number; location?: string }) => Promise<void>;
       onChatDelta: (cb: (d: string) => void) => () => void;

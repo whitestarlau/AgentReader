@@ -3,6 +3,8 @@ export type AgentTool = {
 	description: string;
 	parameters: Record<string, unknown>;
 	execute: (params: unknown, signal: AbortSignal) => Promise<string>;
+	/** Handled by the provider server-side (e.g. Anthropic web search); the loop never executes it. */
+	native?: boolean;
 };
 
 export type AgentMessage = {
@@ -32,5 +34,6 @@ export type AgentEvent =
 export type AgentConfig = {
 	systemPrompt?: string;
 	tools?: AgentTool[];
+	maxTurns?: number;
 	onEvent?: (event: AgentEvent) => void;
 };
