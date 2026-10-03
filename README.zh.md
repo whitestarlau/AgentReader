@@ -34,6 +34,24 @@ npm run dev:web --workspace=@agentreader/app
 
 设置 API Key：启动后点击侧边栏 `设置`，填 `Base URL / Model / API Key`。
 
+## 打包
+
+在 `packages/app` 下构建 macOS 应用（`.app`）或安装包（`.dmg`）：
+
+```bash
+# 仅生成 .app（免签，验证最快）
+npm run package:dir --workspace=@agentreader/app   # -> out/mac-arm64/AgentReader.app
+
+# 生成 .dmg 安装包
+npm run package --workspace=@agentreader/app       # -> out/AgentReader-<version>-arm64.dmg
+```
+
+产物输出到仓库根的 `out/` 目录。当前仅支持 **arm64** 且 **未签名**（`packages/app/electron-builder.json` 中 `identity: null`）。首次启动时 macOS Gatekeeper 可能拦截未签名应用 —— 右键 → 打开，或执行：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/AgentReader.app
+```
+
 ## 文档
 
 - `docs/requirements.md` 需求文档

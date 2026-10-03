@@ -34,6 +34,24 @@ npm run dev:web --workspace=@agentreader/app
 
 Set the API key: after launch, open `Settings` in the sidebar and fill in `Base URL / Model / API Key`.
 
+## Packaging
+
+Build a macOS app (`.app`) or installer (`.dmg`) from `packages/app`:
+
+```bash
+# .app only (unsigned, fastest to verify)
+npm run package:dir --workspace=@agentreader/app   # -> out/mac-arm64/AgentReader.app
+
+# .dmg installer
+npm run package --workspace=@agentreader/app       # -> out/AgentReader-<version>-arm64.dmg
+```
+
+Artifacts land in the repo-root `out/` directory. Packaging is currently **arm64 only** and **unsigned** (`identity: null` in `packages/app/electron-builder.json`). On first launch macOS Gatekeeper may block the unsigned app — right-click → Open, or:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/AgentReader.app
+```
+
 ## Docs
 
 - `docs/requirements.md` requirements

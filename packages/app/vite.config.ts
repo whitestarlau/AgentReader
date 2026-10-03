@@ -8,6 +8,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
 	root: resolve(__dirname, "src/renderer"),
+	// Packaged builds load the renderer over file://, so asset URLs must be relative.
+	base: "./",
+	build: { outDir: resolve(__dirname, "dist"), emptyOutDir: true },
 	server: { port: 5173, strictPort: true },
 	plugins: [
 		react(),

@@ -866,9 +866,17 @@ function createWindow() {
 			nodeIntegration: false,
 		},
 	});
-	win.loadURL("http://localhost:5173").catch(() => {
-		setTimeout(() => win.loadURL("http://localhost:5173").catch(() => {}), 1000);
-	});
+	// Dev: talk to the Vite server. Packaged: load the bundled renderer over file://.
+	// main.js lives in dist-electron/, the renderer bundle in dist/.
+	if (app.isPackaged) {
+		win
+			.loadFile(join(__dirname, "../dist/index.html"))
+			.catch((e) => console.error("load failed", e));
+	} else {
+		win.loadURL("http://localhost:5173").catch(() => {
+			setTimeout(() => win.loadURL("http://localhost:5173").catch(() => {}), 1000);
+		});
+	}
 	win.webContents.on("did-fail-load", (_e, code, desc, url) => {
 		console.error("load failed", code, desc, url);
 	});
