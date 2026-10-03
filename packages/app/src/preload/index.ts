@@ -12,8 +12,17 @@ contextBridge.exposeInMainWorld("api", {
 		ipcRenderer.invoke("doc:ocr:save", docId, page, text),
 	getDocPath: (docId: string) => ipcRenderer.invoke("doc:path", docId),
 	readFile: (path: string) => ipcRenderer.invoke("doc:read", path),
-	chat: (docId: string, convId: string, prompt: string, history: unknown, page?: number) =>
-		ipcRenderer.invoke("chat:send", docId, convId, prompt, history, page),
+	chat: (
+		docId: string,
+		convId: string,
+		prompt: string,
+		history: unknown,
+		page?: number,
+		persistUser?: boolean,
+	) => ipcRenderer.invoke("chat:send", docId, convId, prompt, history, page, persistUser),
+	stopChat: (docId: string, convId: string) => ipcRenderer.invoke("chat:stop", docId, convId),
+	editChat: (docId: string, convId: string, messageId: string, content: string) =>
+		ipcRenderer.invoke("chat:edit", docId, convId, messageId, content),
 	getChats: (docId: string, convId: string) => ipcRenderer.invoke("chat:list", docId, convId),
 	appendChat: (docId: string, convId: string, entry: unknown) =>
 		ipcRenderer.invoke("chat:append", docId, convId, entry),

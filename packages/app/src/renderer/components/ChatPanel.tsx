@@ -8,9 +8,25 @@ type TimelineItem =
 	| { kind: "reasoning"; content: string }
 	| { kind: "tool"; id: string; name: string; args: string; result?: string; pending?: boolean };
 
-type Msg = { role: "user" | "assistant"; content: string; timeline?: TimelineItem[] };
+type Msg = {
+	id?: string;
+	role: "user" | "assistant";
+	content: string;
+	timeline?: TimelineItem[];
+	stopped?: boolean;
+};
+type ChatRow = { id?: string; role?: string; content?: string; timeline?: TimelineItem[] };
 type Conv = { id: string; title: string };
 type Props = { selection: Selection | null; docId: string | null; page: number };
+
+function toMsg(r: ChatRow): Msg {
+	return {
+		id: r.id,
+		role: r.role === "assistant" ? "assistant" : "user",
+		content: r.content ?? "",
+		timeline: r.timeline,
+	};
+}
 
 function toolSummary(name: string, args: string): string {
 	try {
@@ -55,6 +71,9 @@ export function ChatPanel({ selection, docId, page }: Props) {
 	const [msgs, setMsgs] = useState<Msg[]>([]);
 	const [input, setInput] = useState("");
 	const [streaming, setStreaming] = useState(false);
+	const [stopped, setStopped] = useState(false);
+	const [editingId, setEditingId] = useState<string | null>(null);
+	const [editText, setEditText] = useState("");
 	const streamRef = useRef("");
 	const reasoningRef = useRef("");
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -85,15 +104,7 @@ export function ChatPanel({ selection, docId, page }: Props) {
 	useEffect(() => { refreshConvs(); }, [docId]);
 	useEffect(() => {
 		if (!docId || !convId) { setMsgs([]); return; }
-		window.api.getChats(docId, convId).then((rows) =>
-			setMsgs(
-				rows.map((r) => ({
-					role: r.role === "assistant" ? "assistant" : "user",
-					content: r.content ?? "",
-					timeline: (r as { timeline?: TimelineItem[] }).timeline,
-				})),
-			),
-		);
+		window.api.getChats(docId, convId).then((rows) => setMsgs(rows.map(toMsg)));
 	}, [docId, convId]);
 
 	// 流式期间原地更新最后一条 assistant 消息的某一个字段
@@ -150,6 +161,25 @@ export function ChatPanel({ selection, docId, page }: Props) {
 		scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
 	}, [msgs]);
 
+	const stop = useCallback(() => {
+		if (!docId || !convId) return;
+		setStopped(true);
+		window.api.stopChat(docId, convId).catch(() => {});
+	}, [docId, convId]);
+
+	// Esc stops generation while streaming.
+	useEffect(() => {
+		if (!streaming) return;
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				e.preventDefault();
+				stop();
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [streaming, stop]);
+
 	const createNew = async () => {
 		if (!docId) return;
 		const c: Conv = await window.api.createConversation(docId);
@@ -172,25 +202,27 @@ export function ChatPanel({ selection, docId, page }: Props) {
 		}
 	};
 
-	const send = async () => {
-		if (!input.trim() || !docId || !convId) return;
-		const sel = selection;
-		const quote = sel?.text?.trim();
-		const prompt = quote && sel
-			? `【引用文本 · 第${sel.page}页 · ${SELECTION_LABEL[sel.kind]}】\n${quote.slice(0, 4000)}\n\n【问题】\n${input}`
-			: input;
-		const history = msgs.map((m) => ({ role: m.role, content: m.content }));
-		setMsgs((m) => [...m, { role: "user", content: prompt }]);
-		setInput("");
+	/**
+	 * Send `prompt` with the given `history` and stream the reply.
+	 * The caller must have already appended the user message to `msgs`.
+	 */
+	const runChat = async (
+		history: { role: string; content: string }[],
+		prompt: string,
+		persistUser = true,
+	) => {
+		if (!docId || !convId) return null;
+		setStopped(false);
 		setStreaming(true);
 		streamRef.current = "";
 		reasoningRef.current = "";
 		setMsgs((m) => [...m, { role: "assistant", content: "", timeline: [] }]);
-		const res: { ok?: boolean; error?: string; content?: string; title?: string } = await window.api.chat(docId, convId, prompt, history, page);
+		const res: { ok?: boolean; error?: string; content?: string; title?: string; userId?: string } =
+			await window.api.chat(docId, convId, prompt, history, page, persistUser);
 		if (res.error) {
 			setMsgs((m) => { const c = [...m]; c[c.length - 1] = { role: "assistant", content: `❌ ${res.error}` }; return c; });
 			setStreaming(false);
-			return;
+			return res;
 		}
 		if (res.title) {
 			setConvs((cs) => cs.map((c) => (c.id === convId ? { ...c, title: res.title! } : c)));
@@ -200,6 +232,64 @@ export function ChatPanel({ selection, docId, page }: Props) {
 			setStreaming(false);
 		}
 		refreshConvs(convId);
+		return res;
+	};
+
+	const send = async () => {
+		if (!input.trim() || !docId || !convId || streaming) return;
+		const sel = selection;
+		const quote = sel?.text?.trim();
+		const prompt = quote && sel
+			? `【引用文本 · 第${sel.page}页 · ${SELECTION_LABEL[sel.kind]}】\n${quote.slice(0, 4000)}\n\n【问题】\n${input}`
+			: input;
+		const history = msgs.map((m) => ({ role: m.role, content: m.content }));
+		setMsgs((m) => [...m, { role: "user", content: prompt }]);
+		setInput("");
+		const res = await runChat(history, prompt);
+		// Attach the persisted id to the user turn so it becomes editable.
+		if (res?.userId) {
+			const uid = res.userId;
+			setMsgs((m) => {
+				const c = [...m];
+				for (let i = c.length - 1; i >= 0; i--) {
+					if (c[i].role === "user" && !c[i].id) {
+						c[i] = { ...c[i], id: uid };
+						break;
+					}
+				}
+				return c;
+			});
+		}
+	};
+
+	const startEdit = (m: Msg) => {
+		if (!m.id) return;
+		setEditingId(m.id);
+		setEditText(m.content);
+	};
+
+	const saveEdit = async () => {
+		if (!docId || !convId || !editingId) return;
+		const target = editingId;
+		const content = editText.trim();
+		if (!content) return;
+		setEditingId(null);
+		const res = await window.api.editChat(docId, convId, target, content);
+		if (!res.ok) {
+			alert(res.error || "编辑失败");
+			return;
+		}
+		const rows = (res.rows ?? []) as ChatRow[];
+		const mapped = rows.map(toMsg);
+		setMsgs(mapped);
+		const last = mapped[mapped.length - 1];
+		if (last) {
+			await runChat(
+				mapped.slice(0, -1).map((m) => ({ role: m.role, content: m.content })),
+				last.content,
+				false,
+			);
+		}
 	};
 
 	return (
@@ -340,9 +430,42 @@ export function ChatPanel({ selection, docId, page }: Props) {
 											)}
 											{isLast && streaming && !m.content && tl.length === 0 && <div className="msg-status">思考中…</div>}
 											{isLast && streaming && !m.content && tl.length > 0 && <div className="msg-status">生成中…</div>}
+											{isLast && stopped && !streaming && <div className="msg-status">已停止</div>}
 										</>
+									) : editingId && m.id === editingId ? (
+										<div className="msg-edit">
+											<textarea
+												value={editText}
+												onChange={(e) => setEditText(e.target.value)}
+												rows={3}
+												onKeyDown={(e) => {
+													if (e.key === "Escape") setEditingId(null);
+													if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveEdit();
+												}}
+											/>
+											<div className="button-row">
+												<button type="button" className="primary" onClick={saveEdit}>
+													保存并重新生成
+												</button>
+												<button type="button" onClick={() => setEditingId(null)}>
+													取消
+												</button>
+											</div>
+										</div>
 									) : (
-										m.content
+										<div className="msg-user">
+											<div className="msg-user-text">{m.content}</div>
+											{m.id && !streaming && (
+												<button
+													type="button"
+													className="msg-edit-btn"
+													onClick={() => startEdit(m)}
+													title="编辑并重新生成"
+												>
+													<Icon name="edit" size={13} />
+												</button>
+											)}
+										</div>
 									)}
 								</div>
 							</div>
@@ -365,9 +488,15 @@ export function ChatPanel({ selection, docId, page }: Props) {
 					disabled={!docId || !convId || streaming}
 					rows={1}
 				/>
-				<button type="button" className="icon-btn" onClick={send} disabled={!docId || !convId || streaming} title="发送">
-					<Icon name="send" size={15} />
-				</button>
+				{streaming ? (
+					<button type="button" className="icon-btn stop" onClick={stop} title="停止生成 (Esc)">
+						<Icon name="stop" size={15} />
+					</button>
+				) : (
+					<button type="button" className="icon-btn" onClick={send} disabled={!docId || !convId} title="发送">
+						<Icon name="send" size={15} />
+					</button>
+				)}
 			</div>
 		</div>
 	);

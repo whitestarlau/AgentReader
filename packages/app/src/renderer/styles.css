@@ -1021,6 +1021,54 @@ textarea::placeholder {
 	color: var(--vscode-fg-dim);
 	font-size: 12px;
 }
+.msg-user {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+}
+.msg-user-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.msg-edit-btn {
+	flex: 0 0 auto;
+	margin-top: 1px;
+	width: 22px;
+	height: 22px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	background: none;
+	color: var(--vscode-fg-dim);
+	border-radius: 4px;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 0.12s ease;
+}
+.msg.user:hover .msg-edit-btn {
+	opacity: 1;
+}
+.msg-edit-btn:hover {
+	background: rgba(255, 255, 255, 0.1);
+	color: var(--vscode-fg);
+}
+.msg-edit {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	width: 100%;
+}
+.msg-edit textarea {
+	width: 100%;
+	resize: vertical;
+	font: inherit;
+	line-height: 1.5;
+}
+.chat-composer .icon-btn.stop {
+	color: #f48771;
+}
 .msg-tool {
 	margin: 0 0 8px;
 	padding: 5px 8px;

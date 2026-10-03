@@ -360,3 +360,12 @@ M2 与 M3 相互独立，可并行；M1 是硬前置。
 | 密钥存储 | `Reference/pi/packages/coding-agent/src/core/auth-storage.ts`、`packages/ai/src/auth/helpers.ts` |
 | Skill 加载与校验 | `Reference/pi/packages/coding-agent/src/core/skills.ts`、`packages/agent/src/harness/skills.ts` |
 | 服务商原生搜索 | `Reference/pi/packages/ai/src/api/anthropic-messages.ts`（`WebSearch` 工具名映射） |
+
+## 15. 对话编辑与停止生成（补充）
+
+- **编辑历史用户消息**：chats JSONL 截断到该条并替换内容（`main/transcript.ts`），从该条重新生成，
+  其后的消息丢弃；编辑流不再重复落盘用户消息（`chat:send` 的 `persistUser=false`）。
+- **停止/打断生成**：`chat:send` 用 `AbortController` 注册在途对话（`activeChats`），`chat:stop` 触发 abort，
+  abort 信号透传到 AgentLoop/适配器；已输出的部分照常持久化。UI 为「停止」按钮 + `Esc`。
+- 顺带修复：用户消息此前未持久化，重载会话只剩回答。
+

@@ -42,7 +42,9 @@ declare global {
       saveOcr: (id: string, page: number, text: string) => Promise<void>;
       getDocPath: (id: string) => Promise<string | null>;
       readFile: (path: string) => Promise<Uint8Array>;
-      chat: (docId: string, convId: string, prompt: string, history: unknown, page?: number) => Promise<{ ok?: boolean; error?: string; content?: string; title?: string }>;
+      chat: (docId: string, convId: string, prompt: string, history: unknown, page?: number, persistUser?: boolean) => Promise<{ ok?: boolean; error?: string; content?: string; title?: string; userId?: string }>;
+      stopChat: (docId: string, convId: string) => Promise<boolean>;
+      editChat: (docId: string, convId: string, messageId: string, content: string) => Promise<{ ok: boolean; error?: string; rows?: unknown[] }>;
       getChats: (docId: string, convId: string) => Promise<{ role: string; content: string }[]>;
       appendChat: (docId: string, convId: string, e: unknown) => Promise<void>;
       listConversations: (docId: string) => Promise<{ id: string; title: string }[]>;

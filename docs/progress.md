@@ -1,5 +1,16 @@
 # 进度记录
 
+## 2026-10-03 对话编辑 + 停止生成（打断）
+
+- [x] 修复：用户消息此前**没有落盘**（`chat:append` 存在但无人调用，`chat:send` 只写 assistant），
+  重载会话只剩回答。现在 `chat:send` 落盘用户消息并回传 `id`，历史会话完整
+- [x] 编辑历史用户消息：新增 `main/transcript.ts`（`editTranscript`）把 chats JSONL 截断到该条并替换内容；
+  IPC `chat:edit`；UI 用户气泡悬停出现编辑按钮，行内编辑后「保存并重新生成」，以该条为界重跑，后续对话丢弃
+- [x] 停止/打断：`chat:send` 用 `AbortController` 注册在途对话（`activeChats`），IPC `chat:stop` 触发 abort，
+  信号透传给 AgentLoop 与流式适配器；保留已输出部分
+- [x] UI：流式时发送按钮变「停止」（Esc 也可触发），停止后末条显示「已停止」；编辑流不重复落盘（`persistUser=false`）
+- [x] 验证：typecheck/build；`transcript.editTranscript` 截断+替换冒烟（含非法消息拒绝）
+
 ## 2026-10-03 M4 打磨（首轮）
 
 - [x] 抽出系统提示：新增 `packages/agent/src/prompt.ts` 的纯函数 `buildDocumentSystemPrompt`，

@@ -20,7 +20,9 @@ type IconName =
 	| "book"
 	| "panel"
 	| "tool"
-	| "check";
+	| "check"
+	| "edit"
+	| "stop";
 
 const PATHS: Record<IconName, ReactNode> = {
 	library: (
@@ -87,6 +89,13 @@ const PATHS: Record<IconName, ReactNode> = {
 		</>
 	),
 	check: <path d="M3 8.4 6.4 11.6 13 4.4" />,
+	edit: (
+		<>
+			<path d="M9.6 2.6 13.4 6.4 6.2 13.6H2.4v-3.8z" />
+			<path d="M8.4 3.8 12.2 7.6" />
+		</>
+	),
+	stop: <rect x="3.6" y="3.6" width="8.8" height="8.8" rx="1.2" />,
 	tool: (
 		<>
 			<path d="M10.6 1.6a3.6 3.6 0 0 0-3 5.5L1.8 12.9l1.3 1.3 5.8-5.8a3.6 3.6 0 0 0 4.9-4.6l-2.1 2.1-1.7-1.7 2.1-2.1a3.6 3.6 0 0 0-1.5-.5z" />

@@ -49,11 +49,15 @@ import {
 	writeDocSkills,
 	writeTrusted,
 } from "./skills.ts";
+import { editTranscript } from "./transcript.ts";
 import { BACKEND_ENV, searchWeb } from "./web-search.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const LIBRARY_ROOT = join(app.getPath("userData"), "library");
+
+/** In-flight chat streams keyed by `${docId}:${convId}`, so the UI can stop them. */
+const activeChats = new Map<string, AbortController>();
 
 function getDocDir(docId: string) {
 	return join(LIBRARY_ROOT, docId);
@@ -199,6 +203,25 @@ function ensureConversations(docId: string) {
 }
 function saveConversations(docId: string, list: unknown) {
 	writeFileSync(conversationsFile(docId), JSON.stringify(list, null, 2));
+}
+
+/** Append one transcript entry with a stable id; returns the stored entry id. */
+function appendChatEntry(
+	docId: string,
+	convId: string,
+	entry: Record<string, unknown>,
+): { id: string; timestamp: number } {
+	const p = chatFile(docId, convId);
+	mkdirSync(join(getDocDir(docId), "chats"), { recursive: true });
+	const full = { id: randomUUID(), timestamp: Date.now(), ...entry };
+	appendFileSync(p, `${JSON.stringify(full)}\n`);
+	const list = ensureConversations(docId);
+	const conv = list.find((c: { id: string }) => c.id === convId);
+	if (conv) {
+		conv.updatedAt = Date.now();
+		saveConversations(docId, list);
+	}
+	return { id: full.id as string, timestamp: full.timestamp as number };
 }
 
 /** Merge GUI-managed custom providers under the models.json providers (file wins on id conflict). */
@@ -600,22 +623,38 @@ ipcMain.handle("chat:list", (_e, docId: string, convId?: string) => {
 
 ipcMain.handle("chat:append", (_e, docId: string, convId: string, entry: unknown) => {
 	if (!convId) return;
-	const p = chatFile(docId, convId);
-	mkdirSync(join(getDocDir(docId), "chats"), { recursive: true });
-	appendFileSync(
-		p,
-		`${JSON.stringify({ id: randomUUID(), timestamp: Date.now(), ...(entry as object) })}\n`,
-	);
+	const stored = appendChatEntry(docId, convId, (entry as Record<string, unknown>) ?? {});
 	const list = ensureConversations(docId);
 	const conv = list.find((c: { id: string }) => c.id === convId);
-	if (conv) {
-		conv.updatedAt = Date.now();
-		if (!conv.title || conv.title.startsWith("对话 ")) {
-			const firstText = (entry as { content?: string })?.content?.slice(0, 20);
-			if (firstText) conv.title = firstText;
+	if (conv && (!conv.title || conv.title.startsWith("对话 "))) {
+		const firstText = (entry as { content?: string })?.content?.slice(0, 20);
+		if (firstText) {
+			conv.title = firstText;
+			saveConversations(docId, list);
 		}
-		saveConversations(docId, list);
 	}
+	return stored;
+});
+
+ipcMain.handle(
+	"chat:edit",
+	(_e, docId: string, convId: string, messageId: string, content: string) => {
+		const result = editTranscript(chatFile(docId, convId), messageId, content);
+		if (result.ok) {
+			const list = ensureConversations(docId);
+			const conv = list.find((c: { id: string }) => c.id === convId);
+			if (conv) {
+				conv.updatedAt = Date.now();
+				saveConversations(docId, list);
+			}
+		}
+		return result;
+	},
+);
+
+ipcMain.handle("chat:stop", (_e, docId: string, convId: string) => {
+	activeChats.get(`${docId}:${convId}`)?.abort();
+	return true;
 });
 
 ipcMain.handle("settings:get", () => readSettings());
@@ -923,6 +962,7 @@ ipcMain.handle(
 		prompt: string,
 		history: { role: string; content: string }[],
 		page?: number,
+		persistUser = true,
 	) => {
 		const { runtime, file } = buildRuntime();
 		const model = resolveCurrentModel(runtime, file);
@@ -930,6 +970,12 @@ ipcMain.handle(
 		if (!runtime.resolveApiKey(model.provider)) {
 			return { error: `未配置 ${model.provider} 的 API Key，请在设置中填写` };
 		}
+
+		// Register a controller so the UI can stop generation mid-stream.
+		const chatKey = `${docId}:${convId}`;
+		activeChats.get(chatKey)?.abort();
+		const controller = new AbortController();
+		activeChats.set(chatKey, controller);
 
 		// First user message in this conversation -> let the model name it.
 		// Determine "first" from the on-disk transcript rather than trusting the
@@ -968,6 +1014,12 @@ ipcMain.handle(
 				} catch {}
 			}
 		}
+
+		// Persist the user turn with a stable id so it can be edited later.
+		// Edits already rewrote the stored line, so they skip this.
+		const userEntry = persistUser
+			? appendChatEntry(docId, convId, { role: "user", content: prompt })
+			: null;
 
 		const docText = await getDocText(docId).catch(() => ({
 			pages: [] as string[],
@@ -1288,6 +1340,7 @@ ipcMain.handle(
 					tools,
 					maxTurns: getAgentMaxTurns(),
 				} as never,
+				controller.signal,
 			)) {
 				if (evt.type === "message_delta") {
 					full += (evt as { delta: string }).delta;
@@ -1335,7 +1388,13 @@ ipcMain.handle(
 						systemPrompt,
 						messages: [...history, { role: "user", content: prompt }] as never,
 					};
-					for await (const e of fallbackStream(model, fallbackContext as never, {} as never)) {
+					for await (const e of fallbackStream(
+						model,
+						fallbackContext as never,
+						{
+							signal: controller.signal,
+						} as never,
+					)) {
 						if (e.type === "text_delta") {
 							full += (e as { delta: string }).delta;
 							win?.webContents.send("chat:delta", (e as { delta: string }).delta);
@@ -1349,7 +1408,12 @@ ipcMain.handle(
 					}
 					persistAssistant();
 					win?.webContents.send("chat:done", full);
-					return { ok: true, content: full, title: generatedTitle ?? undefined };
+					return {
+						ok: true,
+						content: full,
+						title: generatedTitle ?? undefined,
+						userId: userEntry?.id,
+					};
 				} catch (e) {
 					console.error("[chat] fallback error", e);
 					return { error: lastError };
@@ -1357,11 +1421,13 @@ ipcMain.handle(
 			}
 			persistAssistant();
 			win?.webContents.send("chat:done", full);
-			return { ok: true, content: full, title: generatedTitle ?? undefined };
+			return { ok: true, content: full, title: generatedTitle ?? undefined, userId: userEntry?.id };
 		} catch (e) {
 			console.error("[chat] fetch error", e);
 			persistAssistant();
 			return { error: String(e) };
+		} finally {
+			if (activeChats.get(chatKey) === controller) activeChats.delete(chatKey);
 		}
 	},
 );
