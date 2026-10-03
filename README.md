@@ -76,3 +76,7 @@ AgentReader/
 - Phase 1 MVP: PDF + annotations + sidebar chat + library
 - Phase 2: EPUB + RAG + multi-provider
 - Phase 3: dual-track OCR (scanned documents) + export + extensions
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).

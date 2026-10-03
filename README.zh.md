@@ -76,3 +76,7 @@ AgentReader/
 - Phase 1 MVP：PDF + 标注 + 侧边栏对话 + 图书馆
 - Phase 2：EPUB + RAG + 多提供商
 - Phase 3：OCR 双轨（扫描版）+ 导出 + 扩展系统
+
+## 开源协议
+
+基于 [Apache License 2.0](LICENSE) 授权。
