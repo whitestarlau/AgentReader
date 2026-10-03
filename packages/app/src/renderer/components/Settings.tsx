@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AiConfig, CustomProvider, WebSearchTestResult } from "../types.ts";
+import type { AiConfig, CustomProvider, SkillsPayload, WebSearchTestResult } from "../types.ts";
 import { Icon } from "./Icons.tsx";
 
 const EMPTY_FORM = { id: "", name: "", baseUrl: "", models: "", key: "" };
@@ -8,13 +8,22 @@ const SECTIONS = [
 	{ id: "models", label: "模型与提供商" },
 	{ id: "custom", label: "OpenAI 兼容" },
 	{ id: "websearch", label: "联网搜索" },
+	{ id: "skills", label: "技能" },
 	{ id: "reading", label: "阅读" },
 	{ id: "config", label: "配置文件" },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
-export function Settings({ onClose, onSaved }: { onClose: () => void; onSaved?: () => void }) {
+export function Settings({
+	docId,
+	onClose,
+	onSaved,
+}: {
+	docId?: string | null;
+	onClose: () => void;
+	onSaved?: () => void;
+}) {
 	const [ai, setAi] = useState<AiConfig | null>(null);
 	const [custom, setCustom] = useState<Record<string, CustomProvider>>({});
 	const [ocrLang, setOcrLang] = useState("chi_sim+eng");
@@ -26,18 +35,22 @@ export function Settings({ onClose, onSaved }: { onClose: () => void; onSaved?: 
 	const [busy, setBusy] = useState(false);
 	const [note, setNote] = useState<string | null>(null);
 	const [wsEnabled, setWsEnabled] = useState(false);
-	const [wsBackend, setWsBackend] = useState("duckduckgo");
+	const [wsBackend, setWsBackend] = useState("auto");
 	const [wsMax, setWsMax] = useState(5);
 	const [wsKey, setWsKey] = useState("");
 	const [wsTest, setWsTest] = useState<WebSearchTestResult | null>(null);
+	const [skills, setSkills] = useState<SkillsPayload>({ skills: [], diagnostics: [] });
+	const [enabledSkills, setEnabledSkills] = useState<string[]>([]);
 	const [section, setSection] = useState<SectionId>("models");
 	const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
 	const load = useCallback(async () => {
-		const [config, settings, customs] = await Promise.all([
+		const [config, settings, customs, skillsData, docSkills] = await Promise.all([
 			window.api.getAiConfig(),
 			window.api.getSettings(),
 			window.api.listCustomProviders(),
+			window.api.listSkills(),
+			docId ? window.api.getDocSkills(docId) : Promise.resolve<string[]>([]),
 		]);
 		setAi(config);
 		setCustom(customs);
@@ -47,12 +60,14 @@ export function Settings({ onClose, onSaved }: { onClose: () => void; onSaved?: 
 		setWsEnabled(config.webSearch.enabled);
 		setWsBackend(config.webSearch.backend);
 		setWsMax(config.webSearch.maxResults);
+		setSkills(skillsData);
+		setEnabledSkills(docSkills);
 		setProviderId((prev) => {
 			if (prev) return prev;
 			const active = config.defaultModel?.split("/")[0];
 			return active ?? config.providers.find((p) => p.configured)?.id ?? config.providers[0]?.id ?? "";
 		});
-	}, []);
+	}, [docId]);
 
 	useEffect(() => {
 		load().catch(() => {});
@@ -176,6 +191,32 @@ export function Settings({ onClose, onSaved }: { onClose: () => void; onSaved?: 
 		} finally {
 			setBusy(false);
 		}
+	};
+
+	const importSkill = async () => {
+		setBusy(true);
+		try {
+			const result = await window.api.importSkill();
+			if (result.canceled) return;
+			setSkills(result.skills);
+			setNote(result.ok ? `已导入技能 ${result.name}` : `导入失败：${result.error}`);
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const removeSkill = async (name: string) => {
+		if (!confirm(`删除技能「${name}」？`)) return;
+		setSkills(await window.api.deleteSkill(name));
+		setEnabledSkills((prev) => prev.filter((n) => n !== name));
+		setNote(`已删除技能 ${name}`);
+	};
+
+	const toggleSkill = async (name: string, on: boolean) => {
+		if (!docId) return;
+		const next = on ? [...new Set([...enabledSkills, name])] : enabledSkills.filter((n) => n !== name);
+		setEnabledSkills(next);
+		await window.api.setDocSkills(docId, next);
 	};
 
 	const refresh = async () => {
@@ -558,6 +599,54 @@ export function Settings({ onClose, onSaved }: { onClose: () => void; onSaved?: 
 									)}
 								</div>
 							)}
+						</div>
+
+						<div
+							className="settings-section"
+							ref={(el) => {
+								sectionRefs.current.skills = el;
+							}}
+						>
+							<h3>技能</h3>
+							<p className="section-desc">
+								导入 SKILL.md 技能，并按书启用。技能正文由模型按需用 read_skill 读取；当前版本仅提供说明文本，
+								其中的脚本不会被自动执行。
+							</p>
+
+							<div className="button-row" style={{ marginBottom: 10 }}>
+								<button type="button" className="primary" onClick={importSkill} disabled={busy}>
+									导入技能（文件夹 / .md / .zip）
+								</button>
+							</div>
+
+							{skills.diagnostics.length > 0 && (
+								<div className="config-errors">已跳过：{skills.diagnostics.join("；")}</div>
+							)}
+
+							{skills.skills.length === 0 ? (
+								<div className="hint">还没有导入任何技能。</div>
+							) : (
+								<div className="skill-list">
+									{skills.skills.map((s) => (
+										<div key={s.name} className="skill-item">
+											<label className="skill-item-main">
+												<input
+													type="checkbox"
+													checked={enabledSkills.includes(s.name)}
+													disabled={!docId}
+													onChange={(e) => toggleSkill(s.name, e.target.checked)}
+												/>
+												<span className="skill-name">{s.name}</span>
+												<span className="hint">{s.description}</span>
+											</label>
+											<button type="button" onClick={() => removeSkill(s.name)}>
+												删除
+											</button>
+										</div>
+									))}
+								</div>
+							)}
+							{!docId && <div className="hint">打开一本书后，即可针对该书勾选启用的技能。</div>}
 						</div>
 
 						<div

@@ -207,14 +207,15 @@ packages/app/src/renderer
 
 采用 agentskills.io 的 `SKILL.md` 规范（pi 已实现，直接借鉴其解析与校验）。
 
-1. **技能库**：`{userData}/skills/{skill-name}/SKILL.md`（含 frontmatter `name`/`description`）。新增 `main/skills/load.ts`：递归发现 `SKILL.md`、解析 frontmatter、校验 name（小写字母/数字/连字符，且与目录同名）与 description（必填、长度上限），输出诊断信息。
-2. **导入**：`skills:import` 支持选择文件夹或 `.zip`（解压后按上面结构校验），复制进技能库；同名冲突给出选择（覆盖/重命名/跳过）。
-3. **按书启用**：`library/{docId}/skills.json` 存 `{ "enabled": ["股神教你读财报", ...] }`；默认空（不启用任何 skill）。
-4. **系统提示注入**：PromptBuilder 只把「启用 skill 的名称 + description」列进系统提示（省 token），正文由模型按需调用 `read_skill(name)` 工具加载；`read_skill` 只允许读取技能库内文件，禁止路径穿越。
-5. **UI**：
-   - 侧栏新增「技能」视图：导入、列表、删除、查看 description 与来源。
-   - 每本书的阅读界面里提供「本书启用的技能」多选（写入该文档的 `skills.json`）。
-6. **安全**：skill 正文同样是不可信输入，包裹边界并在提示中声明；资源相对路径仅允许解析到该 skill 目录内（受 `read_skill` 限制）。
+> 本版范围：**仅提示词技能**。导入/校验/按书启用/`read_skill` 均不执行任何代码。让模型调用
+> Python/Node 脚本的「脚本型技能」单列为 M3.5，需先设计执行权限与隔离（见 §14）。
+
+1. **技能库**：`{userData}/skills/{skill-name}/SKILL.md`（含 frontmatter `name`/`description`）。`main/skills.ts`：扫描目录、解析 frontmatter、校验并规范化 name（小写字母/数字/连字符）、description（必填、长度上限），输出诊断。
+2. **导入**：`skills:import` 支持包含 `SKILL.md` 的文件夹、单个 `.md`、`.zip`（用 JSZip 解压保留资源），复制进技能库；同名拒绝并提示。
+3. **按书启用**：`library/{docId}/skills.json` 存 `{ "enabled": ["brave-search", ...] }`；默认空（不启用任何 skill）。
+4. **系统提示注入**：只把「启用 skill 的名称 + description」列进系统提示（省 token），正文由模型按需调用 `read_skill(name)` 工具加载；`read_skill` 仅在当前书已启用的技能集合内查找。
+5. **UI**：设置里新增「技能」分区：导入、列表、删除、按当前书勾选启用。
+6. **安全**：技能列表与正文均按不可信输入对待；本版不执行技能内的脚本。
 
 ## 9. 系统提示与工具编排（横切）
 
@@ -232,13 +233,24 @@ packages/app/src/renderer
 | 里程碑 | 内容 | 交付判定 | 依赖 |
 |---|---|---|---|
 | M1 地基 | 功能一全部 + 功能二的全局切换 | 切换提供商/模型后对话可用；`models.json` 可被 AI 编辑并校验 | 无 |
-| M2 联网 | 功能三 | 至少 `brave` 与 `native` 两个后端可用，结果带来源 | M1 |
-| M3 技能 | 功能四 | 可导入 skill，并按书启用后模型能用 `read_skill` 调用 | M1（提示层） |
-| M4 打磨 | 迁移、文档、提示词、错误提示、`maxTurns` 配置 | 旧配置无损升级；附录 A/B 落地 | M1–M3 |
+| M2 联网 | 功能三 | 免 key 的 Exa/Parallel MCP 后端 + 自带 key 后端，结果带来源 | M1 |
+| M3 技能 | 功能四（仅提示词） | 可导入 skill，按书启用后模型能用 `read_skill` 读取正文 | M1（提示层） |
+| M3.5 脚本技能 | 让模型执行技能内脚本 | 逐技能授权 + cwd 限制 + 超时/输出截断 + 网络开关；可选容器 | M3 |
+| M4 打磨 | 迁移、文档、提示词、错误提示 | 旧配置无损升级；附录 A/B 落地 | M1–M3 |
 
 M2 与 M3 相互独立，可并行；M1 是硬前置。
 
-> 进度：M1、M2 已完成（见 `docs/progress.md`），下一步 M3。
+> 进度：M1、M2、M3 已完成（见 `docs/progress.md`）；下一步 M3.5（脚本技能执行）或 M4 打磨。
+
+## 14. M3.5 脚本技能（待设计）
+
+很多技能（如 Anthropic 的文档处理、pi 的 brave-search）靠模型调用 `python`/`node` 脚本实现。执行脚本 = 本机任意代码执行，能读取 `library/` 与联网外传，必须先有边界：
+
+- 新增**默认关闭**的 `run_skill_script` 工具，逐技能弹窗授权后才可用；
+- `cwd` 锁在该技能目录，只允许额外写一个独立临时目录；
+- 超时、输出截断、可选择关闭网络；JS 用 `ELECTRON_RUN_AS_NODE` + Electron 自带 Node，Python 需检测系统 `python3`；
+- 依赖安装（`pip install` / `npm install`）同样算执行，需单独确认；
+- 隔离强度选项：macOS `sandbox-exec`（弱）或 Docker 容器（强，需用户安装 Docker）。
 
 ## 11. 非目标（本版不做）
 

@@ -1,5 +1,18 @@
 # 进度记录
 
+## 2026-10-03 M3 技能（提示词版）
+
+- [x] `packages/app/src/main/skills.ts`：技能库 `{userData}/skills/{name}/SKILL.md`，frontmatter
+  解析（name/description）+ 名称规范化（`a-z0-9-`）；加载、正文读取、删除
+- [x] 导入 `skills:import`：支持包含 `SKILL.md` 的文件夹 / 单个 `.md` / `.zip`（JSZip 解压保留资源），
+  校验后写入技能库；同名拒绝；校验失败自动回滚
+- [x] 按书启用：`library/{docId}/skills.json` 存 `{enabled:[]}`，IPC `skills:doc:get` / `skills:doc:set`
+- [x] 对话注入：只把启用技能的 name+description 放进系统提示，正文由 `read_skill` 按需加载；
+  启用技能时 maxTurns 提到 8；系统提示声明当前不执行脚本
+- [x] 设置新增「技能」分区：导入 / 列表 / 删除 + 按当前书勾选启用（`docId` 由 main 传入）
+- [x] 范围：仅提示词技能，不执行任何脚本；脚本型技能单列 M3.5（见 `docs/plan-v0.2.md` §14）
+- [x] 验证：typecheck/build 通过；用真实主进程模块验证加载 / 正文 / 按书启用 / 目录导入 / 非法导入回滚
+
 ## 2026-10-03 M2 联网搜索（Web Search）
 
 - [x] `packages/ai` / `packages/agent`：`ToolDefinition`/`AgentTool` 增加 `native` 标记，

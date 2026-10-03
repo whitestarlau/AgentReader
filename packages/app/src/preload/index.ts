@@ -40,6 +40,12 @@ contextBridge.exposeInMainWorld("api", {
 	setWebSearch: (patch: { enabled?: boolean; backend?: string; maxResults?: number }) =>
 		ipcRenderer.invoke("ai:websearch:set", patch),
 	testWebSearch: (query?: string) => ipcRenderer.invoke("ai:websearch:test", query),
+	listSkills: () => ipcRenderer.invoke("skills:list"),
+	importSkill: () => ipcRenderer.invoke("skills:import"),
+	deleteSkill: (name: string) => ipcRenderer.invoke("skills:delete", name),
+	getDocSkills: (docId: string) => ipcRenderer.invoke("skills:doc:get", docId),
+	setDocSkills: (docId: string, enabled: string[]) =>
+		ipcRenderer.invoke("skills:doc:set", docId, enabled),
 	getReading: (docId: string) => ipcRenderer.invoke("reading:get", docId),
 	saveReading: (docId: string, patch: unknown) => ipcRenderer.invoke("reading:save", docId, patch),
 	onChatDelta: (cb: (d: string) => void) => {

@@ -1,3 +1,15 @@
+export type SkillInfo = { name: string; description: string; dir: string };
+
+export type SkillsPayload = { skills: SkillInfo[]; diagnostics: string[] };
+
+export type SkillImportResult = {
+	ok: boolean;
+	canceled?: boolean;
+	name?: string;
+	error?: string;
+	skills: SkillsPayload;
+};
+
 export type DocMeta = { id: string; title: string; ext?: string };
 
 export type ActivityView = "explorer" | "search" | "annotations";

@@ -1487,6 +1487,37 @@ textarea::placeholder {
 	font-size: 11px;
 	color: var(--vscode-fg-dim);
 }
+.skill-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.skill-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 8px;
+	border: 1px solid var(--vscode-border-soft);
+	border-radius: 4px;
+	font-size: 12px;
+}
+.skill-item-main {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	cursor: pointer;
+}
+.skill-item-main .hint {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.skill-name {
+	font-weight: 600;
+	white-space: nowrap;
+}
 .checkbox-line {
 	display: inline-flex;
 	align-items: center;

@@ -15,7 +15,15 @@ import { EditorTabs } from "./components/shell/EditorTabs.tsx";
 import { StatusBar } from "./components/shell/StatusBar.tsx";
 import { Welcome } from "./components/shell/Welcome.tsx";
 import { Resizer } from "./components/shell/Resizer.tsx";
-import type { ActivityView, AiConfig, CustomProvider, DocMeta, WebSearchTestResult } from "./types.ts";
+import type {
+  ActivityView,
+  AiConfig,
+  CustomProvider,
+  DocMeta,
+  SkillImportResult,
+  SkillsPayload,
+  WebSearchTestResult,
+} from "./types.ts";
 import "./styles.css";
 
 declare global {
@@ -50,6 +58,11 @@ declare global {
       removeCustomProvider: (id: string) => Promise<boolean>;
       setWebSearch: (patch: { enabled?: boolean; backend?: string; maxResults?: number }) => Promise<boolean>;
       testWebSearch: (query?: string) => Promise<WebSearchTestResult>;
+      listSkills: () => Promise<SkillsPayload>;
+      importSkill: () => Promise<SkillImportResult>;
+      deleteSkill: (name: string) => Promise<SkillsPayload>;
+      getDocSkills: (docId: string) => Promise<string[]>;
+      setDocSkills: (docId: string, enabled: string[]) => Promise<boolean>;
       getReading: (docId: string) => Promise<{ page: number | null; location: string | null }>;
       saveReading: (docId: string, patch: { page?: number; location?: string }) => Promise<void>;
       onChatDelta: (cb: (d: string) => void) => () => void;
@@ -348,7 +361,7 @@ function App() {
         onToggleChat={() => setChatOpen((v) => !v)}
       />
 
-      {showSettings && <Settings onClose={() => setShowSettings(false)} onSaved={() => { loadSettings(); loadAiConfig(); }} />}
+      {showSettings && <Settings docId={selected} onClose={() => setShowSettings(false)} onSaved={() => { loadSettings(); loadAiConfig(); }} />}
     </div>
   );
 }
