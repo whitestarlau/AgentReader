@@ -4,6 +4,12 @@ English | [简体中文](README.zh.md)
 
 A desktop AI document reader with PDF / EPUB import, reading, **highlight / rectangle selection**, and AI chat. Inspired by `Reference/pi` — small but complete.
 
+## Screenshots
+
+![Welcome screen](docs/images/screenshot-welcome.png)
+
+![EPUB dual-column reading with AI chat sidebar](docs/images/screenshot-epub-chat.png)
+
 ## Features
 
 - **Library**: import-based management under `library/{hash}/`, one folder per document (original file + `doc.json` + `annotations.json` + `chats.jsonl`)

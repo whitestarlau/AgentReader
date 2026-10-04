@@ -4,6 +4,12 @@
 
 桌面端 AI 文档阅读工具，支持 PDF / EPUB 的导入、阅读、**高亮/矩形框选**与 AI 对话。设计参考 `Reference/pi` —— 麻雀虽小五脏俱全。
 
+## 截图
+
+![欢迎页](docs/images/screenshot-welcome.png)
+
+![EPUB 双栏阅读 + AI 对话侧栏](docs/images/screenshot-epub-chat.png)
+
 ## 功能
 
 - **图书馆**：导入式管理 `library/{hash}/`，每文档独立文件夹（原文件 + `doc.json` + `annotations.json` + `chats.jsonl`）
