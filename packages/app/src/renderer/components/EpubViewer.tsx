@@ -31,7 +31,7 @@ type ManagerLike = {
 	container?: { scrollLeft: number; clientWidth: number; scrollWidth: number };
 	scrollTo?: (x: number, y: number, silent?: boolean) => void;
 	currentLocation: () => unknown;
-	layout?: { divisor?: number };
+	layout?: { divisor?: number; delta?: number; pageWidth?: number };
 };
 
 const SPREAD_STORAGE_KEY = "epub-spread-mode";
@@ -116,9 +116,11 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 			const manager = getManager(rendition);
 			if (!manager?.container || !manager.scrollTo) return;
 			const width = manager.container.clientWidth || 1;
-			const pageWidth = (manager as unknown as { layout?: { pageWidth?: number } }).layout?.pageWidth;
-			// 双栏步进 = 2 个页宽；单栏步进 = 1 个页宽。
-			const step = pageWidth && pageWidth > 0 ? pageWidth : width;
+			// 对齐步进必须用一「屏」的宽度（layout.delta），而不是单栏页宽 pageWidth。
+			// 双栏下 pageWidth 只有 delta 的一半，按 pageWidth 对齐会把位置卡在
+			// 一屏的中间（左半来自上一屏、右半来自下一屏），翻页时看起来像跳内容。
+			const delta = manager.layout?.delta;
+			const step = delta && delta > 0 ? delta : width;
 			const aligned = Math.floor(saved.offset / step) * step;
 			const maxOffset = Math.max(0, manager.container.scrollWidth - width);
 			manager.scrollTo(Math.min(aligned, maxOffset), 0, true);
@@ -201,24 +203,29 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 					.catch((e: unknown) => console.error("[epub] locations", e));
 			}
 			rendition.on("relocated", update);
-			rendition.on("keydown", (e: KeyboardEvent) => {
-				if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") { e.preventDefault(); rendition.next(); }
-				else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); rendition.prev(); }
-			});
+			const bindKeys = (doc: Document | undefined) => {
+				if (!doc || (doc as unknown as { __arKeys?: boolean }).__arKeys) return;
+				(doc as unknown as { __arKeys?: boolean }).__arKeys = true;
+				doc.addEventListener("keydown", (e: KeyboardEvent) => {
+					if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") { e.preventDefault(); rendition.next(); }
+					else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); rendition.prev(); }
+				});
+			};
 			rendition.on("selected", (cfiRange: string, contents: { window: Window }) => {
 				const sel = contents.window.getSelection();
 				const text = sel?.toString().trim();
 				if (text) onTextSelected(text);
 				book?.getRange(cfiRange);
 			});
-			// also bind inside iframe document for direct key
-			rendition.on("rendered", (_: unknown, contents: { document: Document }) => {
-				const doc = contents.document;
-				doc.addEventListener("keydown", (e: KeyboardEvent) => {
-					if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") { e.preventDefault(); rendition.next(); }
-					else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); rendition.prev(); }
-				});
-			});
+			// 单一 keydown 通道：只绑定 iframe 文档（非 passive，preventDefault 生效）。
+			// 旧代码同时用 rendition.on("keydown")（epubjs 内部已在文档上监听）和这里的
+			// 文档监听，一次按键会触发两次 next()/prev()，双栏下一次翻两屏（4 页），
+			// 回翻也同样翻两屏——即用户看到的「跳内容 / 回翻翻两页」。
+			rendition.on("rendered", (_: unknown, view: { document?: Document }) => bindKeys(view.document));
+			// 初始 view 的 rendered 事件在本监听注册前已触发，补绑一次。
+			for (const c of (rendition.getContents?.() ?? []) as unknown as { document?: Document }[]) {
+				bindKeys(c.document);
+			}
 			// epubjs 只监听 window.resize；收起侧栏 / 拖动分隔条只会改变容器宽度，
 			// 不会触发 window.resize，必须自己观察容器并主动重排，否则会露出半截下一栏。
 			// 另外 epub.js 的 resize() 会用 currentLocation().start.cfi 重定位，

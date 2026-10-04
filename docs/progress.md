@@ -1,5 +1,22 @@
 # 进度记录
 
+## 2026-10-04 修复 EPUB 双栏翻页跳内容 / 回翻翻两页
+
+- [x] 定位根因：`EpubViewer` 同时注册了两条 keydown 通道——`rendition.on("keydown")`
+  （epubjs 内部已在每个 iframe 文档上监听 keydown 并转发）与 `rendered` 里的
+  `doc.addEventListener("keydown")`。焦点在 iframe 内时一次按键触发两次
+  `next()`/`prev()`：双栏一次前进两屏（4 页）=「跳内容」，回翻同理=「翻两页」。
+  - 复现：离屏 Electron + epubjs 加载真实书，装两条通道后单次 ArrowRight
+    scrollLeft 步进 2400（2×delta）；只留一条则 1200（1×delta）
+- [x] 修复：合并为单一通道，只保留 iframe 文档监听（非 passive，`preventDefault`
+  生效）并用 `__arKeys` 标记去重；`rendered` 时给新建 view 绑定，初始 view 的
+  `rendered` 在监听注册前已触发，用 `rendition.getContents()` 补绑。父窗口的
+  window 监听继续负责焦点在 iframe 外的情况（两者互斥，不会叠加）
+- [x] 顺带修复分栏切换对齐：`applySpread` 原来用 `layout.pageWidth` 对齐（双栏只有
+  一屏的一半），会把位置卡到屏中间导致左右半屏拼接。改用 `layout.delta`（一屏步进）
+- [x] 验证：typecheck 通过；双栏/单栏各 4 次前进 + 4 次回退，每次步进均为 ±delta
+  且页码逐次变化，无跳屏
+
 ## 2026-10-03 对话编辑 + 停止生成（打断）
 
 - [x] 修复：用户消息此前**没有落盘**（`chat:append` 存在但无人调用，`chat:send` 只写 assistant），
