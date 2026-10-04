@@ -59,6 +59,18 @@ const LIBRARY_ROOT = join(app.getPath("userData"), "library");
 /** In-flight chat streams keyed by `${docId}:${convId}`, so the UI can stop them. */
 const activeChats = new Map<string, AbortController>();
 
+// App icon. `dist-electron/main.js` sits next to the source at `src/main/`, and the
+// icon lives at `build/icon.png` relative to the package root in both dev and packaged
+// layouts. On macOS the window icon is ignored (the .app bundle icon is used), so for
+// dev we also set the Dock icon explicitly — otherwise it shows the Electron default.
+const ICON_PATH = join(__dirname, "../build/icon.png");
+
+function applyAppIcon() {
+	if (process.platform === "darwin") {
+		if (!app.isPackaged && existsSync(ICON_PATH)) app.dock?.setIcon(ICON_PATH);
+	}
+}
+
 function getDocDir(docId: string) {
 	return join(LIBRARY_ROOT, docId);
 }
@@ -1436,6 +1448,7 @@ function createWindow() {
 	const win = new BrowserWindow({
 		width: 1200,
 		height: 800,
+		icon: ICON_PATH,
 		webPreferences: {
 			preload: join(__dirname, "preload.js"),
 			contextIsolation: true,
@@ -1459,6 +1472,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+	applyAppIcon();
 	// Seed models.json on first run, migrating the legacy single-provider settings
 	// (and moving its encrypted key into the auth store) when present.
 	const legacy = readSettings();
