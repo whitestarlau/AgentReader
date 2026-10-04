@@ -13,8 +13,9 @@ import ePub from "epubjs";
 
 type Props = {
 	docId: string;
-	onTextSelected: (text: string) => void;
-	onPageChange?: (page: number) => void;
+	/** `chapter` is 1-based; EPUB has no fixed page numbers (reflowable text). */
+	onTextSelected: (text: string, chapter: number) => void;
+	onPageChange?: (chapter: number) => void;
 	onTotalChange?: (total: number) => void;
 };
 
@@ -47,6 +48,29 @@ function readSpreadMode(): SpreadMode {
 function getManager(rendition: Rendition | null): ManagerLike | null {
 	if (!rendition) return null;
 	return (rendition as unknown as { manager?: ManagerLike }).manager ?? null;
+}
+
+/** Spine step of a CFI path (`epubcfi(/6/20!...)` -> 20), mapped to a 0-based chapter. */
+function chapterOfCfi(cfi: string): number {
+	const m = cfi.match(/epubcfi\(\/\d+\/(\d+)/);
+	return m ? Math.max(0, Math.floor(Number(m[1]) / 2) - 1) : 0;
+}
+
+/**
+ * The reader's current chapter as a 0-based spine index. epub.js's `section.index`
+ * follows the same spine order the main process parses, so this needs no DOM or
+ * text translation and is always exact. Falls back to the CFI path when the view
+ * hasn't materialized yet.
+ */
+function currentChapterIndex(rendition: Rendition | null): number {
+	const manager = getManager(rendition);
+	const views = (
+		manager as unknown as { views?: { first: () => { section?: { index?: number } } | null } }
+	)?.views;
+	const idx = views?.first?.()?.section?.index;
+	if (typeof idx === "number") return idx;
+	const cfi = (rendition?.currentLocation() as unknown as { start?: { cfi?: string } })?.start?.cfi;
+	return cfi ? chapterOfCfi(cfi) : 0;
 }
 
 /** Section href + in-section scroll offset for the current view. */
@@ -90,6 +114,10 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 	pageCb.current = onPageChange;
 	const totalCb = useRef(onTotalChange);
 	totalCb.current = onTotalChange;
+
+	// Current chapter (1-based), mirrored in a ref so the once-bound selection
+	// handler reports the *current* chapter rather than the mount-time value.
+	const chapterRef = useRef(1);
 
 	const [error, setError] = useState<string | null>(null);
 
@@ -172,36 +200,20 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 				const loc = rendition.currentLocation() as unknown as { atStart: boolean; atEnd: boolean; start?: { cfi?: string } };
 				setAtStart(!!loc?.atStart);
 				setAtEnd(!!loc?.atEnd);
-				// Map the current CFI to a generated "page" index. This is
-				// display-only: positions are still restored by href + offset,
-				// never by re-displaying a CFI (see comment above).
-				const locations = book?.locations;
-				if (locations && locations.length() > 0 && loc?.start?.cfi) {
-					// epubjs types claim `Location`, but it actually returns a numeric index.
-					const idx = locations.locationFromCfi(loc.start.cfi) as unknown as number;
-					if (idx >= 0) pageCb.current?.(idx + 1);
-				}
 				// Persist reading position (href + offset) so reopening resumes here.
 				const current = captureLocation(rendition);
 				if (current) {
 					saveReadingLoc(docId, current);
 					window.api.saveReading(docId, { location: serializeEpubLocation(current) }).catch(() => {});
 				}
+				// Report the current chapter (1-based). EPUB is reflowable and has no
+				// stable page numbers, so the UI and the AI both anchor on chapters.
+				const chapter = currentChapterIndex(rendition) + 1;
+				chapterRef.current = chapter;
+				window.api.setReaderChapter(docId, chapter).catch(() => {});
+				pageCb.current?.(chapter);
+				totalCb.current?.(0);
 			};
-			// Build a pagination map in the background; until it's ready the
-			// status bar shows an unknown total. length() is the boundary count,
-			// which matches the page range produced by locationFromCfi()+1.
-			const locBook = book;
-			if (locBook) {
-				locBook.locations
-					.generate(1600)
-					.then(() => {
-						if (disposed) return;
-						totalCb.current?.(locBook.locations.length());
-						update();
-					})
-					.catch((e: unknown) => console.error("[epub] locations", e));
-			}
 			rendition.on("relocated", update);
 			const bindKeys = (doc: Document | undefined) => {
 				if (!doc || (doc as unknown as { __arKeys?: boolean }).__arKeys) return;
@@ -214,7 +226,9 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 			rendition.on("selected", (cfiRange: string, contents: { window: Window }) => {
 				const sel = contents.window.getSelection();
 				const text = sel?.toString().trim();
-				if (text) onTextSelected(text);
+				// Report the chapter (kept in sync on `relocated`); EPUB has no stable
+				// page numbers, so the AI locates by text/offset instead.
+				if (text) onTextSelected(text, chapterRef.current);
 				book?.getRange(cfiRange);
 			});
 			// 单一 keydown 通道：只绑定 iframe 文档（非 passive，preventDefault 生效）。

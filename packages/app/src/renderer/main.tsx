@@ -42,6 +42,8 @@ declare global {
       saveOcr: (id: string, page: number, text: string) => Promise<void>;
       getDocPath: (id: string) => Promise<string | null>;
       readFile: (path: string) => Promise<Uint8Array>;
+      getReaderChapter: (id: string) => Promise<number | null>;
+      setReaderChapter: (id: string, chapter: number) => Promise<void>;
       chat: (docId: string, convId: string, prompt: string, history: unknown, page?: number, persistUser?: boolean) => Promise<{ ok?: boolean; error?: string; content?: string; title?: string; userId?: string }>;
       stopChat: (docId: string, convId: string) => Promise<boolean>;
       editChat: (docId: string, convId: string, messageId: string, content: string) => Promise<{ ok: boolean; error?: string; rows?: unknown[] }>;
@@ -315,8 +317,8 @@ function App() {
                 docId={selected}
                 onPageChange={setPage}
                 onTotalChange={setTotal}
-                onTextSelected={(t) => {
-                  setSelection({ text: t, page, kind: "highlight" });
+                onTextSelected={(t, p) => {
+                  setSelection({ text: t, page: p, kind: "highlight" });
                   setChatOpen(true);
                 }}
               />
@@ -362,7 +364,7 @@ function App() {
                   <Icon name="close" size={14} />
                 </button>
               </div>
-              <ChatPanel selection={selection} docId={selected} page={page} />
+              <ChatPanel selection={selection} docId={selected} page={page} isEpub={isEpub} />
             </aside>
           </>
         )}
@@ -373,7 +375,7 @@ function App() {
         page={page}
         total={total}
         zoom={zoom}
-        selectionLabel={selection?.text ? `${SELECTION_LABEL[selection.kind]} · P${selection.page}` : null}
+        selectionLabel={selection?.text ? `${SELECTION_LABEL[selection.kind]} · ${isEpub ? `第${selection.page}章` : `P${selection.page}`}` : null}
         ocr={ocrJob}
         model={ai?.defaultModel ?? undefined}
         models={ai?.models ?? []}

@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("api", {
 		ipcRenderer.invoke("doc:ocr:save", docId, page, text),
 	getDocPath: (docId: string) => ipcRenderer.invoke("doc:path", docId),
 	readFile: (path: string) => ipcRenderer.invoke("doc:read", path),
+	getReaderChapter: (docId: string) => ipcRenderer.invoke("doc:chapter:get", docId),
+	setReaderChapter: (docId: string, chapter: number) => ipcRenderer.invoke("doc:chapter:set", docId, chapter),
 	chat: (
 		docId: string,
 		convId: string,

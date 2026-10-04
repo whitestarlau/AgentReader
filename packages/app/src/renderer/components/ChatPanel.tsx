@@ -17,7 +17,7 @@ type Msg = {
 };
 type ChatRow = { id?: string; role?: string; content?: string; timeline?: TimelineItem[] };
 type Conv = { id: string; title: string };
-type Props = { selection: Selection | null; docId: string | null; page: number };
+type Props = { selection: Selection | null; docId: string | null; page: number; isEpub?: boolean };
 
 function toMsg(r: ChatRow): Msg {
 	return {
@@ -32,6 +32,7 @@ function toolSummary(name: string, args: string): string {
 	try {
 		const a = JSON.parse(args || "{}");
 		if (a.query) return String(a.query);
+		if (a.chapter) return `第 ${a.chapter} 章`;
 		if (a.page) return `第 ${a.page} 页`;
 	} catch {}
 	return "";
@@ -65,7 +66,7 @@ function Disclosure({
 	);
 }
 
-export function ChatPanel({ selection, docId, page }: Props) {
+export function ChatPanel({ selection, docId, page, isEpub }: Props) {
 	const [convs, setConvs] = useState<Conv[]>([]);
 	const [convId, setConvId] = useState<string | null>(null);
 	const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -239,8 +240,10 @@ export function ChatPanel({ selection, docId, page }: Props) {
 		if (!input.trim() || !docId || !convId || streaming) return;
 		const sel = selection;
 		const quote = sel?.text?.trim();
+		// EPUB is reflowable and has no fixed page numbers — cite the chapter, not a page.
+		const where = isEpub ? `第${sel?.page ?? "?"}章` : `第${sel?.page ?? "?"}页`;
 		const prompt = quote && sel
-			? `【引用文本 · 第${sel.page}页 · ${SELECTION_LABEL[sel.kind]}】\n${quote.slice(0, 4000)}\n\n【问题】\n${input}`
+			? `【引用文本 · ${where} · ${SELECTION_LABEL[sel.kind]}】\n${quote.slice(0, 4000)}\n\n【问题】\n${input}`
 			: input;
 		const history = msgs.map((m) => ({ role: m.role, content: m.content }));
 		setMsgs((m) => [...m, { role: "user", content: prompt }]);

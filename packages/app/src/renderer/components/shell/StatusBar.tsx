@@ -65,7 +65,8 @@ export function StatusBar({
 						{doc.title}
 					</span>
 					<span className="status-item">
-						{doc.ext === "epub" && !total ? "页码生成中…" : `${page} / ${total || "–"} 页`}
+						{/* EPUB is reflowable: no fixed page count, so report the chapter instead. */}
+						{doc.ext === "epub" ? `第 ${page || 1} 章` : `${page} / ${total || "–"} 页`}
 					</span>
 					<span className="status-item">{Math.round(zoom * 100)}%</span>
 				</>

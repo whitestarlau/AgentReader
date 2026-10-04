@@ -1,5 +1,66 @@
 # 进度记录
 
+## 2026-10-04 EPUB 定位改为「章节锚点」：彻底废弃页码/页表
+
+- [x] 结论：EPUB 是可重排文本，**不存在稳定页码**。epub.js 有两套互不相干的分页
+  （屏幕按像素列分页 vs `locations.generate(1600)` 按字符分页），两者边界不对齐，
+  任何「状态栏页码 = 工具页码」的尝试都会 ±1 漂移。先后尝试「渲染层生成页表」
+  「全局字符偏移」均因跨 DOM/空白归一化差异而不可靠，且需遍历全书渲染，太慢
+- [x] 最终方案：以**章节**为唯一位置锚点。渲染层用 `section.index + 1` 上报当前章
+  （与主进程 spine 顺序天然一致，已实测验证），主进程存 `reader-chapter.json`
+- [x] 删除：`page-map.json` 生成与 `doc:pages:*`、全局字符偏移与 `doc:offset:*`、
+  `read_text`、`read_page`（EPUB）、页表相关类型/缓存
+- [x] 工具（EPUB）：`read_chapter(章号)` / `search_document`（按章返回命中）/
+  `locate_text(原文片段 → 章)`；PDF 仍用 `read_page`（物理页）
+- [x] 提示词：明确「EPUB 无固定页码，勿用页码定位」，当前位置改为「第 N 章」+
+  该章原文开头；`chapterLabels` 附章节名
+- [x] 状态栏：EPUB 显示「第 N 章」（不再显示假页码）；引用标签/对话提示词对 EPUB
+  用「第 N 章」，PDF 用「第 N 页」
+- [x] 验证：epub.js `book.spine`(20) 与主进程 `<itemref>`(20) 顺序一致；
+  typecheck（agent+app）与 build 通过
+
+## 2026-10-04 read_page 支持真实页码 + 新增 read_chapter（已废弃，见上）
+
+- [x] 背景：上一步采用章节口径后，AI 遇到「读第 1046 页」只能回复「工具按章读取」，
+  read_page 形同废物。改为由渲染层生成真实页映射喂给主进程
+- [x] 渲染层 `EpubViewer`：`locations.generate(1600)` 完成后，用 epub.js 的
+  CFI 边界（`cfiFromLocation` + `book.getRange`）逐页抽取「第 N 页实际显示的文本」，
+  连同章节归属（CFI 解析 spinePos）落盘 `page-map.json`；分块 yield，不阻塞渲染；
+  已存在且 chars/total 一致则跳过重建
+- [x] 主进程：新增 `doc:pages:get/save` IPC；`DocText` 增加 `pageTexts`/`pageToChapter`；
+  `read_page` 有页映射时按**用户看到的页码**读取（返回 `【第 N 页（属第 X 章·名）】`），
+  无映射时回退章节序号
+- [x] 新增 `read_chapter` 工具（仅 EPUB）：按章节读整段，语义明确
+- [x] `search_document` 命中项附 `readerPage`（该章在阅读器中的起始页）
+- [x] 系统提示：有页映射时说明 read_page 用用户页码、read_chapter 用章号；
+  否则维持「按章计数」提示
+- [x] 验证：真实书生成 151 页映射、全部非空、均 ~1429 字；章节索引正确递增
+  （cover→1、正文→2…）；agent/app typecheck + build 通过
+
+## 2026-10-04 修复 EPUB 「引用 PXX」与 read_page 页码对不上
+
+- [x] 修复选区引用页码恒为「第 1 页」：`EpubViewer` 主 effect 依赖 `[docId]`，
+  `rendition.on("selected")` 只绑一次，闭包捕获了 mount 时的 `page`（=1）。
+  改为 `pageRef` 同步最新页码，`onTextSelected(text, page)` 传实时值，
+  `main.tsx` 用回调传入的 `p`（对齐 PdfViewer 的既有做法）
+
+- [x] 定位根因：EPUB 存在两套互不相关的「页」坐标系——阅读器 UI 的 `PXX`
+  来自 epub.js `locations.generate(1600)`（按渲染宽度/字符数动态分页），
+  而主进程 `getDocText()` 的 `read_page(n)` 实际是 **spine 第 n 个 XHTML 章节**。
+  同一本书一套约 135 页、一套 28 章，无法直接映射（UI 分页依赖渲染宽度，
+  JSZip 静态解析复刻不出精确页码）
+- [x] 采用「章节口径」：`DocText` 增加 `unit: "page" | "chapter"` 与
+  `chapterLabels`；EPUB 走 `chapter`，PDF 仍走 `page`
+- [x] 顺带修 EPUB 解析的两个真 bug：原先用宽松正则把所有 `<item>`（含 CSS/图片）
+  当章节，且要求 `id` 在 `href` 前（`href` 在前的 OPF 直接解析出 0 章）。
+  改为按 `<itemref idref>` 的真实 spine 顺序 + 任意属性顺序解析
+- [x] `get_document_info`/`search_document`/`read_page`：描述与返回带 `unit`/`label`；
+  `read_page` 对 EPUB 返回前缀 `【第 N 章 · <章节名>】`
+- [x] `prompt.ts`：系统提示区分「页/章」，EPUB 列出章节清单，并明确提示
+  「read_page 按章计数，与阅读器页码不是同一套编号」
+- [x] 验证：四本真实 EPUB spine 章节数 = 28/62/49/37（与阅读顺序一致），
+  三体系列 NCX 章节名正确映射；agent/app typecheck 通过
+
 ## 2026-10-04 修复 EPUB 双栏翻页跳内容 / 回翻翻两页
 
 - [x] 定位根因：`EpubViewer` 同时注册了两条 keydown 通道——`rendition.on("keydown")`

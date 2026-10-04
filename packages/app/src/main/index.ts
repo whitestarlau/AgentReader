@@ -169,6 +169,41 @@ ipcMain.handle("doc:ocr:save", (_e, docId: string, page: number, text: string) =
 	docTextCache.delete(docId);
 });
 
+// The reader's current position, expressed as a global character offset into the
+// document's concatenated text (spine order). This is the single, stable anchor
+// shared by the UI and the AI tools: unlike "pages" it does not depend on render
+// width, font or spread, so it can never drift. The renderer reports it; the main
+// process converts offsets -> text and back.
+// The chapter (1-based) the reader is currently on. The single, stable position
+// anchor shared by the UI and the AI tools. EPUB is reflowable and has no fixed
+// page numbers — chapters are exact and render-independent, and `section.index`
+// from epub.js follows the same spine order the main process parses here.
+function chapterFile(docId: string) {
+	return join(getDocDir(docId), "reader-chapter.json");
+}
+const chapterCache = new Map<string, number>();
+function readReaderChapter(docId: string): number | undefined {
+	if (chapterCache.has(docId)) return chapterCache.get(docId);
+	const p = chapterFile(docId);
+	let v: number | undefined;
+	if (existsSync(p)) {
+		try {
+			const n = Number(JSON.parse(readFileSync(p, "utf-8"))?.chapter);
+			if (Number.isFinite(n) && n >= 1) v = Math.floor(n);
+		} catch {}
+	}
+	if (v !== undefined) chapterCache.set(docId, v);
+	return v;
+}
+ipcMain.handle("doc:chapter:get", (_e, docId: string) => readReaderChapter(docId) ?? null);
+ipcMain.handle("doc:chapter:set", (_e, docId: string, chapter: number) => {
+	const n = Math.max(1, Math.floor(Number(chapter) || 1));
+	chapterCache.set(docId, n);
+	try {
+		writeFileSync(chapterFile(docId), JSON.stringify({ chapter: n }));
+	} catch {}
+});
+
 ipcMain.handle("doc:path", (_e, docId: string) => {
 	const dir = getDocDir(docId);
 	if (!existsSync(join(dir, "doc.json"))) return null;
@@ -407,10 +442,15 @@ function cleanTitle(input: string): string {
 }
 
 type DocText = {
-	/** First pages/chapters extracted eagerly, for the system prompt and current-page hint. */
+	/** First pages/chapters extracted eagerly, for the system prompt and current hint. */
 	pages: string[];
 	/** Real page/chapter count of the whole document (not capped by `pages.length`). */
 	numPages: number;
+	/** What one unit of `numPages`/`getPage` means: EPUB resolves by chapter,
+	 *  PDF by physical page. (The UI never claims these are screen pages.) */
+	unit: "page" | "chapter";
+	/** EPUB only: label for each chapter, index 0 = first chapter. */
+	chapterLabels?: string[];
 	toc: { label: string; href: string }[];
 	title: string;
 	ext: string;
@@ -496,23 +536,38 @@ async function getDocText(docId: string): Promise<DocText> {
 			const rootfileMatch = containerXml?.match(/full-path="([^"]+)"/);
 			const opfPath = rootfileMatch ? rootfileMatch[1] : "OEBPS/content.opf";
 			const opfText = (await zip.file(opfPath)?.async("string")) ?? "";
-			const spineMatches = [...opfText.matchAll(/<item[^>]*href="([^"]+)"[^>]*>/g)].map(
-				(m) => m[1],
-			);
 			const baseDir = opfPath.includes("/") ? opfPath.slice(0, opfPath.lastIndexOf("/") + 1) : "";
-			const pages: string[] = [];
-			for (const href of spineMatches.slice(0, 50)) {
-				const fullPath = baseDir + href;
-				const content = await zip.file(fullPath)?.async("string");
-				if (content) {
-					const text = content
-						.replace(/<[^>]+>/g, " ")
-						.replace(/\s+/g, " ")
-						.trim()
-						.slice(0, 4000);
-					if (text) pages.push(text);
-				}
+
+			// Real spine order: map <item id href> then walk <itemref idref> in order.
+			// (The previous regex matched every <item> — CSS/images included — so the
+			// "chapter" indices didn't even line up with the reader's section count.)
+			// Attributes can appear in either order, so extract id/href independently.
+			const itemHref = new Map<string, string>();
+			for (const m of opfText.matchAll(/<item\b[^>]*>/g)) {
+				const tag = m[0];
+				const id = tag.match(/\bid="([^"]+)"/)?.[1];
+				const href = tag.match(/\bhref="([^"]+)"/)?.[1];
+				if (id && href) itemHref.set(id, href);
 			}
+			const spineHrefs = [...opfText.matchAll(/<itemref\b[^>]*\bidref="([^"]+)"/g)]
+				.map((m) => itemHref.get(m[1]))
+				.filter((h): h is string => !!h);
+
+			// Extract text for every spine document. Keep the full text (not truncated)
+			// so global character offsets are exact and monotonic across the book.
+			const chapters: string[] = [];
+			for (const href of spineHrefs) {
+				const content = await zip.file(baseDir + href)?.async("string");
+				const text = (content ?? "")
+					.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+					.replace(/<[^>]+>/g, " ")
+					.replace(/\s+/g, " ")
+					.trim();
+				chapters.push(text);
+			}
+
+			// Chapter labels: prefer the NCX nav labels in reading order; otherwise use
+			// the spine file name (e.g. "Section0003") so the AI can still name a chapter.
 			const ncxMatch = opfText.match(
 				/<item[^>]*media-type="application\/x-dtbncx\+xml"[^>]*href="([^"]+)"/,
 			);
@@ -525,15 +580,23 @@ async function getDocText(docId: string): Promise<DocText> {
 					href: `chapter-${i}`,
 				}));
 			}
+			const chapterLabels = spineHrefs.map((href, i) => {
+				const label = toc[i]?.label?.trim();
+				if (label) return label;
+				return href.split("/").pop()?.replace(/\.[^.]+$/, "") || `第 ${i + 1} 章`;
+			});
+
 			const result: DocText = {
-				pages,
-				numPages: pages.length,
+				pages: chapters.slice(0, EAGER_PAGES),
+				numPages: chapters.length,
+				unit: "chapter",
+				chapterLabels,
 				toc,
 				title: meta.title,
 				ext,
 				isScanned: false,
 				ocrCount: 0,
-				getPage: async (n) => pages[Math.max(1, Math.min(pages.length, n)) - 1] ?? "",
+				getPage: async (n) => chapters[Math.max(1, Math.min(chapters.length, n)) - 1] ?? "",
 			};
 			docTextCache.set(docId, result);
 			return result;
@@ -555,6 +618,7 @@ async function getDocText(docId: string): Promise<DocText> {
 		const result: DocText = {
 			pages,
 			numPages,
+			unit: "page",
 			toc: [],
 			title: meta.title,
 			ext,
@@ -573,6 +637,7 @@ async function getDocText(docId: string): Promise<DocText> {
 	const fallback: DocText = {
 		pages: [],
 		numPages: 0,
+		unit: "page",
 		toc: [],
 		title: meta.title,
 		ext,
@@ -1033,9 +1098,10 @@ ipcMain.handle(
 			? appendChatEntry(docId, convId, { role: "user", content: prompt })
 			: null;
 
-		const docText = await getDocText(docId).catch(() => ({
+		const docText: DocText = await getDocText(docId).catch(() => ({
 			pages: [] as string[],
 			numPages: 0,
+			unit: "page" as const,
 			toc: [] as { label: string; href: string }[],
 			title: docId,
 			ext: "pdf",
@@ -1043,9 +1109,18 @@ ipcMain.handle(
 			ocrCount: 0,
 			getPage: async () => "",
 		}));
-		const hintPage =
-			typeof page === "number" && page > 0 ? Math.min(page, docText.numPages || page) : undefined;
-		const hintText = hintPage ? await docText.getPage(hintPage) : "";
+		// EPUB: anchor on the chapter the reader is currently in. Chapters are exact
+		// (spine order) and render-independent — unlike "pages", they can't drift.
+		// The current chapter's text is included so the model has immediate context.
+		const readerChapter = docText.unit === "chapter" ? readReaderChapter(docId) : undefined;
+		const hintText =
+			docText.unit === "chapter"
+				? readerChapter
+					? (await docText.getPage(readerChapter)) || ""
+					: ""
+				: typeof page === "number" && page > 0
+					? await docText.getPage(Math.min(page, docText.numPages || page))
+					: "";
 
 		const webSearch = getWebSearchConfig();
 		const useNativeSearch =
@@ -1059,7 +1134,9 @@ ipcMain.handle(
 		// When execution is enabled, expose the tool for every enabled skill;
 		// each run is confirmed with the user unless the skill is trusted.
 		const executableSkills = skillsExecution ? enabledSkills : [];
-		const toolNames = ["get_document_info", "search_document", "read_page"];
+		const toolNames = ["get_document_info", "search_document"];
+		if (docText.unit === "chapter") toolNames.push("read_chapter", "locate_text");
+		else toolNames.push("read_page");
 		if (webSearch.enabled) toolNames.push("web_search");
 		if (enabledSkills.length) toolNames.push("read_skill");
 		if (executableSkills.length) toolNames.push("run_skill_script");
@@ -1068,8 +1145,11 @@ ipcMain.handle(
 			title: docText.title,
 			ext: docText.ext,
 			numPages: docText.numPages,
+			unit: docText.unit,
+			chapterLabels: docText.chapterLabels,
+			readerChapter,
 			tocLabels: docText.toc.slice(0, 20).map((t) => t.label),
-			currentPage: hintPage ? { page: hintPage, text: hintText } : undefined,
+			currentText: hintText,
 			ocr: { isScanned: docText.isScanned, ocrCount: docText.ocrCount },
 			toolNames,
 			webSearchEnabled: webSearch.enabled,
@@ -1095,53 +1175,146 @@ ipcMain.handle(
 		});
 
 		const win = BrowserWindow.fromWebContents(event.sender);
+		const unit = docText.unit;
+		const chapterLabel = (n: number) => docText.chapterLabels?.[n - 1]?.trim() || "";
 		const tools: AgentTool[] = [
 			{
 				name: "get_document_info",
-				description: "获取书籍元信息、页数、目录",
+				description: "获取书籍元信息、章节数、目录",
 				parameters: { type: "object", properties: {}, required: [] },
 				execute: async () =>
 					JSON.stringify({
 						title: docText.title,
 						ext: docText.ext,
-						totalPages: docText.numPages,
+						totalChapters: docText.numPages,
+						// EPUB is reflowable and has no fixed page count; positions are
+						// chapters only.
+						locator: unit === "chapter" ? "chapter" : "page",
+						chapters: docText.chapterLabels?.slice(0, 50),
 						toc: docText.toc.slice(0, 20),
 					}),
 			},
+			// PDF only: page reader. EPUB uses read_chapter below.
+			...(unit === "page"
+				? [
+						{
+							name: "read_page",
+							description: "读取指定页的文本",
+							parameters: {
+								type: "object",
+								properties: { page: { type: "number", description: `页码（1..${docText.numPages}）` } },
+								required: ["page"],
+							},
+							execute: async (params: unknown) => {
+								const { page } = params as { page: number };
+								const p = Math.max(1, Math.min(docText.numPages || 1, Math.floor(Number(page) || 1)));
+								return (await docText.getPage(p)) || "该页无文本";
+							},
+						} satisfies AgentTool,
+					]
+				: []),
 			{
 				name: "search_document",
-				description: "在全书中搜索关键词，返回相关段落与页码（按命中次数排序）",
+				description:
+					unit === "chapter"
+						? "在全书或指定章节范围内搜索关键词，返回命中片段与所属章节（按命中次数排序）。可传 chapter 只搜某一章，或 from/to 搜章节区间。"
+						: "在全书或指定页码范围搜索关键词，返回命中页码（按命中次数排序）。可传 from/to 限定范围。",
 				parameters: {
 					type: "object",
-					properties: { query: { type: "string" }, limit: { type: "number" } },
+					properties: {
+						query: { type: "string" },
+						limit: { type: "number", description: "返回条数，默认 5" },
+						chapter:
+							unit === "chapter"
+								? { type: "number", description: `只搜这一章（1..${docText.numPages}，可选）` }
+								: { type: "number", description: "等价于 from=to" },
+						from: {
+							type: "number",
+							description:
+								unit === "chapter" ? "起始章号（可选）" : "起始页码（可选）",
+						},
+						to: {
+							type: "number",
+							description: unit === "chapter" ? "结束章号（可选）" : "结束页码（可选）",
+						},
+					},
 					required: ["query"],
 				},
 				execute: async (params: unknown) => {
-					const { query, limit = 5 } = params as { query: string; limit?: number };
-					const q = String(query ?? "")
-						.trim()
-						.toLowerCase();
-					if (!q) return JSON.stringify({ hint: "查询为空" });
-					const max = Math.max(1, Math.min(20, Number(limit) || 5));
-					const terms = q.split(/\s+/).filter(Boolean);
-					const byPage = new Map<number, { page: number; count: number; snippets: string[] }>();
-
-					const record = (pageNo: number, positions: number[], text: string) => {
-						const h = byPage.get(pageNo) ?? { page: pageNo, count: 0, snippets: [] };
-						h.count += positions.length;
-						for (const idx of positions) {
-							if (h.snippets.length >= 3) break;
-							const snippet = text
-								.slice(Math.max(0, idx - 120), idx + 280)
-								.replace(/\s+/g, " ")
-								.trim();
-							if (snippet && !h.snippets.includes(snippet)) h.snippets.push(snippet);
-						}
-						byPage.set(pageNo, h);
+					const p = params as {
+						query: string;
+						limit?: number;
+						chapter?: number;
+						from?: number;
+						to?: number;
 					};
+					const q = String(p.query ?? "").trim().toLowerCase();
+					if (!q) return JSON.stringify({ hint: "查询为空" });
+					const max = Math.max(1, Math.min(20, Number(p.limit) || 5));
+					const terms = q.split(/\s+/).filter(Boolean);
 
-					// Lazy per-page text: covers the whole book, not just the eagerly loaded pages.
-					for (let n = 1; n <= docText.numPages; n++) {
+					// Resolve the requested range, clamped to the document. `chapter`
+					// (EPUB) is a shorthand for a single-unit range.
+					const total = docText.numPages;
+					let lo = Math.max(1, Math.floor(Number(p.from ?? p.chapter ?? 1) || 1));
+					let hi = Math.min(total, Math.floor(Number(p.to ?? p.chapter ?? total) || total));
+					if (hi < lo) [lo, hi] = [hi, lo];
+					const scoped = !(lo === 1 && hi === total);
+
+					// EPUB: search unit by unit; hits are reported by chapter (the only
+					// stable locator for reflowable text).
+					if (unit === "chapter") {
+						const byChapter = new Map<number, { chapter: number; count: number; snippets: string[] }>();
+						for (let n = lo; n <= hi; n++) {
+							const text = await docText.getPage(n);
+							if (!text) continue;
+							const lower = text.toLowerCase();
+							const positions: number[] = [];
+							let from = 0;
+							for (;;) {
+								const idx = lower.indexOf(q, from);
+								if (idx === -1) break;
+								positions.push(idx);
+								from = idx + q.length;
+							}
+							if (!positions.length && terms.length > 1 && terms.every((t) => lower.includes(t))) {
+								positions.push(Math.max(0, lower.indexOf(terms[0])));
+							}
+							if (!positions.length) continue;
+							const h = byChapter.get(n) ?? { chapter: n, count: 0, snippets: [] };
+							h.count += positions.length;
+							for (const idx of positions) {
+								if (h.snippets.length >= 3) break;
+								const snip = text.slice(Math.max(0, idx - 120), idx + 280).replace(/\s+/g, " ").trim();
+								if (snip && !h.snippets.includes(snip)) h.snippets.push(snip);
+							}
+							byChapter.set(n, h);
+						}
+						const results = [...byChapter.values()]
+							.sort((a, b) => b.count - a.count || a.chapter - b.chapter)
+							.slice(0, max)
+							.map(({ chapter, count, snippets }) => {
+								const label = chapterLabel(chapter);
+								return {
+									chapter,
+									label: label ? `第 ${chapter} 章 · ${label}` : `第 ${chapter} 章`,
+									count,
+									snippets,
+								};
+							});
+						if (!results.length) return JSON.stringify({ hint: "未找到相关段落", query: p.query, range: scoped ? { from: lo, to: hi } : undefined });
+						return JSON.stringify({
+							query: p.query,
+							totalChapters: total,
+							...(scoped ? { searchedRange: { from: lo, to: hi } } : {}),
+							locator: "chapter",
+							results,
+						});
+					}
+
+					// PDF: search over pages (within the requested range), return page numbers.
+					const byPage = new Map<number, { page: number; count: number; snippets: string[] }>();
+					for (let n = lo; n <= hi; n++) {
 						const text = await docText.getPage(n);
 						if (!text) continue;
 						const lower = text.toLowerCase();
@@ -1153,42 +1326,83 @@ ipcMain.handle(
 							positions.push(idx);
 							from = idx + q.length;
 						}
-						if (positions.length) {
-							record(n, positions, text);
-							continue;
+						if (!positions.length && terms.length > 1 && terms.every((t) => lower.includes(t))) {
+							positions.push(Math.max(0, lower.indexOf(terms[0])));
 						}
-						// Multi-term fallback: all terms present (handles spacing / plural / line breaks).
-						if (terms.length > 1 && terms.every((t) => lower.includes(t))) {
-							record(n, [Math.max(0, lower.indexOf(terms[0]))], text);
+						if (!positions.length) continue;
+						const h = byPage.get(n) ?? { page: n, count: 0, snippets: [] };
+						h.count += positions.length;
+						for (const idx of positions) {
+							if (h.snippets.length >= 3) break;
+							const snip = text.slice(Math.max(0, idx - 120), idx + 280).replace(/\s+/g, " ").trim();
+							if (snip && !h.snippets.includes(snip)) h.snippets.push(snip);
 						}
+						byPage.set(n, h);
 					}
-
 					const results = [...byPage.values()]
 						.sort((a, b) => b.count - a.count || a.page - b.page)
 						.slice(0, max);
-					if (results.length === 0) return JSON.stringify({ hint: "未找到相关段落", query });
+					if (!results.length) return JSON.stringify({ hint: "未找到相关段落", query: p.query, range: scoped ? { from: lo, to: hi } : undefined });
 					return JSON.stringify({
-						query,
-						matchedPages: byPage.size,
-						totalPages: docText.numPages,
+						query: p.query,
+						totalPages: total,
+						...(scoped ? { searchedRange: { from: lo, to: hi } } : {}),
+						locator: "page",
 						results,
 					});
 				},
 			},
-			{
-				name: "read_page",
-				description: "读取指定页/章的文本",
-				parameters: {
-					type: "object",
-					properties: { page: { type: "number" } },
-					required: ["page"],
-				},
-				execute: async (params: unknown) => {
-					const { page } = params as { page: number };
-					const n = Math.max(1, Math.min(docText.numPages || 1, Number(page) || 1));
-					return (await docText.getPage(n)) || "该页无文本";
-				},
-			},
+			// EPUB only: chapter reader and a text->offset locator.
+			...(unit === "chapter"
+				? [
+						{
+							name: "read_chapter",
+							description: `读取指定章节的完整文本（共 ${docText.numPages} 章，按书籍阅读顺序）`,
+							parameters: {
+								type: "object",
+								properties: {
+									chapter: { type: "number", description: `章节序号（1..${docText.numPages}）` },
+								},
+								required: ["chapter"],
+							},
+							execute: async (params: unknown) => {
+								const { chapter } = params as { chapter: number };
+								const n = Math.max(1, Math.min(docText.numPages || 1, Number(chapter) || 1));
+								const body = (await docText.getPage(n)) || "该章无文本";
+								const label = chapterLabel(n);
+								return label ? `【第 ${n} 章 · ${label}】\n${body}` : `【第 ${n} 章】\n${body}`;
+							},
+						} satisfies AgentTool,
+						{
+							name: "locate_text",
+							description:
+								"查找一段原文出现在哪一章，返回章节号与该处上下文。用于把用户引用的片段映射到可读取的章节。",
+							parameters: {
+								type: "object",
+								properties: { text: { type: "string", description: "要定位的原文片段" } },
+								required: ["text"],
+							},
+							execute: async (params: unknown) => {
+								const { text } = params as { text: string };
+								const needle = String(text ?? "").trim().replace(/\s+/g, " ").toLowerCase().slice(0, 60);
+								if (!needle) return JSON.stringify({ hint: "未提供文本" });
+								for (let n = 1; n <= docText.numPages; n++) {
+									const body = (await docText.getPage(n)).replace(/\s+/g, " ").toLowerCase();
+									const at = body.indexOf(needle);
+									if (at >= 0) {
+										const label = chapterLabel(n);
+										return JSON.stringify({
+											chapter: n,
+											label: label || undefined,
+											preview: (await docText.getPage(n)).slice(Math.max(0, at - 60), at + 160),
+										});
+									}
+								}
+								return JSON.stringify({ hint: "未找到该片段" });
+							},
+						} satisfies AgentTool,
+					]
+				: []),
 		];
 
 		if (webSearch.enabled) {
