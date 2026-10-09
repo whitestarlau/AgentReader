@@ -1177,8 +1177,9 @@ textarea::placeholder {
 .chat-composer textarea {
 	flex: 1;
 	resize: none;
-	min-height: 34px;
-	max-height: 140px;
+	min-height: 36px;
+	max-height: 200px;
+	line-height: 1.5;
 	background: #3c3c3c;
 	border-radius: 4px;
 }

@@ -78,6 +78,23 @@ export function ChatPanel({ selection, docId, page, isEpub }: Props) {
 	const streamRef = useRef("");
 	const reasoningRef = useRef("");
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const inputRef = useRef<HTMLTextAreaElement>(null);
+	const composingRef = useRef(false);
+
+	// Grow the composer with its content, up to a cap, then scroll internally.
+	const resizeInput = useCallback(() => {
+		const el = inputRef.current;
+		if (!el) return;
+		const max = 200;
+		el.style.height = "auto";
+		const cs = getComputedStyle(el);
+		const border = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+		const full = el.scrollHeight + border;
+		el.style.height = `${Math.min(full, max)}px`;
+		el.style.overflowY = full > max ? "auto" : "hidden";
+	}, []);
+
+	useEffect(() => { resizeInput(); }, [input, resizeInput]);
 
 	const refreshConvs = async (current?: string | null) => {
 		if (!docId) return;
@@ -479,10 +496,15 @@ export function ChatPanel({ selection, docId, page, isEpub }: Props) {
 
 			<div className="chat-composer">
 				<textarea
+					ref={inputRef}
 					value={input}
 					onChange={(e) => setInput(e.target.value)}
+					onCompositionStart={() => { composingRef.current = true; }}
+					onCompositionEnd={() => { composingRef.current = false; }}
 					onKeyDown={(e) => {
 						if (e.key === "Enter" && !e.shiftKey) {
+							// Ignore the Enter used to confirm an IME candidate (中文输入法选词).
+							if (composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
 							e.preventDefault();
 							send();
 						}
