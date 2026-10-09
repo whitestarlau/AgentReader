@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icons.tsx";
+import type { Annotation } from "./AnnotationLayer.tsx";
 import {
 	loadReadingCfi,
 	loadReadingLoc,
@@ -17,6 +18,10 @@ type Props = {
 	onTextSelected: (text: string, chapter: number) => void;
 	onPageChange?: (chapter: number) => void;
 	onTotalChange?: (total: number) => void;
+	/** Persisted highlights for this document (rendered inside the book). */
+	annotations?: Annotation[];
+	onAnnotationCreate?: (a: Annotation) => void;
+	onAnnotationDelete?: (id: string) => void;
 };
 
 type SpreadMode = "single" | "double";
@@ -99,8 +104,17 @@ async function applyLocation(rendition: Rendition, loc: EpubLocation) {
 	}
 }
 
-export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange }: Props) {
+export function EpubViewer({
+	docId,
+	onTextSelected,
+	onPageChange,
+	onTotalChange,
+	annotations = [],
+	onAnnotationCreate,
+	onAnnotationDelete,
+}: Props) {
 	const ref = useRef<HTMLDivElement>(null);
+	const areaRef = useRef<HTMLDivElement>(null);
 	const renditionRef = useRef<Rendition | null>(null);
 	const [toc, setToc] = useState<{ label: string; href: string }[]>([]);
 	const [atStart, setAtStart] = useState(true);
@@ -108,6 +122,15 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 	const [spreadMode, setSpreadMode] = useState<SpreadMode>(readSpreadMode);
 	const spreadModeRef = useRef<SpreadMode>(spreadMode);
 	spreadModeRef.current = spreadMode;
+
+	// Pending text selection in the book, shown as a floating action menu so the
+	// user chooses between highlighting it and quoting it to the AI.
+	const [menu, setMenu] = useState<{ cfi: string; text: string; chapter: number; x: number; y: number } | null>(null);
+	// A previously-created highlight the user clicked, for the delete/quote bar.
+	const [activeAnnId, setActiveAnnId] = useState<string | null>(null);
+	// Highlight CFIs currently drawn inside the rendition, so re-applying stays idempotent.
+	const appliedRef = useRef<Set<string>>(new Set());
+	const [ready, setReady] = useState(false);
 
 	// Report page/total up to the status bar without re-subscribing on every render.
 	const pageCb = useRef(onPageChange);
@@ -160,6 +183,10 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 		let ro: ResizeObserver | null = null;
 		let resizeTimer: number | undefined;
 		let disposed = false;
+		appliedRef.current = new Set();
+		setReady(false);
+		setMenu(null);
+		setActiveAnnId(null);
 		(async () => {
 			try {
 				const path = await window.api.getDocPath(docId);
@@ -197,6 +224,8 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 			}
 			console.log("[epub] displayed");
 			const update = () => {
+				setMenu(null);
+				setActiveAnnId(null);
 				const loc = rendition.currentLocation() as unknown as { atStart: boolean; atEnd: boolean; start?: { cfi?: string } };
 				setAtStart(!!loc?.atStart);
 				setAtEnd(!!loc?.atEnd);
@@ -223,22 +252,58 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 					else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); rendition.prev(); }
 				});
 			};
+			// Dismiss the floating selection menu when the user clicks elsewhere in
+			// the text: a plain click collapses the selection, but epub.js emits no
+			// event for it, so watch mouse-ups and clear after its selection debounce.
+			const bindSelectionWatch = (doc: Document | undefined) => {
+				if (!doc || (doc as unknown as { __arSelWatch?: boolean }).__arSelWatch) return;
+				(doc as unknown as { __arSelWatch?: boolean }).__arSelWatch = true;
+				doc.addEventListener("mouseup", () => {
+					window.setTimeout(() => {
+						const s = doc.defaultView?.getSelection();
+						if (!s || s.rangeCount === 0 || s.isCollapsed || !s.toString().trim()) setMenu(null);
+					}, 320);
+				});
+			};
 			rendition.on("selected", (cfiRange: string, contents: { window: Window }) => {
 				const sel = contents.window.getSelection();
 				const text = sel?.toString().trim();
-				// Report the chapter (kept in sync on `relocated`); EPUB has no stable
-				// page numbers, so the AI locates by text/offset instead.
-				if (text) onTextSelected(text, chapterRef.current);
-				book?.getRange(cfiRange);
+				if (!text) {
+					setMenu(null);
+					return;
+				}
+				// Keep the selection so the floating menu can act on it. EPUB has no
+				// stable page numbers, so chapter is the anchor (kept in sync on
+				// `relocated`).
+				const chapter = chapterRef.current;
+				// Position the menu just above the selected text. The range rect is in
+				// the iframe's viewport, so add the iframe offset relative to the
+				// editor area (the menu's positioning context).
+				let x = (areaRef.current?.clientWidth ?? 600) / 2;
+				let y = 80;
+				try {
+					const range = sel!.getRangeAt(0);
+					const r = range.getBoundingClientRect();
+					const frame = contents.window.frameElement as HTMLElement | null;
+					const frameRect = frame?.getBoundingClientRect();
+					const areaRect = areaRef.current?.getBoundingClientRect();
+					if (frameRect && areaRect) {
+						x = frameRect.left - areaRect.left + r.left + r.width / 2;
+						y = frameRect.top - areaRect.top + r.top;
+					}
+				} catch {}
+				setActiveAnnId(null);
+				setMenu({ cfi: cfiRange, text, chapter, x, y });
 			});
 			// 单一 keydown 通道：只绑定 iframe 文档（非 passive，preventDefault 生效）。
 			// 旧代码同时用 rendition.on("keydown")（epubjs 内部已在文档上监听）和这里的
 			// 文档监听，一次按键会触发两次 next()/prev()，双栏下一次翻两屏（4 页），
 			// 回翻也同样翻两屏——即用户看到的「跳内容 / 回翻翻两页」。
-			rendition.on("rendered", (_: unknown, view: { document?: Document }) => bindKeys(view.document));
+			rendition.on("rendered", (_: unknown, view: { document?: Document }) => { bindKeys(view.document); bindSelectionWatch(view.document); });
 			// 初始 view 的 rendered 事件在本监听注册前已触发，补绑一次。
 			for (const c of (rendition.getContents?.() ?? []) as unknown as { document?: Document }[]) {
 				bindKeys(c.document);
+				bindSelectionWatch(c.document);
 			}
 			// epubjs 只监听 window.resize；收起侧栏 / 拖动分隔条只会改变容器宽度，
 			// 不会触发 window.resize，必须自己观察容器并主动重排，否则会露出半截下一栏。
@@ -281,6 +346,7 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 				}
 			}
 			update();
+			if (!disposed) setReady(true);
 			} catch (e) {
 				console.error("[epub] error", e);
 				setError(String(e));
@@ -288,12 +354,75 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 		})();
 		return () => {
 			disposed = true;
+			setReady(false);
 			if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
 			ro?.disconnect();
 			try { renditionRef.current?.destroy(); } catch {}
 			try { book?.destroy(); } catch {}
 		};
 	}, [docId]);
+
+	// Draw persisted highlights inside the book. epub.js keeps annotations per
+	// rendition and re-injects them whenever a view renders, so we only add the
+	// ones that are missing and drop the ones that were deleted.
+	useEffect(() => {
+		const rendition = renditionRef.current;
+		if (!rendition || !ready) return;
+		const desired = new Map<string, Annotation>();
+		for (const a of annotations) if (a.type === "highlight" && a.cfi) desired.set(a.cfi, a);
+		const applied = appliedRef.current;
+		for (const cfi of Array.from(applied)) {
+			if (desired.has(cfi)) continue;
+			try { rendition.annotations.remove(cfi, "highlight"); } catch {}
+			applied.delete(cfi);
+		}
+		for (const [cfi, a] of desired) {
+			if (applied.has(cfi)) continue;
+			try {
+				rendition.annotations.highlight(
+					cfi,
+					{ id: a.id },
+					() => { setMenu(null); setActiveAnnId(a.id); },
+					"ar-hl",
+					{ fill: "#ffeb3b", "fill-opacity": "0.38" },
+				);
+				applied.add(cfi);
+			} catch (e) {
+				console.warn("[epub] highlight failed", cfi, e);
+			}
+		}
+	}, [annotations, ready]);
+
+	const clearIframeSelection = useCallback(() => {
+		for (const c of (renditionRef.current?.getContents?.() ?? []) as unknown as { window?: Window }[]) {
+			try { c.window?.getSelection()?.removeAllRanges(); } catch {}
+		}
+	}, []);
+
+	const createHighlightFromMenu = () => {
+		if (!menu || !onAnnotationCreate) return;
+		const a: Annotation = {
+			id: crypto.randomUUID(),
+			page: menu.chapter,
+			type: "highlight",
+			rect: { x: 0, y: 0, w: 0, h: 0 },
+			text: menu.text,
+			color: "#ffeb3b88",
+			cfi: menu.cfi,
+		};
+		onAnnotationCreate(a);
+		setMenu(null);
+		clearIframeSelection();
+	};
+
+	const quoteSelection = () => {
+		if (!menu) return;
+		onTextSelected(menu.text, menu.chapter);
+		setMenu(null);
+		clearIframeSelection();
+	};
+
+	const activeAnn = annotations.find((a) => a.id === activeAnnId) ?? null;
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -318,7 +447,7 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 		);
 
 	return (
-		<div className="editor-area" style={{ background: "#fff" }}>
+		<div ref={areaRef} className="editor-area" style={{ background: "#fff" }}>
 			<div className="editor-toolbar">
 				<button type="button" className="icon-btn" onClick={() => renditionRef.current?.prev()} disabled={atStart} title="上一章" style={{ width: "auto", padding: "0 8px" }}>
 					<Icon name="chevronLeft" size={14} /> 上一章
@@ -350,7 +479,7 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 					</button>
 				</div>
 				<span className="toolbar-muted" style={{ marginLeft: 8 }}>
-					方向键翻页 · 选中文本提问
+					方向键翻页 · 选中文本可高亮或引用
 				</span>
 				{toc.length > 0 && (
 					<select
@@ -368,6 +497,44 @@ export function EpubViewer({ docId, onTextSelected, onPageChange, onTotalChange 
 				)}
 			</div>
 			<div ref={ref} style={{ flex: 1, overflow: "hidden", background: "#fff", minHeight: 0, minWidth: 0, maxWidth: "100%" }} />
+
+			{menu && (
+				<div
+					className="epub-sel-menu"
+					data-toolbar
+					style={{ left: menu.x, top: menu.y }}
+					onMouseDown={(e) => e.preventDefault()}
+				>
+					<button type="button" className="primary" onClick={createHighlightFromMenu} disabled={!onAnnotationCreate}>
+						<Icon name="annotations" size={12} /> 高亮标注
+					</button>
+					<button type="button" onClick={quoteSelection}>
+						<Icon name="chat" size={12} /> 引用提问
+					</button>
+					<button type="button" onClick={() => { setMenu(null); clearIframeSelection(); }} title="取消">
+						✕
+					</button>
+				</div>
+			)}
+
+			{activeAnn && !menu && (
+				<div className="epub-ann-bar" data-toolbar>
+					<span className="epub-ann-text">{activeAnn.text?.trim().slice(0, 40) || "（无文本）"}</span>
+					<button type="button" onClick={() => { onTextSelected(activeAnn.text ?? "", activeAnn.page); setActiveAnnId(null); }}>
+						<Icon name="chat" size={12} /> 引用
+					</button>
+					<button
+						type="button"
+						className="danger"
+						onClick={() => { onAnnotationDelete?.(activeAnn.id); setActiveAnnId(null); }}
+					>
+						删除
+					</button>
+					<button type="button" onClick={() => setActiveAnnId(null)} title="取消">
+						✕
+					</button>
+				</div>
+			)}
 		</div>
 	);
 }

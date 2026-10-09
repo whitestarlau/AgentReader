@@ -41,6 +41,7 @@ declare global {
       getOcr: (id: string) => Promise<Record<string, string>>;
       saveOcr: (id: string, page: number, text: string) => Promise<void>;
       getDocPath: (id: string) => Promise<string | null>;
+      getDocOutline: (id: string) => Promise<{ unit: "page" | "chapter"; numPages: number; chapterLabels: string[]; toc: { label: string; href: string }[] }>;
       readFile: (path: string) => Promise<Uint8Array>;
       getReaderChapter: (id: string) => Promise<number | null>;
       setReaderChapter: (id: string, chapter: number) => Promise<void>;
@@ -285,6 +286,7 @@ function App() {
               selectedId={selected}
               annotations={anns}
               page={page}
+              isEpub={isEpub}
               onImport={importDoc}
               onOpenDoc={openDoc}
               onRemoveDoc={removeDoc}
@@ -315,6 +317,9 @@ function App() {
             isEpub ? (
               <EpubViewer
                 docId={selected}
+                annotations={anns}
+                onAnnotationCreate={addAnn}
+                onAnnotationDelete={deleteAnn}
                 onPageChange={setPage}
                 onTotalChange={setTotal}
                 onTextSelected={(t, p) => {
@@ -364,7 +369,7 @@ function App() {
                   <Icon name="close" size={14} />
                 </button>
               </div>
-              <ChatPanel selection={selection} docId={selected} page={page} isEpub={isEpub} />
+              <ChatPanel selection={selection} docId={selected} page={page} isEpub={isEpub} annotations={anns} />
             </aside>
           </>
         )}

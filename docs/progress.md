@@ -1,5 +1,35 @@
 # 进度记录
 
+## 2026-10-09 输入框 @ 引用 + EPUB 高亮标注
+
+- [x] EPUB 选中文本不再「直接进入引用」：`EpubViewer` 的 `selected` 事件改为弹出浮动菜单
+  （高亮标注 / 引用提问 / ✕），由用户选择；点击页面空白处自动收起
+- [x] EPUB 高亮持久化：`Annotation` 增加可选 `cfi` 字段，高亮以 epub.js CFI range
+  落盘到 `annotations.json`；`EpubViewer` 用 `rendition.annotations.highlight()` 渲染，
+  新增/删除标注时增量增删（`appliedRef` 去重），翻页/分栏重排由 epub.js 自动重挂
+- [x] 点击已有高亮显示「引用 / 删除」操作条；侧栏标注卡片对 EPUB 显示「第 N 章」，
+  空态提示区分 EPUB / PDF
+- [x] 输入框 `@` 联想引用：新增 `doc:outline` IPC（复用 `getDocText`，EPUB 返回
+  `chapterLabels`），`ChatPanel` 内 `@` 触发弹层，支持章节（显示章节名）与用户标注，
+  方向键/回车选择、Esc 关闭；选中项以 token 插入输入框，发送时展开为
+  `【引用章节 · 第N章 · 名称】` / `【引用标注 · 位置 · 类型】+文本` 注入提示词
+- [x] `@` 弹层改为两级：未输入时先列分类（章节 / 标注，带数量），选中分类再列具体条目；
+  输入时跨分类搜索；Backspace 清空查询回到分类；Esc 先退分类再关闭
+- [x] 修复 EPUB 章节名解析（此前引用的章节名是 `index_split_XXX` 文件名）：
+  - 根因一：`<item>` 属性顺序不定，原 NCX 探测正则要求 `media-type` 在 `href` **之前**，
+    calibre/EPUB2 常见 `href` 在前 → 探测失败，TOC 为空，回退文件名
+  - 根因二：原实现把 NCX 全部 `<text>` 按序号与 spine 对齐，但 NCX 含 `docTitle`、
+    深层嵌套 navPoint（本书 507 条 vs spine 80 个文件），序号根本对不上
+  - 修复：按 id 解析 manifest（属性顺序无关）；优先 `spine@toc`，再 NCX `media-type`，
+    再 EPUB3 `properties="nav"`；解析 navPoint（navLabel + 最近 content src）或 nav 文档
+    的 `<a>`，按「文件名」映射到 spine，取落入该文件的**首个**导航项作为章节名；
+    无导航时回退 XHTML 的 `<h1..3>` / `<title>`，最后才是文件名。实测两本真实书
+    章节名正确（三国志集解 / 陈老师课程合集）
+- [x] 对话中引用过长：用户消息解析为「引用块 + 问题」，引用块默认折叠成一行（标题 +
+  前 48 字预览），点击展开正文（限高滚动）；普通消息照旧。完整文本仍原样发送给模型、
+  仍落盘，仅展示层压缩
+- [x] 验证：app typecheck 与 build（renderer + main + preload）通过
+
 ## 2026-10-04 EPUB 定位改为「章节锚点」：彻底废弃页码/页表
 
 - [x] 结论：EPUB 是可重排文本，**不存在稳定页码**。epub.js 有两套互不相干的分页

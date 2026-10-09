@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("api", {
 	saveOcr: (docId: string, page: number, text: string) =>
 		ipcRenderer.invoke("doc:ocr:save", docId, page, text),
 	getDocPath: (docId: string) => ipcRenderer.invoke("doc:path", docId),
+	getDocOutline: (docId: string) => ipcRenderer.invoke("doc:outline", docId),
 	readFile: (path: string) => ipcRenderer.invoke("doc:read", path),
 	getReaderChapter: (docId: string) => ipcRenderer.invoke("doc:chapter:get", docId),
 	setReaderChapter: (docId: string, chapter: number) => ipcRenderer.invoke("doc:chapter:set", docId, chapter),

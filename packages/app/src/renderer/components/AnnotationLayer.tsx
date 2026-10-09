@@ -9,6 +9,8 @@ export type Annotation = {
 	rect: { x: number; y: number; w: number; h: number };
 	text?: string;
 	color: string;
+	/** EPUB only: the epub.js CFI range this highlight is anchored to. */
+	cfi?: string;
 };
 
 type Props = {

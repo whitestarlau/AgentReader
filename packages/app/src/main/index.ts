@@ -204,6 +204,15 @@ ipcMain.handle("doc:chapter:set", (_e, docId: string, chapter: number) => {
 	} catch {}
 });
 
+// Outline used by the renderer (e.g. the chat "@" mention picker): chapter
+// labels for EPUB, or just the unit/page count for PDF. Reuses the cached
+// getDocText() so it stays consistent with the AI tools.
+ipcMain.handle("doc:outline", async (_e, docId: string) => {
+	const d = await getDocText(docId).catch(() => null);
+	if (!d) return { unit: "page" as const, numPages: 0, chapterLabels: [] as string[], toc: [] as { label: string; href: string }[] };
+	return { unit: d.unit, numPages: d.numPages, chapterLabels: d.chapterLabels ?? [], toc: d.toc };
+});
+
 ipcMain.handle("doc:path", (_e, docId: string) => {
 	const dir = getDocDir(docId);
 	if (!existsSync(join(dir, "doc.json"))) return null;
@@ -520,6 +529,35 @@ function withOcr(docId: string, pageNo: number, raw: string): string {
 	return readOcr(docId)[String(pageNo)] ?? raw;
 }
 
+/** Collapse "." / ".." segments in a zip path (no leading slash expected). */
+function normalizeZipPath(p: string): string {
+	const out: string[] = [];
+	for (const part of p.split("/")) {
+		if (!part || part === ".") continue;
+		if (part === "..") out.pop();
+		else out.push(part);
+	}
+	return out.join("/");
+}
+
+function dirOfZipPath(p: string): string {
+	const i = p.lastIndexOf("/");
+	return i >= 0 ? p.slice(0, i) : "";
+}
+
+function decodeXmlEntities(s: string): string {
+	return s
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&quot;/g, '"')
+		.replace(/&#39;|&apos;/g, "'")
+		.replace(/&amp;/g, "&");
+}
+
+function stripTags(s: string): string {
+	return s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
 async function getDocText(docId: string): Promise<DocText> {
 	const cached = docTextCache.get(docId);
 	if (cached !== undefined) return cached;
@@ -538,52 +576,94 @@ async function getDocText(docId: string): Promise<DocText> {
 			const opfText = (await zip.file(opfPath)?.async("string")) ?? "";
 			const baseDir = opfPath.includes("/") ? opfPath.slice(0, opfPath.lastIndexOf("/") + 1) : "";
 
-			// Real spine order: map <item id href> then walk <itemref idref> in order.
-			// (The previous regex matched every <item> — CSS/images included — so the
-			// "chapter" indices didn't even line up with the reader's section count.)
-			// Attributes can appear in either order, so extract id/href independently.
-			const itemHref = new Map<string, string>();
+			// Manifest metadata, keyed by id. Attributes can appear in any order, so
+			// each is read independently. (The previous NCX regex required media-type
+			// before href, which calibre/EPUB2 files rarely use — so the TOC was never
+			// found and chapters fell back to file names like "index_split_047".)
+			const itemMeta = new Map<string, { href: string; type: string; properties: string }>();
 			for (const m of opfText.matchAll(/<item\b[^>]*>/g)) {
 				const tag = m[0];
 				const id = tag.match(/\bid="([^"]+)"/)?.[1];
 				const href = tag.match(/\bhref="([^"]+)"/)?.[1];
-				if (id && href) itemHref.set(id, href);
+				if (!id || !href) continue;
+				itemMeta.set(id, {
+					href,
+					type: tag.match(/\bmedia-type="([^"]+)"/)?.[1] ?? "",
+					properties: tag.match(/\bproperties="([^"]+)"/)?.[1] ?? "",
+				});
 			}
 			const spineHrefs = [...opfText.matchAll(/<itemref\b[^>]*\bidref="([^"]+)"/g)]
-				.map((m) => itemHref.get(m[1]))
+				.map((m) => itemMeta.get(m[1])?.href)
 				.filter((h): h is string => !!h);
+			const spineFull = spineHrefs.map((h) => normalizeZipPath(baseDir + h));
 
 			// Extract text for every spine document. Keep the full text (not truncated)
 			// so global character offsets are exact and monotonic across the book.
+			// Also remember an in-document heading/title as a label fallback.
 			const chapters: string[] = [];
+			const fallbackLabels: string[] = [];
 			for (const href of spineHrefs) {
-				const content = await zip.file(baseDir + href)?.async("string");
-				const text = (content ?? "")
+				const content = (await zip.file(baseDir + href)?.async("string")) ?? "";
+				const text = content
 					.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
 					.replace(/<[^>]+>/g, " ")
 					.replace(/\s+/g, " ")
 					.trim();
 				chapters.push(text);
+				const heading = content.match(/<h[1-3]\b[^>]*>([\s\S]*?)<\/h[1-3]>/i)?.[1];
+				const title = content.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+				fallbackLabels.push(
+					stripTags(decodeXmlEntities(heading ?? "")) || stripTags(decodeXmlEntities(title ?? "")),
+				);
 			}
 
-			// Chapter labels: prefer the NCX nav labels in reading order; otherwise use
-			// the spine file name (e.g. "Section0003") so the AI can still name a chapter.
-			const ncxMatch = opfText.match(
-				/<item[^>]*media-type="application\/x-dtbncx\+xml"[^>]*href="([^"]+)"/,
-			);
-			let toc: { label: string; href: string }[] = [];
-			if (ncxMatch) {
-				const ncxPath = baseDir + ncxMatch[1];
-				const ncxText = (await zip.file(ncxPath)?.async("string")) ?? "";
-				toc = [...ncxText.matchAll(/<text>([^<]+)<\/text>/g)].map((m, i) => ({
-					label: m[1],
-					href: `chapter-${i}`,
-				}));
+			// Navigation document: NCX (EPUB2) or an XHTML nav doc (EPUB3). Prefer the
+			// spine's `toc` reference, then the NCX media-type, then properties="nav".
+			const spineTocId = opfText.match(/<spine\b[^>]*\btoc="([^"]+)"/)?.[1];
+			const ncxItem = [...itemMeta.values()].find((it) => it.type === "application/x-dtbncx+xml");
+			const navDocItem = [...itemMeta.values()].find((it) => /\bnav\b/.test(it.properties));
+			const navHref = (spineTocId && itemMeta.get(spineTocId)?.href) || ncxItem?.href || navDocItem?.href;
+
+			// Navigation entries as { label, src } in reading order. For NCX we pair
+			// each navLabel with the next content src; nested navPoints are emitted
+			// parent-first, which is exactly reading order.
+			const navLabelByFull = new Map<string, string>();
+			const navItems: { label: string; src: string }[] = [];
+			if (navHref) {
+				const navFull = normalizeZipPath(baseDir + navHref);
+				const navDir = dirOfZipPath(navFull);
+				const navDirPrefix = navDir ? `${navDir}/` : "";
+				const navText = (await zip.file(navFull)?.async("string")) ?? "";
+				if (/<navPoint\b/i.test(navText)) {
+					const re =
+						/<navLabel\b[^>]*>\s*<text\b[^>]*>([\s\S]*?)<\/text>[\s\S]*?<content\b[^>]*\bsrc="([^"]+)"/gi;
+					for (const m of navText.matchAll(re)) {
+						const label = stripTags(decodeXmlEntities(m[1]));
+						if (label) navItems.push({ label, src: m[2] });
+					}
+				} else {
+					const navBlock =
+						navText.match(/<nav\b[^>]*\b(?:epub:)?type="toc"[^>]*>[\s\S]*?<\/nav>/i)?.[0] ?? navText;
+					for (const m of navBlock.matchAll(/<a\b[^>]*\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)) {
+						const label = stripTags(decodeXmlEntities(m[2]));
+						if (label) navItems.push({ label, src: m[1] });
+					}
+				}
+				// Map the first nav entry landing in each spine file to that file's
+				// label. A spine file may contain several sections; the earliest wins.
+				for (const it of navItems) {
+					let src = it.src.split("#")[0];
+					try { src = decodeURIComponent(src); } catch {}
+					const full = normalizeZipPath(navDirPrefix + src);
+					if (!navLabelByFull.has(full)) navLabelByFull.set(full, it.label);
+				}
 			}
-			const chapterLabels = spineHrefs.map((href, i) => {
-				const label = toc[i]?.label?.trim();
-				if (label) return label;
-				return href.split("/").pop()?.replace(/\.[^.]+$/, "") || `第 ${i + 1} 章`;
+			const toc = navItems.map((n) => ({ label: n.label, href: n.src }));
+			const chapterLabels = spineFull.map((full, i) => {
+				const nav = navLabelByFull.get(full);
+				if (nav) return nav;
+				if (fallbackLabels[i]) return fallbackLabels[i];
+				return spineHrefs[i].split("/").pop()?.replace(/\.[^.]+$/, "") || `第 ${i + 1} 章`;
 			});
 
 			const result: DocText = {

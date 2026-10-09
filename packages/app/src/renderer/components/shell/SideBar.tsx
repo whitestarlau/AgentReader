@@ -10,6 +10,7 @@ type Props = {
 	selectedId: string | null;
 	annotations: Annotation[];
 	page: number;
+	isEpub?: boolean;
 	onImport: () => void;
 	onOpenDoc: (id: string) => void;
 	onRemoveDoc: (doc: DocMeta) => void;
@@ -31,6 +32,7 @@ export function SideBar({
 	selectedId,
 	annotations,
 	page,
+	isEpub,
 	onImport,
 	onOpenDoc,
 	onRemoveDoc,
@@ -163,7 +165,7 @@ export function SideBar({
 					) : annotations.length === 0 ? (
 						<div className="empty-hint">
 							<div className="empty-hint-title">暂无标注</div>
-							选中文本自动高亮，按住修饰键拖拽可框选。
+							{isEpub ? "选中文本后点击「高亮标注」。" : "选中文本自动高亮，按住修饰键拖拽可框选。"}
 						</div>
 					) : (
 						<div className="sidebar-section">
@@ -178,7 +180,7 @@ export function SideBar({
 									title="点击跳转到该页"
 								>
 									<div className="ann-card-head">
-										<span className="page-tag">P{a.page}</span>
+										<span className="page-tag">{isEpub ? `第${a.page}章` : `P${a.page}`}</span>
 										<span>{a.type === "rect" ? "框选" : "高亮"}</span>
 										<span className="spacer" style={{ flex: 1 }} />
 										<button

@@ -1,7 +1,8 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icons.tsx";
+import type { Annotation } from "./AnnotationLayer.tsx";
 import { type Selection, MODIFIER_LABEL, SELECTION_LABEL } from "../selection.ts";
 
 type TimelineItem =
@@ -17,7 +18,29 @@ type Msg = {
 };
 type ChatRow = { id?: string; role?: string; content?: string; timeline?: TimelineItem[] };
 type Conv = { id: string; title: string };
-type Props = { selection: Selection | null; docId: string | null; page: number; isEpub?: boolean };
+type Props = { selection: Selection | null; docId: string | null; page: number; isEpub?: boolean; annotations?: Annotation[] };
+
+type Outline = { unit: "page" | "chapter"; numPages: number; chapterLabels: string[]; toc: { label: string; href: string }[] };
+
+/** An item the user can reference with "@" in the composer. */
+type MentionItem = {
+	key: string;
+	kind: "annotation" | "chapter";
+	page: number;
+	/** Shown in the picker list. */
+	label: string;
+	/** Literal text inserted into the composer. */
+	token: string;
+	/** Context block prepended to the prompt when the token is still present. */
+	ref: string;
+};
+
+type MentionCategory = "annotation" | "chapter";
+
+/** A row in the "@" picker: either a category ("章节"/"标注") or one item. */
+type MentionRow =
+	| { kind: "category"; category: MentionCategory; label: string; count: number }
+	| { kind: "item"; item: MentionItem };
 
 function toMsg(r: ChatRow): Msg {
 	return {
@@ -36,6 +59,69 @@ function toolSummary(name: string, args: string): string {
 		if (a.page) return `第 ${a.page} 页`;
 	} catch {}
 	return "";
+}
+
+type RefBlock = { header: string; body: string };
+
+/**
+ * Split a persisted user message into its citation blocks and the actual
+ * question. The prompt sent to the model is
+ *   `【引用…】\n<body>\n\n【问题】\n<question>`
+ * so we can render the (often very long) citations collapsed while keeping the
+ * full text available to expand. Messages without citations render as before.
+ */
+function parseUserPrompt(content: string): { refs: RefBlock[]; question: string } {
+	const marker = "\n\n【问题】\n";
+	const qi = content.indexOf(marker);
+	if (qi < 0) return { refs: [], question: content };
+	const refsPart = content.slice(0, qi);
+	const question = content.slice(qi + marker.length);
+	const refs: RefBlock[] = [];
+	for (const chunk of refsPart.split(/\n\n(?=【引用)/)) {
+		const nl = chunk.indexOf("\n");
+		const header = (nl >= 0 ? chunk.slice(0, nl) : chunk).trim();
+		const body = nl >= 0 ? chunk.slice(nl + 1).replace(/\s+$/, "") : "";
+		if (header.startsWith("【引用")) refs.push({ header, body });
+	}
+	return { refs, question };
+}
+
+function refIcon(header: string): "book" | "annotations" | "chat" {
+	if (header.includes("章节")) return "book";
+	if (header.includes("标注")) return "annotations";
+	return "chat";
+}
+
+/** A citation attached to a user turn. Collapsed to one line by default. */
+function RefDisclosure({ header, body }: RefBlock) {
+	const [open, setOpen] = useState(false);
+	const title = header.replace(/^【|】$/g, "");
+	const preview = body.replace(/\s+/g, " ").trim().slice(0, 48);
+	return (
+		<div className={`user-ref${open ? " open" : ""}`}>
+			<button type="button" className="user-ref-head" onClick={() => setOpen((v) => !v)} disabled={!body}>
+				<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
+				<Icon name={refIcon(header)} size={12} />
+				<span className="user-ref-title">{title}</span>
+				{!open && preview && <span className="user-ref-preview">{preview}</span>}
+			</button>
+			{open && body && <div className="user-ref-body">{body}</div>}
+		</div>
+	);
+}
+
+/** User turn: citation blocks (collapsed) followed by the question. */
+function UserMessage({ content }: { content: string }) {
+	const { refs, question } = useMemo(() => parseUserPrompt(content), [content]);
+	if (refs.length === 0) return <div className="msg-user-text">{question}</div>;
+	return (
+		<div className="msg-user-text">
+			{refs.map((r) => (
+				<RefDisclosure key={`${r.header}:${r.body.slice(0, 24)}`} header={r.header} body={r.body} />
+			))}
+			{question && <div className="msg-user-question">{question}</div>}
+		</div>
+	);
 }
 
 /** One collapsible block. Collapsed by default; opens only on explicit click. */
@@ -66,11 +152,15 @@ function Disclosure({
 	);
 }
 
-export function ChatPanel({ selection, docId, page, isEpub }: Props) {
+export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: Props) {
 	const [convs, setConvs] = useState<Conv[]>([]);
 	const [convId, setConvId] = useState<string | null>(null);
 	const [msgs, setMsgs] = useState<Msg[]>([]);
 	const [input, setInput] = useState("");
+	const [outline, setOutline] = useState<Outline | null>(null);
+	// Mentions the user picked via "@", keyed by token still present in `input`.
+	const [mentions, setMentions] = useState<MentionItem[]>([]);
+	const [mention, setMention] = useState<{ start: number; query: string; index: number; category: MentionCategory | null } | null>(null);
 	const [streaming, setStreaming] = useState(false);
 	const [stopped, setStopped] = useState(false);
 	const [editingId, setEditingId] = useState<string | null>(null);
@@ -95,6 +185,123 @@ export function ChatPanel({ selection, docId, page, isEpub }: Props) {
 	}, []);
 
 	useEffect(() => { resizeInput(); }, [input, resizeInput]);
+
+	// Chapter labels for the "@" picker. Only EPUB has chapters, and calling
+	// getDocText on a PDF would eagerly extract pages, so skip it there.
+	useEffect(() => {
+		setMentions([]);
+		setMention(null);
+		if (!docId || !isEpub) { setOutline(null); return; }
+		let cancelled = false;
+		window.api.getDocOutline(docId)
+			.then((o) => { if (!cancelled) setOutline(o); })
+			.catch(() => { if (!cancelled) setOutline(null); });
+		return () => { cancelled = true; };
+	}, [docId, isEpub]);
+
+	// Build the mention catalog: annotations first (usually few and specific),
+	// then every chapter with its name. Memoized so streaming re-renders don't
+	// rebuild it on every token.
+	const annotationMentions = useMemo<MentionItem[]>(() => {
+		return annotations.map((a) => {
+			const where = isEpub ? `第${a.page}章` : `P${a.page}`;
+			const snippet = (a.text ?? "").replace(/\s+/g, " ").trim();
+			const kindLabel = a.type === "rect" ? "框选" : "高亮";
+			return {
+				key: `ann:${a.id}`,
+				kind: "annotation",
+				page: a.page,
+				label: `${where} ${kindLabel}${snippet ? ` · ${snippet.slice(0, 24)}` : ""}`,
+				token: `@标注(${where}${snippet ? `·${snippet.slice(0, 12)}` : ""})`,
+				ref: `【引用标注 · ${where} · ${kindLabel}】\n${snippet.slice(0, 2000) || "（无文本）"}`,
+			};
+		});
+	}, [annotations, isEpub]);
+	const chapterMentions = useMemo<MentionItem[]>(() => {
+		if (outline?.unit !== "chapter") return [];
+		return (outline.chapterLabels ?? []).map((raw, i) => {
+			const n = i + 1;
+			const name = (raw ?? "").trim();
+			const hasNumber = name.includes(`第${n}章`);
+			return {
+				key: `ch:${n}`,
+				kind: "chapter",
+				page: n,
+				label: name ? `第${n}章${hasNumber ? "" : ` · ${name}`}` : `第${n}章`,
+				token: `@章节(第${n}章${name && !hasNumber ? `·${name}` : ""})`,
+				ref: `【引用章节 · 第${n}章${name && !hasNumber ? ` · ${name}` : ""}】`,
+			};
+		});
+	}, [outline]);
+	const allMentions = useMemo(() => [...annotationMentions, ...chapterMentions], [annotationMentions, chapterMentions]);
+
+	// Picker rows. With no input: first the categories, then (after choosing one)
+	// its items. While typing, search across every item directly.
+	const mentionRows = useMemo<MentionRow[]>(() => {
+		if (!mention) return [];
+		const q = mention.query.trim().toLowerCase();
+		if (q) {
+			return allMentions
+				.filter((m) => m.label.toLowerCase().includes(q) || m.token.toLowerCase().includes(q))
+				.slice(0, 12)
+				.map((item) => ({ kind: "item", item }) as MentionRow);
+		}
+		if (!mention.category) {
+			const cats: MentionRow[] = [];
+			if (chapterMentions.length) cats.push({ kind: "category", category: "chapter", label: "章节", count: chapterMentions.length });
+			if (annotationMentions.length) cats.push({ kind: "category", category: "annotation", label: "标注", count: annotationMentions.length });
+			return cats;
+		}
+		const list = mention.category === "chapter" ? chapterMentions : annotationMentions;
+		return list.slice(0, 200).map((item) => ({ kind: "item", item }) as MentionRow);
+	}, [mention, allMentions, annotationMentions, chapterMentions]);
+	const activeMentionIndex = mention ? Math.min(mention.index, Math.max(0, mentionRows.length - 1)) : 0;
+
+	const syncMention = useCallback(() => {
+		const el = inputRef.current;
+		if (!el) return;
+		const caret = el.selectionStart ?? 0;
+		const before = el.value.slice(0, caret);
+		const at = before.lastIndexOf("@");
+		if (at < 0) { setMention(null); return; }
+		const between = before.slice(at + 1);
+		if (between.includes("\n") || between.length > 24 || /\s/.test(between)) { setMention(null); return; }
+		setMention((prev) => {
+			const sameCtx = prev && prev.start === at;
+			return {
+				start: at,
+				query: between,
+				index: sameCtx && prev.query === between ? prev.index : 0,
+				category: sameCtx ? prev.category : null,
+			};
+		});
+	}, []);
+
+	const applyMention = (item: MentionItem) => {
+		const el = inputRef.current;
+		if (!el || !mention) return;
+		const caret = el.selectionStart ?? input.length;
+		const before = input.slice(0, mention.start);
+		const after = input.slice(caret);
+		const insert = `${item.token} `;
+		setInput(before + insert + after);
+		setMentions((prev) => (prev.some((m) => m.key === item.key) ? prev : [...prev, item]));
+		setMention(null);
+		const pos = before.length + insert.length;
+		requestAnimationFrame(() => {
+			el.focus();
+			el.setSelectionRange(pos, pos);
+		});
+	};
+
+	const openMentionCategory = (category: MentionCategory) => {
+		setMention((m) => (m ? { ...m, category, index: 0 } : m));
+	};
+
+	const activateMentionRow = (row: MentionRow) => {
+		if (row.kind === "category") openMentionCategory(row.category);
+		else applyMention(row.item);
+	};
 
 	const refreshConvs = async (current?: string | null) => {
 		if (!docId) return;
@@ -259,12 +466,18 @@ export function ChatPanel({ selection, docId, page, isEpub }: Props) {
 		const quote = sel?.text?.trim();
 		// EPUB is reflowable and has no fixed page numbers — cite the chapter, not a page.
 		const where = isEpub ? `第${sel?.page ?? "?"}章` : `第${sel?.page ?? "?"}页`;
-		const prompt = quote && sel
-			? `【引用文本 · ${where} · ${SELECTION_LABEL[sel.kind]}】\n${quote.slice(0, 4000)}\n\n【问题】\n${input}`
+		const blocks: string[] = [];
+		if (quote && sel) blocks.push(`【引用文本 · ${where} · ${SELECTION_LABEL[sel.kind]}】\n${quote.slice(0, 4000)}`);
+		// Only include mentions whose token is still present in the composer.
+		const usedMentions = mentions.filter((m) => input.includes(m.token));
+		for (const m of usedMentions) blocks.push(m.ref);
+		const prompt = blocks.length
+			? `${blocks.join("\n\n")}\n\n【问题】\n${input}`
 			: input;
 		const history = msgs.map((m) => ({ role: m.role, content: m.content }));
 		setMsgs((m) => [...m, { role: "user", content: prompt }]);
 		setInput("");
+		setMention(null);
 		const res = await runChat(history, prompt);
 		// Attach the persisted id to the user turn so it becomes editable.
 		if (res?.userId) {
@@ -474,7 +687,7 @@ export function ChatPanel({ selection, docId, page, isEpub }: Props) {
 										</div>
 									) : (
 										<div className="msg-user">
-											<div className="msg-user-text">{m.content}</div>
+											<UserMessage content={m.content} />
 											{m.id && !streaming && (
 												<button
 													type="button"
@@ -495,13 +708,86 @@ export function ChatPanel({ selection, docId, page, isEpub }: Props) {
 			</div>
 
 			<div className="chat-composer">
+				{mention && mentionRows.length > 0 && (
+					<div className="mention-menu">
+						<div className="mention-menu-head">
+							{mention.category && !mention.query ? (
+								<button
+									type="button"
+									className="mention-back"
+									onMouseDown={(e) => e.preventDefault()}
+									onClick={() => setMention((m) => (m ? { ...m, category: null, index: 0 } : m))}
+								>
+									<Icon name="chevronLeft" size={11} /> {mention.category === "chapter" ? "章节" : "标注"}
+								</button>
+							) : mention.query ? (
+								"搜索结果"
+							) : (
+								"选择引用类型"
+							)}
+						</div>
+						{mentionRows.map((row, i) =>
+							row.kind === "category" ? (
+								<button
+									key={`cat:${row.category}`}
+									type="button"
+									className={`mention-item${i === activeMentionIndex ? " active" : ""}`}
+									onMouseDown={(e) => e.preventDefault()}
+									onClick={() => activateMentionRow(row)}
+								>
+									<Icon name={row.category === "chapter" ? "book" : "annotations"} size={13} />
+									<span className="mention-label">{row.label}</span>
+									<span className="mention-kind">{row.count}</span>
+									<Icon name="chevronRight" size={12} />
+								</button>
+							) : (
+								<button
+									key={row.item.key}
+									type="button"
+									className={`mention-item${i === activeMentionIndex ? " active" : ""}`}
+									onMouseDown={(e) => e.preventDefault()}
+									onClick={() => applyMention(row.item)}
+								>
+									<Icon name={row.item.kind === "chapter" ? "book" : "annotations"} size={13} />
+									<span className="mention-label">{row.item.label}</span>
+									<span className="mention-kind">{row.item.kind === "chapter" ? "章节" : "标注"}</span>
+								</button>
+							),
+						)}
+					</div>
+				)}
 				<textarea
 					ref={inputRef}
 					value={input}
-					onChange={(e) => setInput(e.target.value)}
+					onChange={(e) => { setInput(e.target.value); syncMention(); }}
+					onSelect={syncMention}
+					onBlur={() => setMention(null)}
 					onCompositionStart={() => { composingRef.current = true; }}
 					onCompositionEnd={() => { composingRef.current = false; }}
 					onKeyDown={(e) => {
+						if (mention && mentionRows.length > 0 && !composingRef.current && !e.nativeEvent.isComposing) {
+							if (e.key === "ArrowDown") {
+								e.preventDefault();
+								setMention((m) => (m ? { ...m, index: Math.min(m.index + 1, mentionRows.length - 1) } : m));
+								return;
+							}
+							if (e.key === "ArrowUp") {
+								e.preventDefault();
+								setMention((m) => (m ? { ...m, index: Math.max(m.index - 1, 0) } : m));
+								return;
+							}
+							if (e.key === "Enter" || e.key === "Tab") {
+								e.preventDefault();
+								activateMentionRow(mentionRows[activeMentionIndex]);
+								return;
+							}
+							if (e.key === "Escape") {
+								e.preventDefault();
+								// Back out of a category first, then close the picker.
+								setMention((m) => (m && m.category && !m.query ? { ...m, category: null, index: 0 } : null));
+								return;
+							}
+						}
 						if (e.key === "Enter" && !e.shiftKey) {
 							// Ignore the Enter used to confirm an IME candidate (中文输入法选词).
 							if (composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
@@ -509,7 +795,7 @@ export function ChatPanel({ selection, docId, page, isEpub }: Props) {
 							send();
 						}
 					}}
-					placeholder={docId ? "输入问题… (Enter 发送 / Shift+Enter 换行)" : "请先选择文档"}
+					placeholder={docId ? "输入问题，@ 引用章节 / 标注… (Enter 发送)" : "请先选择文档"}
 					disabled={!docId || !convId || streaming}
 					rows={1}
 				/>

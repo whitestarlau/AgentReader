@@ -14,8 +14,8 @@ A desktop AI document reader with PDF / EPUB import, reading, **highlight / rect
 
 - **Library**: import-based management under `library/{hash}/`, one folder per document (original file + `doc.json` + `annotations.json` + `chats.jsonl`)
 - **Reading**: PDF.js `canvas + textLayer` with paging / zoom / text selection; EPUB (v0.2)
-- **Annotation**: text highlight + modifier-drag rectangle selection (macOS `⌥`, other platforms `Alt`), persisted as normalized coordinates
-- **AI chat**: sidebar, auto-injects the current selection as a citation, graded context (selection / chapter / full-text RAG), streaming output
+- **Annotation**: text highlight + modifier-drag rectangle selection (macOS `⌥`, other platforms `Alt`), persisted as normalized coordinates; EPUB highlights are anchored to epub.js CFIs via a select-then-menu flow
+- **AI chat**: sidebar, auto-injects the current selection as a citation, `@` mention picker for chapters / annotations, graded context (selection / chapter / full-text RAG), streaming output
 - **Multi-provider**: reimplements `pi-ai`'s `Model / Context / StreamFn`, OpenAI-compatible endpoints
 
 ## Tech stack
