@@ -1,5 +1,15 @@
 # 进度记录
 
+## 2026-10-09 对话滚动：仅在贴底时自动跟随
+
+- [x] 问题：`ChatPanel` 每当 `msgs` 变化（流式每个 delta）都强制滚到底部，用户向上
+  翻阅历史时会被反复拽回底部
+- [x] 改为「贴底跟随」：用 `stickRef` 记录是否贴底；`onScroll` 距底 < 48px 视为贴底。
+  仅当贴底时才跟随新输出，且用瞬时滚动（非 smooth）避免流式抖动
+- [x] 发送消息 / 切换会话时重置为贴底并滚到底部
+- [x] 非贴底时右下角显示「回到最新」按钮（`scroll-down-btn`），点击平滑回底并恢复跟随
+- [x] 验证：app typecheck 与 build 通过
+
 ## 2026-10-09 重构：拆分 main 进程 god-file `index.ts`
 
 - [x] 背景：`packages/app/src/main/index.ts` 已膨胀到 1779 行，单个 `chat:send` 处理器

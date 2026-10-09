@@ -168,8 +168,28 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 	const streamRef = useRef("");
 	const reasoningRef = useRef("");
 	const scrollRef = useRef<HTMLDivElement>(null);
+	// Whether new output should follow the bottom. Cleared when the user scrolls
+	// up to read history, so streaming no longer yanks them back down.
+	const stickRef = useRef(true);
+	const [showJump, setShowJump] = useState(false);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const composingRef = useRef(false);
+
+	const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+		const el = scrollRef.current;
+		if (!el) return;
+		el.scrollTo({ top: el.scrollHeight, behavior });
+		stickRef.current = true;
+		setShowJump(false);
+	}, []);
+
+	const onScroll = useCallback(() => {
+		const el = scrollRef.current;
+		if (!el) return;
+		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+		stickRef.current = atBottom;
+		setShowJump(!atBottom);
+	}, []);
 
 	// Grow the composer with its content, up to a cap, then scroll internally.
 	const resizeInput = useCallback(() => {
@@ -382,8 +402,19 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 		return () => { offDelta(); offReasoning(); offToolCall(); offToolResult(); offDone(); };
 	}, [updateLast, pushTimeline]);
 
+	// Jump to the bottom when switching conversations.
 	useEffect(() => {
-		scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+		stickRef.current = true;
+		const el = scrollRef.current;
+		if (el) el.scrollTop = el.scrollHeight;
+	}, [docId, convId]);
+
+	// Follow new output only while the user is already at the bottom. Instant
+	// (not smooth) so streaming stays in sync without animation lag.
+	useEffect(() => {
+		const el = scrollRef.current;
+		if (!el || !stickRef.current) return;
+		el.scrollTop = el.scrollHeight;
 	}, [msgs]);
 
 	const stop = useCallback(() => {
@@ -475,6 +506,8 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 			? `${blocks.join("\n\n")}\n\n【问题】\n${input}`
 			: input;
 		const history = msgs.map((m) => ({ role: m.role, content: m.content }));
+		// Sending is an explicit intent to follow the reply, so re-pin to bottom.
+		stickRef.current = true;
 		setMsgs((m) => [...m, { role: "user", content: prompt }]);
 		setInput("");
 		setMention(null);
@@ -602,7 +635,7 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 				</>
 			)}
 
-			<div ref={scrollRef} className="chat-scroll">
+			<div ref={scrollRef} className="chat-scroll" onScroll={onScroll}>
 				{msgs.length === 0 ? (
 					<div className="chat-empty">
 						<div className="chat-empty-icon">
@@ -706,6 +739,12 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 					})
 				)}
 			</div>
+
+			{showJump && (
+				<button type="button" className="scroll-down-btn" onClick={() => scrollToBottom("smooth")} title="回到最新">
+					<Icon name="chevronDown" size={14} /> 回到最新
+				</button>
+			)}
 
 			<div className="chat-composer">
 				{mention && mentionRows.length > 0 && (
