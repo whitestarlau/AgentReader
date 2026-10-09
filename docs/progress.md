@@ -1,5 +1,26 @@
 # 进度记录
 
+## 2026-10-09 重构：拆分 main 进程 god-file `index.ts`
+
+- [x] 背景：`packages/app/src/main/index.ts` 已膨胀到 1779 行，单个 `chat:send` 处理器
+  就占约 620 行。按职责拆成多个模块，`index.ts` 收敛为组合根（83 行）
+- [x] 新增模块（行为不变，纯搬移）：
+  - `paths.ts`：`LIBRARY_ROOT` / `getDocDir` / `ensureLibrary`
+  - `doc-text.ts`：`DocText`、`getDocText`（EPUB/PDF 解析）、OCR 缓存、页/章缓存、
+    `doc:ocr:*` / `doc:outline` / `doc:path` / `doc:read`、`clearDocCaches`
+  - `doc-state.ts`：标注、当前章、阅读位置（`doc:annotations:*` / `doc:chapter:*` /
+    `reading:*`）
+  - `conversations.ts`：会话索引与 JSONL 读写（`conversations:*` / `chat:list` /
+    `chat:append` / `chat:edit`）
+  - `ai.ts`：模型运行时/配置载荷/联网配置/标题生成（`ai:*` 与 `settings:*`）
+  - `skills-ipc.ts`：技能相关 IPC
+  - `library.ts`：导入/列出/删除
+  - `permissions.ts`：脚本执行确认（`requestPermission` + `permission:reply`）
+  - `chat-tools.ts`：一次对话的 agent 工具集（文档读写/搜索/联网/技能）
+  - `chat.ts`：`chat:send` / `chat:stop`（模型解析、agent 循环、流式与落盘）
+- [x] 验证：IPC 通道与 webContents 事件名与重构前逐一比对一致；`biome lint` 无告警；
+  app typecheck 与 build 通过
+
 ## 2026-10-09 输入框 @ 引用 + EPUB 高亮标注
 
 - [x] EPUB 选中文本不再「直接进入引用」：`EpubViewer` 的 `selected` 事件改为弹出浮动菜单
