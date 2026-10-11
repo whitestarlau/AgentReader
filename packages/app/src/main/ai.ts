@@ -275,6 +275,7 @@ function buildConfigPayload() {
 			provider: m.provider,
 			label: m.label,
 			contextWindow: m.contextWindow,
+			contextSource: m.contextWindowSource ?? "default",
 			maxTokens: m.maxTokens,
 			configured: configuredById.get(m.provider) ?? false,
 		})),

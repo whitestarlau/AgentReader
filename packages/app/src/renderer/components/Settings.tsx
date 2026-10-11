@@ -7,9 +7,24 @@ import type {
 	SkillTrustPayload,
 	WebSearchTestResult,
 } from "../types.ts";
+import { formatTokens } from "../tokens.ts";
 import { Icon } from "./Icons.tsx";
 
 const EMPTY_FORM = { id: "", name: "", baseUrl: "", models: "", key: "" };
+
+/** Human label for where a model's context window came from. */
+function contextSourceLabel(source?: "override" | "catalog" | "inferred" | "default"): string {
+	switch (source) {
+		case "override":
+			return "手动";
+		case "catalog":
+			return "内置";
+		case "inferred":
+			return "自动";
+		default:
+			return "默认";
+	}
+}
 
 const SECTIONS = [
 	{ id: "models", label: "模型与提供商" },
@@ -380,13 +395,13 @@ export function Settings({
 							</div>
 
 							{providerModels.length > 0 && (
-								<div className="setting">
-									<div className="setting-label">
+								<details className="setting model-ctx-details">
+									<summary className="setting-label">
 										模型上下文
 										<span className="hint">
-											逐个覆盖上下文窗口 / 最大输出（留空用默认值），保存在 model-overrides.json
+											主流模型已自动识别（上下文窗口 / 最大输出）；如需覆盖可展开，留空即用自动值
 										</span>
-									</div>
+									</summary>
 									<div className="setting-control">
 										<div className="model-ctx-list">
 											{providerModels.map((m) => {
@@ -396,37 +411,44 @@ export function Settings({
 														<span className="model-ctx-name" title={m.ref}>
 															{m.label}
 														</span>
+														<span className={`model-ctx-source src-${m.contextSource ?? "default"}`}>
+															{contextSourceLabel(m.contextSource)}
+														</span>
 														<input
-															key={`${m.ref}:ctx:${m.contextWindow}`}
+															key={`${m.ref}:ctx:${ov?.contextWindow ?? ""}`}
 															type="number"
 															min={1}
 															className="model-ctx-input"
-															defaultValue={m.contextWindow || ""}
-															placeholder="上下文"
-															title="上下文窗口（token）"
+															defaultValue={ov?.contextWindow ?? ""}
+															placeholder={formatTokens(m.contextWindow)}
+															title="覆盖上下文窗口（token），留空用自动值"
 															onBlur={(e) => {
 																const v = Number(e.target.value);
 																saveModelOverride(m.provider, m.id, {
 																	contextWindow:
-																		Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined,
+																		e.target.value.trim() && Number.isFinite(v) && v > 0
+																			? Math.floor(v)
+																			: undefined,
 																	maxTokens: ov?.maxTokens,
 																});
 															}}
 														/>
 														<input
-															key={`${m.ref}:max:${m.maxTokens ?? ""}`}
+															key={`${m.ref}:max:${ov?.maxTokens ?? ""}`}
 															type="number"
 															min={1}
 															className="model-ctx-input"
-															defaultValue={m.maxTokens ?? ""}
-															placeholder="最大输出"
-															title="最大输出 token（可选）"
+															defaultValue={ov?.maxTokens ?? ""}
+															placeholder={m.maxTokens ? formatTokens(m.maxTokens) : "输出"}
+															title="覆盖最大输出 token，留空用自动值"
 															onBlur={(e) => {
 																const v = Number(e.target.value);
 																saveModelOverride(m.provider, m.id, {
 																	contextWindow: ov?.contextWindow,
 																	maxTokens:
-																		Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined,
+																		e.target.value.trim() && Number.isFinite(v) && v > 0
+																			? Math.floor(v)
+																			: undefined,
 																});
 															}}
 														/>
@@ -434,7 +456,7 @@ export function Settings({
 															<button
 																type="button"
 																className="model-ctx-reset"
-																title="恢复默认"
+																title="恢复自动"
 																onClick={() => resetModelOverride(m.provider, m.id)}
 															>
 																重置
@@ -446,8 +468,11 @@ export function Settings({
 												);
 											})}
 										</div>
+										<div className="hint model-ctx-note">
+											参考公开模型卡片与 models.dev；自动值仅作默认，可在 models.json 或此处覆盖。
+										</div>
 									</div>
-								</div>
+								</details>
 							)}
 
 							<div className="setting">

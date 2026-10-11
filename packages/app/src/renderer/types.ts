@@ -35,6 +35,7 @@ export type AiModelOption = {
 	provider: string;
 	label: string;
 	contextWindow: number;
+	contextSource?: "override" | "catalog" | "inferred" | "default";
 	maxTokens?: number;
 	configured: boolean;
 };

@@ -1,6 +1,7 @@
 import { anthropicMessagesStream } from "./api/anthropic-messages.ts";
 import { openAICompletionsStream } from "./api/openai-completions.ts";
 import { BUILTIN_PROVIDERS, type BuiltinModel, getBuiltinProvider } from "./config/builtin.ts";
+import { inferModelMeta } from "./config/model-metadata.ts";
 import type { ModelOverride, ModelsFile, UserProviderConfig } from "./config/schema.ts";
 import type { ApiType, AssistantMessageEvent, Model, StreamFn } from "./types.ts";
 
@@ -157,13 +158,23 @@ function asModel(
 	override?: ModelOverride,
 ): Model | null {
 	if (override?.hidden || def.hidden) return null;
+	const inferred = inferModelMeta(def.id);
+	const contextWindow = override?.contextWindow ?? def.contextWindow ?? inferred.contextWindow;
+	const source: Model["contextWindowSource"] = override?.contextWindow
+		? "override"
+		: def.contextWindow
+			? "catalog"
+			: inferred.contextWindow
+				? "inferred"
+				: "default";
 	return {
 		id: def.id,
 		provider: provider.id,
 		label: override?.name ?? def.label ?? def.name ?? def.id,
-		contextWindow: override?.contextWindow ?? def.contextWindow ?? 128000,
+		contextWindow: contextWindow ?? 128000,
+		contextWindowSource: source,
 		api: override?.api ?? def.api ?? provider.api,
-		maxTokens: override?.maxTokens ?? def.maxTokens,
+		maxTokens: override?.maxTokens ?? def.maxTokens ?? inferred.maxTokens,
 		reasoning: override?.reasoning ?? def.reasoning,
 		headers: provider.headers,
 	};

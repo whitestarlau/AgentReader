@@ -20,8 +20,9 @@ export type BuiltinProvider = {
 };
 
 /** IDs from a provider /models list become display-only catalog entries. */
-function fromIds(ids: readonly string[], contextWindow = 128000): BuiltinModel[] {
-	return ids.map((id) => ({ id, label: id, contextWindow }));
+function fromIds(ids: readonly string[]): BuiltinModel[] {
+	// Leave contextWindow unset so the metadata inference fills sensible limits.
+	return ids.map((id) => ({ id, label: id }));
 }
 
 export const BUILTIN_PROVIDERS: BuiltinProvider[] = [

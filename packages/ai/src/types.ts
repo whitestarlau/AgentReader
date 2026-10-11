@@ -33,6 +33,8 @@ export type Model = {
 	provider: string;
 	label: string;
 	contextWindow: number;
+	/** Where `contextWindow` came from: user override, catalog, inference or default. */
+	contextWindowSource?: "override" | "catalog" | "inferred" | "default";
 	/** Protocol override; falls back to the owning provider's api when omitted. */
 	api?: ApiType;
 	baseUrl?: string;

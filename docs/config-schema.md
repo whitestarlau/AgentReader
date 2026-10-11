@@ -37,8 +37,8 @@ AgentReader 从 `{userData}/models.json` 读取提供商与模型配置。文件
 |---|---|---|
 | `id` | string | 模型 id（`models` 中必填）。 |
 | `name` | string | 显示名。 |
-| `contextWindow` | number | 上下文窗口（token）。用于上下文占用指示，GUI 可逐模型覆盖。 |
-| `maxTokens` | number | 最大输出 token。GUI 可逐模型覆盖。 |
+| `contextWindow` | number | 上下文窗口（token）。未填写时按内置元数据自动识别（见下），用于上下文占用指示。 |
+| `maxTokens` | number | 最大输出 token。未填写时同样自动识别。 |
 | `reasoning` | boolean | 是否为推理模型。 |
 | `api` | string | 覆盖协议（用于聚合网关中混合协议的模型）。 |
 | `hidden` | boolean | 在 `modelOverrides` 中设为 `true` 可隐藏该模型。 |
@@ -109,6 +109,19 @@ provider 的 `modelOverrides` 合并，因此**不会改动带注释的 models.j
 ```
 
 `contextWindow` 决定对话里「上下文占用」进度条的满量程。
+
+## 模型元数据自动识别
+
+应用内置了一份**按模型 id 模式匹配**的上下文窗口 / 输出上限参考表（覆盖 OpenAI、Anthropic、
+Google、DeepSeek、通义千问、智谱、Kimi、MiniMax、xAI、Llama、Mistral 等主流家族；数值参考公开
+模型卡片与 [models.dev](https://models.dev) 目录）。因此：
+
+- 内置目录、`/models` 拉取到的模型、以及自定义 OpenAI 兼容服务里的模型，
+  **无需手动配置**即可得到合理的上下文窗口；识别来源会在「设置 → 模型上下文」标注
+  （`内置` / `自动` / `默认`）。
+- 需要纠正时，可在该面板填写覆盖值（存 `model-overrides.json`），或在 `models.json` 的
+  `models` / `modelOverrides` 中显式指定；**显式值优先级最高**。
+- 未能识别的模型回退到 128000，仍可手动覆盖。
 
 ## tools.webSearch
 

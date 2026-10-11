@@ -1,5 +1,20 @@
 # 进度记录
 
+## 2026-10-11 模型上下文：内置参考表自动识别，免手动配置
+
+- [x] 反馈：逐模型上下文窗口需要手动配置过于繁琐
+- [x] 新增 `packages/ai/src/config/model-metadata.ts`：按模型 id 模式匹配的上下文窗口 /
+  输出上限参考表（OpenAI / Anthropic / Google / DeepSeek / Qwen / GLM / Kimi / MiniMax /
+  xAI / Llama / Mistral / Cohere / Phi / Nemotron 等，数值参考公开模型卡片与 models.dev）
+- [x] `runtime.asModel` 优先级改为 用户覆盖 > 目录定义 > **自动识别** > 128000 默认；
+  `BuiltinModel.contextWindow` 新增 `contextWindowSource`（override/catalog/inferred/default）
+  并透传到 `AiConfig` 载荷
+- [x] `fromIds` 不再硬编码 128000，opencode / opencode-go 及 `/models` 缓存模型改由自动识别填充
+- [x] `Settings → 模型上下文` 折叠为 `<details>`（默认收起），逐行标注识别来源，输入框仅在
+  覆盖时显示值、占位符显示自动值；留空即用自动值
+- [x] 文档：`docs/config-schema.md` 增加「模型元数据自动识别」说明
+- [x] 验证：ai / agent / app typecheck 与 app build 通过
+
 ## 2026-10-11 模型上下文：可逐模型配置 + 对话上下文占用显示
 
 - [x] 逐模型上下文配置：`Settings → 模型与提供商` 新增「模型上下文」列表，可为当前提供商的每个

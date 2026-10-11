@@ -2051,6 +2051,27 @@ textarea::placeholder {
 }
 
 /* Settings: per-model context window / max output overrides */
+.model-ctx-details {
+	display: block;
+}
+.model-ctx-details > summary {
+	cursor: pointer;
+	list-style: none;
+	padding: 2px 0;
+}
+.model-ctx-details > summary::-webkit-details-marker {
+	display: none;
+}
+.model-ctx-details > summary::before {
+	content: "▸ ";
+	color: var(--vscode-fg-dim);
+}
+.model-ctx-details[open] > summary::before {
+	content: "▾ ";
+}
+.model-ctx-details > .setting-control {
+	margin-top: 8px;
+}
 .model-ctx-list {
 	max-height: 240px;
 	overflow-y: auto;
@@ -2075,8 +2096,29 @@ textarea::placeholder {
 	white-space: nowrap;
 	font-size: 12px;
 }
-.model-ctx-input {
-	width: 100px;
+.model-ctx-source {
+	flex: 0 0 auto;
+	font-size: 10px;
+	padding: 1px 6px;
+	border-radius: 8px;
+	background: var(--vscode-hover);
+	color: var(--vscode-fg-dim);
+}
+.model-ctx-source.src-override {
+	color: #6cb6ff;
+}
+.model-ctx-source.src-inferred {
+	color: #7ec699;
+}
+.model-ctx-source.src-catalog {
+	color: var(--vscode-fg-dim);
+}
+.model-ctx-source.src-default {
+	color: var(--vscode-fg-dim);
+	opacity: 0.7;
+}
+.setting-control .model-ctx-input {
+	width: 88px;
 	flex: 0 0 auto;
 	padding: 3px 6px;
 	font-size: 12px;
@@ -2092,4 +2134,7 @@ textarea::placeholder {
 .model-ctx-reset.placeholder {
 	visibility: hidden;
 	border: none;
+}
+.model-ctx-note {
+	margin-top: 6px;
 }
