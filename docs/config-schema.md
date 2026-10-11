@@ -118,9 +118,12 @@ Google、DeepSeek、通义千问、智谱、Kimi、MiniMax、xAI、Llama、Mistr
 
 - 内置目录、`/models` 拉取到的模型、以及自定义 OpenAI 兼容服务里的模型，
   **无需手动配置**即可得到合理的上下文窗口；识别来源会在「设置 → 模型上下文」标注
-  （`内置` / `自动` / `默认`）。
+  （`内置` / `目录` / `自动` / `默认`）。
+- 「设置 → 模型上下文 → 同步 models.dev」可拉取 [models.dev](https://models.dev) 的
+  完整目录（约 2000+ 模型），缓存到 `model-metadata.json`，作为比内置表更权威的来源；
+  应用启动时若缓存缺失或超过 14 天会在后台自动同步一次。
 - 需要纠正时，可在该面板填写覆盖值（存 `model-overrides.json`），或在 `models.json` 的
-  `models` / `modelOverrides` 中显式指定；**显式值优先级最高**。
+  `models` / `modelOverrides` 中显式指定；**显式值与 models.json 优先级最高**。
 - 未能识别的模型回退到 128000，仍可手动覆盖。
 
 ## tools.webSearch

@@ -13,15 +13,19 @@ import {
 	clearModelOverride,
 	configPath,
 	ensureConfig,
+	type ModelMetadataEntry,
+	type ModelMetadataFile,
 	type ModelOverrideEntry,
 	readConfig,
 	readCustomProviders,
 	readModelCache,
+	readModelMetadata,
 	readModelOverrides,
 	setModelOverride,
 	writeConfigText,
 	writeCustomProviders,
 	writeModelCache,
+	writeModelMetadata,
 } from "./ai-config.ts";
 import { readSettings, updateSettings } from "./settings.ts";
 import { BACKEND_ENV, searchWeb } from "./web-search.ts";
@@ -73,6 +77,7 @@ export function buildRuntime(): {
 		file,
 		configErrors: cfg.errors,
 		modelCache: readModelCache(),
+		modelMetadata: readModelMetadata().providers,
 		resolveSecret: (providerId, provider) => {
 			const stored = getProviderKey(providerId);
 			if (stored) return stored;
@@ -103,6 +108,60 @@ export function getAgentMaxTurns(): number {
 	const raw = Number(readSettings().agentMaxTurns);
 	if (Number.isFinite(raw) && raw >= 1) return Math.min(20, Math.max(1, Math.floor(raw)));
 	return 8;
+}
+
+const MODELS_DEV_URL = "https://models.dev/api.json";
+
+/** Transform the models.dev `api.json` payload into our compact provider → model → limits map. */
+export function transformModelsDevCatalog(raw: unknown): ModelMetadataFile["providers"] {
+	const providers: ModelMetadataFile["providers"] = {};
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return providers;
+	for (const [providerId, provider] of Object.entries(raw as Record<string, unknown>)) {
+		if (!provider || typeof provider !== "object") continue;
+		const models = (provider as Record<string, unknown>).models;
+		if (!models || typeof models !== "object" || Array.isArray(models)) continue;
+		const map: Record<string, ModelMetadataEntry> = {};
+		for (const [modelId, model] of Object.entries(models as Record<string, unknown>)) {
+			if (!model || typeof model !== "object") continue;
+			const m = model as Record<string, unknown>;
+			const limit = m.limit as Record<string, unknown> | undefined;
+			const entry: ModelMetadataEntry = {};
+			if (limit && typeof limit.context === "number" && limit.context > 0) {
+				entry.context = Math.floor(limit.context);
+			}
+			if (limit && typeof limit.output === "number" && limit.output > 0) {
+				entry.output = Math.floor(limit.output);
+			}
+			if (typeof m.reasoning === "boolean") entry.reasoning = m.reasoning;
+			if (Object.keys(entry).length) map[modelId] = entry;
+		}
+		if (Object.keys(map).length) providers[providerId] = map;
+	}
+	return providers;
+}
+
+/** Download the models.dev catalog and cache it as compact per-model limits. */
+export async function syncModelMetadata(): Promise<{
+	ok: boolean;
+	count?: number;
+	updatedAt?: number;
+	error?: string;
+}> {
+	try {
+		const res = await fetch(MODELS_DEV_URL, {
+			headers: { "User-Agent": "agentreader/0.1.0" },
+		});
+		if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+		const json = await res.json();
+		const providers = transformModelsDevCatalog(json);
+		const count = Object.values(providers).reduce((n, m) => n + Object.keys(m).length, 0);
+		if (!count) return { ok: false, error: "未解析到任何模型" };
+		const updatedAt = Date.now();
+		writeModelMetadata({ updatedAt, providers });
+		return { ok: true, count, updatedAt };
+	} catch (e) {
+		return { ok: false, error: e instanceof Error ? e.message : String(e) };
+	}
 }
 
 export const WEB_SEARCH_BACKENDS: readonly WebSearchBackend[] = [
@@ -280,6 +339,7 @@ function buildConfigPayload() {
 			configured: configuredById.get(m.provider) ?? false,
 		})),
 		modelOverrides: readModelOverrides(),
+		metadataUpdatedAt: readModelMetadata().updatedAt ?? null,
 	};
 }
 
@@ -319,6 +379,14 @@ export function registerAiIpc() {
 		clearModelOverride(String(providerId), String(modelId));
 		return true;
 	});
+
+	ipcMain.handle("ai:metadata:sync", () => syncModelMetadata());
+
+	// Best-effort refresh of the models.dev limits cache on first run / when stale.
+	const cachedMeta = readModelMetadata();
+	if (!cachedMeta.updatedAt || Date.now() - cachedMeta.updatedAt > 14 * 24 * 60 * 60 * 1000) {
+		syncModelMetadata().catch(() => {});
+	}
 
 	ipcMain.handle("ai:key:set", (_e, providerId: string, key: string) => {
 		setProviderKey(providerId, key);

@@ -38,7 +38,32 @@ export type CreateModelRuntimeOptions = {
 	resolveSecret?: (providerId: string, provider: ResolvedProvider) => string | undefined;
 	/** Model ids fetched from a provider's /models endpoint, keyed by provider id. */
 	modelCache?: Record<string, readonly string[]>;
+	/** Externally-sourced model limits (e.g. models.dev), keyed provider → model. */
+	modelMetadata?: ModelMetadata;
 };
+
+/** Context/output limits sourced from a public catalog (models.dev), keyed provider → model. */
+export type ModelMetadata = Record<
+	string,
+	Record<string, { context?: number; output?: number; reasoning?: boolean }>
+>;
+
+/** Exact provider+model match first, then any provider that declares the same model id. */
+function lookupModelMetadata(
+	metadata: ModelMetadata | undefined,
+	providerId: string,
+	modelId: string,
+): { context?: number; output?: number; reasoning?: boolean } | undefined {
+	if (!metadata) return undefined;
+	const direct = metadata[providerId]?.[modelId];
+	if (direct) return direct;
+	for (const [pid, models] of Object.entries(metadata)) {
+		if (pid === providerId) continue;
+		const m = models[modelId];
+		if (m) return m;
+	}
+	return undefined;
+}
 
 type ModelSeed = {
 	id: string;
@@ -155,18 +180,23 @@ function sanitizeProvider(v: unknown): UserProviderConfig {
 function asModel(
 	provider: ResolvedProvider,
 	def: ModelSeed,
+	metadata: ModelMetadata | undefined,
 	override?: ModelOverride,
 ): Model | null {
 	if (override?.hidden || def.hidden) return null;
 	const inferred = inferModelMeta(def.id);
-	const contextWindow = override?.contextWindow ?? def.contextWindow ?? inferred.contextWindow;
+	const meta = lookupModelMetadata(metadata, provider.id, def.id);
+	const contextWindow =
+		override?.contextWindow ?? def.contextWindow ?? meta?.context ?? inferred.contextWindow;
 	const source: Model["contextWindowSource"] = override?.contextWindow
 		? "override"
 		: def.contextWindow
 			? "catalog"
-			: inferred.contextWindow
-				? "inferred"
-				: "default";
+			: meta?.context
+				? "metadata"
+				: inferred.contextWindow
+					? "inferred"
+					: "default";
 	return {
 		id: def.id,
 		provider: provider.id,
@@ -174,8 +204,8 @@ function asModel(
 		contextWindow: contextWindow ?? 128000,
 		contextWindowSource: source,
 		api: override?.api ?? def.api ?? provider.api,
-		maxTokens: override?.maxTokens ?? def.maxTokens ?? inferred.maxTokens,
-		reasoning: override?.reasoning ?? def.reasoning,
+		maxTokens: override?.maxTokens ?? def.maxTokens ?? meta?.output ?? inferred.maxTokens,
+		reasoning: override?.reasoning ?? def.reasoning ?? meta?.reasoning,
 		headers: provider.headers,
 	};
 }
@@ -187,6 +217,7 @@ function buildModels(
 	builtin: readonly BuiltinModel[],
 	user: UserProviderConfig,
 	cache: readonly string[],
+	metadata: ModelMetadata | undefined,
 ): Model[] {
 	const overrides = user.modelOverrides ?? {};
 	const disabled = new Set(user.disabledModels ?? []);
@@ -204,7 +235,7 @@ function buildModels(
 	const byId = new Map<string, Model>();
 	const order: string[] = [];
 	const add = (def: ModelSeed) => {
-		const model = asModel(base, def, overrides[def.id]);
+		const model = asModel(base, def, metadata, overrides[def.id]);
 		if (!model) return;
 		if (!byId.has(model.id)) order.push(model.id);
 		byId.set(model.id, model);
@@ -229,6 +260,7 @@ export function createModelRuntime(options: CreateModelRuntimeOptions): ModelRun
 		? (file.providers as Record<string, UserProviderConfig>)
 		: {};
 	const cache = options.modelCache ?? {};
+	const metadata = options.modelMetadata;
 	const errors = [...(options.configErrors ?? [])];
 	const providers: ResolvedProvider[] = [];
 
@@ -263,6 +295,7 @@ export function createModelRuntime(options: CreateModelRuntimeOptions): ModelRun
 				builtin?.models ?? [],
 				user,
 				cached,
+				metadata,
 			),
 		});
 	}

@@ -13,12 +13,14 @@ import { Icon } from "./Icons.tsx";
 const EMPTY_FORM = { id: "", name: "", baseUrl: "", models: "", key: "" };
 
 /** Human label for where a model's context window came from. */
-function contextSourceLabel(source?: "override" | "catalog" | "inferred" | "default"): string {
+function contextSourceLabel(source?: "override" | "catalog" | "metadata" | "inferred" | "default"): string {
 	switch (source) {
 		case "override":
 			return "手动";
 		case "catalog":
 			return "内置";
+		case "metadata":
+			return "目录";
 		case "inferred":
 			return "自动";
 		default:
@@ -56,6 +58,7 @@ export function Settings({
 	const [configText, setConfigText] = useState("");
 	const [errors, setErrors] = useState<string[]>([]);
 	const [busy, setBusy] = useState(false);
+	const [metaSyncing, setMetaSyncing] = useState(false);
 	const [note, setNote] = useState<string | null>(null);
 	const [wsEnabled, setWsEnabled] = useState(false);
 	const [wsBackend, setWsBackend] = useState("auto");
@@ -163,6 +166,22 @@ export function Settings({
 	const resetModelOverride = async (providerId: string, modelId: string) => {
 		await window.api.clearModelOverride(providerId, modelId);
 		await load();
+	};
+
+	const syncMeta = async () => {
+		setMetaSyncing(true);
+		setNote("正在同步模型目录（models.dev）…");
+		try {
+			const r = await window.api.syncModelMetadata();
+			if (r.ok) {
+				setNote(`已同步模型目录：${r.count} 个模型`);
+				await load();
+			} else {
+				setNote(`同步失败：${r.error ?? "未知错误"}`);
+			}
+		} finally {
+			setMetaSyncing(false);
+		}
 	};
 
 	const saveCustom = async () => {
@@ -403,6 +422,17 @@ export function Settings({
 										</span>
 									</summary>
 									<div className="setting-control">
+										<div className="model-ctx-toolbar">
+											<span className="hint">
+												模型目录：
+												{ai?.metadataUpdatedAt
+													? new Date(ai.metadataUpdatedAt).toLocaleString()
+													: "未同步（启动时自动尝试）"}
+											</span>
+											<button type="button" onClick={syncMeta} disabled={metaSyncing}>
+												{metaSyncing ? "同步中…" : "同步 models.dev"}
+											</button>
+										</div>
 										<div className="model-ctx-list">
 											{providerModels.map((m) => {
 												const ov = ai?.modelOverrides?.[m.provider]?.[m.id];

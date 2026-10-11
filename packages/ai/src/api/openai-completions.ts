@@ -94,7 +94,11 @@ export async function* openAICompletionsStream(
 			const peek = await res.text().catch(() => "");
 			if (/stream_options|include_usage/i.test(peek)) res = await post(false);
 			else {
-				yield { type: "done", stopReason: "error", error: `HTTP ${res.status} ${peek.slice(0, 800)}` };
+				yield {
+					type: "done",
+					stopReason: "error",
+					error: `HTTP ${res.status} ${peek.slice(0, 800)}`,
+				};
 				return;
 			}
 		}

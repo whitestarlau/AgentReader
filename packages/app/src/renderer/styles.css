@@ -2072,6 +2072,18 @@ textarea::placeholder {
 .model-ctx-details > .setting-control {
 	margin-top: 8px;
 }
+.model-ctx-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 6px;
+}
+.model-ctx-toolbar button {
+	flex: 0 0 auto;
+	font-size: 11px;
+	padding: 3px 8px;
+}
 .model-ctx-list {
 	max-height: 240px;
 	overflow-y: auto;
@@ -2109,6 +2121,9 @@ textarea::placeholder {
 }
 .model-ctx-source.src-inferred {
 	color: #7ec699;
+}
+.model-ctx-source.src-metadata {
+	color: #d7a6ff;
 }
 .model-ctx-source.src-catalog {
 	color: var(--vscode-fg-dim);

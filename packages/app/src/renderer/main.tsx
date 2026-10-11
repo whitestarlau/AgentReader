@@ -62,6 +62,7 @@ declare global {
       setModel: (ref: string) => Promise<boolean>;
       setModelOverride: (providerId: string, modelId: string, patch: { contextWindow?: number; maxTokens?: number }) => Promise<boolean>;
       clearModelOverride: (providerId: string, modelId: string) => Promise<boolean>;
+      syncModelMetadata: () => Promise<{ ok: boolean; count?: number; updatedAt?: number; error?: string }>;
       setProviderKey: (providerId: string, key: string) => Promise<boolean>;
       refreshModels: (providerId?: string) => Promise<{ provider: string; added?: number; error?: string }[]>;
       listCustomProviders: () => Promise<Record<string, CustomProvider>>;

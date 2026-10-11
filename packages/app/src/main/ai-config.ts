@@ -210,3 +210,50 @@ export function clearModelOverride(providerId: string, modelId: string): void {
 	if (Object.keys(data[providerId]).length === 0) delete data[providerId];
 	writeModelOverrides(data);
 }
+
+/** Compact per-model limits sourced from models.dev (see `ai:metadata:sync`). */
+export type ModelMetadataEntry = { context?: number; output?: number; reasoning?: boolean };
+export type ModelMetadataFile = {
+	updatedAt?: number;
+	providers: Record<string, Record<string, ModelMetadataEntry>>;
+};
+
+function modelMetadataPath(): string {
+	return join(app.getPath("userData"), "model-metadata.json");
+}
+
+export function readModelMetadata(): ModelMetadataFile {
+	const p = modelMetadataPath();
+	if (!existsSync(p)) return { providers: {} };
+	try {
+		const parsed = JSON.parse(readFileSync(p, "utf-8"));
+		if (!parsed || typeof parsed !== "object") return { providers: {} };
+		const v = parsed as Record<string, unknown>;
+		const providers: Record<string, Record<string, ModelMetadataEntry>> = {};
+		if (v.providers && typeof v.providers === "object" && !Array.isArray(v.providers)) {
+			for (const [providerId, models] of Object.entries(v.providers as Record<string, unknown>)) {
+				if (!models || typeof models !== "object" || Array.isArray(models)) continue;
+				const map: Record<string, ModelMetadataEntry> = {};
+				for (const [modelId, entry] of Object.entries(models as Record<string, unknown>)) {
+					if (!entry || typeof entry !== "object") continue;
+					const e = entry as Record<string, unknown>;
+					const out: ModelMetadataEntry = {};
+					if (typeof e.context === "number" && e.context > 0) out.context = Math.floor(e.context);
+					if (typeof e.output === "number" && e.output > 0) out.output = Math.floor(e.output);
+					if (typeof e.reasoning === "boolean") out.reasoning = e.reasoning;
+					if (Object.keys(out).length) map[modelId] = out;
+				}
+				if (Object.keys(map).length) providers[providerId] = map;
+			}
+		}
+		return {
+			updatedAt: typeof v.updatedAt === "number" ? v.updatedAt : undefined,
+			providers,
+		};
+	} catch {}
+	return { providers: {} };
+}
+
+export function writeModelMetadata(data: ModelMetadataFile): void {
+	writeFileSync(modelMetadataPath(), JSON.stringify(data));
+}

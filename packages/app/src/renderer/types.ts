@@ -35,7 +35,7 @@ export type AiModelOption = {
 	provider: string;
 	label: string;
 	contextWindow: number;
-	contextSource?: "override" | "catalog" | "inferred" | "default";
+	contextSource?: "override" | "catalog" | "metadata" | "inferred" | "default";
 	maxTokens?: number;
 	configured: boolean;
 };
@@ -83,4 +83,5 @@ export type AiConfig = {
 	webSearch: AiWebSearchConfig;
 	models: AiModelOption[];
 	modelOverrides: Record<string, Record<string, { contextWindow?: number; maxTokens?: number }>>;
+	metadataUpdatedAt: number | null;
 };

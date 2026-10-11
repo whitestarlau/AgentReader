@@ -12,6 +12,12 @@
 - [x] `fromIds` 不再硬编码 128000，opencode / opencode-go 及 `/models` 缓存模型改由自动识别填充
 - [x] `Settings → 模型上下文` 折叠为 `<details>`（默认收起），逐行标注识别来源，输入框仅在
   覆盖时显示值、占位符显示自动值；留空即用自动值
+- [x] 接入 [models.dev](https://models.dev) 权威目录：新增 `ai:metadata:sync` IPC 拉取
+  `api.json`（2000+ 模型）压缩缓存到 `model-metadata.json`，作为优于内置表的来源
+  （来源标签 `目录`）；启动时缺失/陈旧（>14 天）自动后台同步，设置内提供手动「同步」按钮
+- [x] `createModelRuntime` 新增 `modelMetadata` 选项，模型解析优先级：
+  用户覆盖 > models.json/内置目录 > models.dev 目录 > 内置模式表 > 128000 默认
+- [x] 文档：`docs/config-schema.md` 补充 models.dev 同步说明
 - [x] 文档：`docs/config-schema.md` 增加「模型元数据自动识别」说明
 - [x] 验证：ai / agent / app typecheck 与 app build 通过
 

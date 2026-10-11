@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld("api", {
 	) => ipcRenderer.invoke("ai:model:override:set", providerId, modelId, patch),
 	clearModelOverride: (providerId: string, modelId: string) =>
 		ipcRenderer.invoke("ai:model:override:clear", providerId, modelId),
+	syncModelMetadata: () => ipcRenderer.invoke("ai:metadata:sync"),
 	setProviderKey: (providerId: string, key: string) =>
 		ipcRenderer.invoke("ai:key:set", providerId, key),
 	refreshModels: (providerId?: string) => ipcRenderer.invoke("ai:models:refresh", providerId),
