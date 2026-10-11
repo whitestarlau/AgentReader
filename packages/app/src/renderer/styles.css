@@ -940,15 +940,50 @@ textarea::placeholder {
 	white-space: pre-wrap;
 }
 
-/* Editable citation pinned above the composer, before sending. */
-.composer-quote {
+/* Extras pinned above the composer (context meter + pending citation). */
+.composer-extras {
 	flex: 0 0 auto;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
 	padding: 8px 8px 0;
 	border-top: 1px solid var(--vscode-border-soft);
 }
-.composer-quote .quote-box {
+.composer-extras .quote-box {
 	margin: 0;
 	max-height: 180px;
+}
+.context-usage {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 11px;
+	color: var(--vscode-fg-dim);
+}
+.context-usage .context-bar {
+	flex: 1;
+	height: 4px;
+	border-radius: 2px;
+	background: var(--vscode-hover);
+	overflow: hidden;
+}
+.context-usage .context-bar span {
+	display: block;
+	height: 100%;
+	border-radius: 2px;
+	background: var(--vscode-accent);
+	transition: width 0.25s ease;
+}
+.context-usage.warn {
+	color: #e2b93d;
+}
+.context-usage.warn .context-bar span {
+	background: #e2b93d;
+}
+.context-usage .context-label {
+	flex: 0 0 auto;
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
 }
 .quote-box .quote-head {
 	display: flex;
@@ -1980,6 +2015,13 @@ textarea::placeholder {
 	color: #f0a050;
 	white-space: nowrap;
 }
+.model-picker-ctx {
+	margin-left: auto;
+	font-size: 10px;
+	color: var(--vscode-fg-dim);
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
 
 /* --------------------------------------------------------- pdf text layer */
 .textLayer {
@@ -2006,4 +2048,48 @@ textarea::placeholder {
 }
 .textLayer ::selection {
 	background: rgba(38, 121, 209, 0.4);
+}
+
+/* Settings: per-model context window / max output overrides */
+.model-ctx-list {
+	max-height: 240px;
+	overflow-y: auto;
+	border: 1px solid var(--vscode-border-soft);
+	border-radius: 4px;
+}
+.model-ctx-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px;
+	border-bottom: 1px solid var(--vscode-border-soft);
+}
+.model-ctx-row:last-child {
+	border-bottom: none;
+}
+.model-ctx-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+}
+.model-ctx-input {
+	width: 100px;
+	flex: 0 0 auto;
+	padding: 3px 6px;
+	font-size: 12px;
+}
+.model-ctx-reset {
+	flex: 0 0 auto;
+	font-size: 11px;
+	padding: 2px 6px;
+	background: transparent;
+	border-color: var(--vscode-border);
+	color: var(--vscode-fg-dim);
+}
+.model-ctx-reset.placeholder {
+	visibility: hidden;
+	border: none;
 }

@@ -5,6 +5,7 @@ import type {
 	Message,
 	Model,
 	StreamOptions,
+	TokenUsage,
 } from "../types.ts";
 
 type AnthBlock =
@@ -162,6 +163,8 @@ export async function* anthropicMessagesStream(
 	const toolAccum = new Map<number, { id: string; name: string; args: string }>();
 	let emittedTools = false;
 	let stopReason: "stop" | "tool_calls" | "length" = "stop";
+	// Anthropic reports input on message_start and cumulative output on message_delta.
+	let usage: TokenUsage | null = null;
 
 	const emitTools = function* (): Generator<AssistantMessageEvent> {
 		for (const [, tc] of toolAccum) {
@@ -189,6 +192,8 @@ export async function* anthropicMessagesStream(
 							type?: string;
 							index?: number;
 							content_block?: { type?: string; id?: string; name?: string };
+							message?: { usage?: { input_tokens?: number; output_tokens?: number } };
+							usage?: { input_tokens?: number; output_tokens?: number };
 							delta?: {
 								type?: string;
 								text?: string;
@@ -203,7 +208,15 @@ export async function* anthropicMessagesStream(
 						} catch {
 							continue;
 						}
-						if (json.type === "content_block_start" && json.content_block?.type === "tool_use") {
+						if (json.type === "message_start" && json.message?.usage) {
+							usage = {
+								inputTokens: json.message.usage.input_tokens ?? 0,
+								outputTokens: json.message.usage.output_tokens ?? 0,
+							};
+						} else if (
+							json.type === "content_block_start" &&
+							json.content_block?.type === "tool_use"
+						) {
 							toolAccum.set(json.index ?? 0, {
 								id: json.content_block.id ?? `tool-${json.index ?? 0}`,
 								name: json.content_block.name ?? "",
@@ -228,6 +241,13 @@ export async function* anthropicMessagesStream(
 								stopReason = "tool_calls";
 							}
 						} else if (json.type === "message_delta") {
+							if (json.usage) {
+								const prev = usage as TokenUsage | null;
+								usage = {
+									inputTokens: json.usage.input_tokens ?? prev?.inputTokens ?? 0,
+									outputTokens: json.usage.output_tokens ?? prev?.outputTokens ?? 0,
+								};
+							}
 							if (json.delta?.stop_reason === "tool_use") stopReason = "tool_calls";
 							else if (json.delta?.stop_reason === "max_tokens" && stopReason !== "tool_calls")
 								stopReason = "length";
@@ -255,6 +275,7 @@ export async function* anthropicMessagesStream(
 		for (const evt of emitTools()) yield evt;
 		stopReason = "tool_calls";
 	}
+	if (usage) yield { type: "usage", usage };
 	yield { type: "done", stopReason };
 }
 

@@ -34,6 +34,9 @@ export type AgentStopReason =
 	/** The model returned no text, no reasoning and no tool call. */
 	| "empty";
 
+/** Token accounting forwarded from the provider for one request. */
+export type AgentUsage = { inputTokens: number; outputTokens: number };
+
 export type AgentEvent =
 	| { type: "message_start"; message: AgentMessage }
 	| { type: "message_delta"; delta: string }
@@ -41,6 +44,8 @@ export type AgentEvent =
 	| { type: "message_end"; message: AgentMessage }
 	| { type: "tool_call"; id: string; name: string; args: string }
 	| { type: "tool_result"; id: string; name: string; result: string }
+	/** Provider-reported usage for one model call (may occur multiple times per turn). */
+	| { type: "usage"; usage: AgentUsage }
 	| { type: "done"; stopReason: AgentStopReason; error?: string };
 
 export type AgentConfig = {

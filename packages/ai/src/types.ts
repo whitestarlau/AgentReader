@@ -41,11 +41,20 @@ export type Model = {
 	headers?: Record<string, string>;
 };
 
+/** Token accounting reported by a provider for one request. */
+export type TokenUsage = { inputTokens: number; outputTokens: number };
+
 export type AssistantMessageEvent =
 	| { type: "text_delta"; delta: string }
 	| { type: "reasoning_delta"; delta: string }
 	| { type: "tool_call"; id: string; name: string; args: string }
-	| { type: "done"; stopReason: "stop" | "tool_calls" | "error" | "aborted" | "length"; error?: string };
+	/** Provider-reported token usage; emitted once before `done` when available. */
+	| { type: "usage"; usage: TokenUsage }
+	| {
+			type: "done";
+			stopReason: "stop" | "tool_calls" | "error" | "aborted" | "length";
+			error?: string;
+	  };
 
 export type StreamOptions = {
 	signal?: AbortSignal;

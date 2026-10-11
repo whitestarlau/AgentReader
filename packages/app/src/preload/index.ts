@@ -14,7 +14,8 @@ contextBridge.exposeInMainWorld("api", {
 	getDocOutline: (docId: string) => ipcRenderer.invoke("doc:outline", docId),
 	readFile: (path: string) => ipcRenderer.invoke("doc:read", path),
 	getReaderChapter: (docId: string) => ipcRenderer.invoke("doc:chapter:get", docId),
-	setReaderChapter: (docId: string, chapter: number) => ipcRenderer.invoke("doc:chapter:set", docId, chapter),
+	setReaderChapter: (docId: string, chapter: number) =>
+		ipcRenderer.invoke("doc:chapter:set", docId, chapter),
 	chat: (
 		docId: string,
 		convId: string,
@@ -42,6 +43,13 @@ contextBridge.exposeInMainWorld("api", {
 	saveAiConfig: (text: string) => ipcRenderer.invoke("ai:config:save", text),
 	openAiConfig: () => ipcRenderer.invoke("ai:config:open"),
 	setModel: (ref: string) => ipcRenderer.invoke("ai:model:set", ref),
+	setModelOverride: (
+		providerId: string,
+		modelId: string,
+		patch: { contextWindow?: number; maxTokens?: number },
+	) => ipcRenderer.invoke("ai:model:override:set", providerId, modelId, patch),
+	clearModelOverride: (providerId: string, modelId: string) =>
+		ipcRenderer.invoke("ai:model:override:clear", providerId, modelId),
 	setProviderKey: (providerId: string, key: string) =>
 		ipcRenderer.invoke("ai:key:set", providerId, key),
 	refreshModels: (providerId?: string) => ipcRenderer.invoke("ai:models:refresh", providerId),
@@ -84,6 +92,14 @@ contextBridge.exposeInMainWorld("api", {
 		const h = (_e: unknown, d: string) => cb(d);
 		ipcRenderer.on("chat:notice", h);
 		return () => ipcRenderer.removeListener("chat:notice", h);
+	},
+	onChatUsage: (
+		cb: (d: { used: number; max: number; model: string; estimated: boolean }) => void,
+	) => {
+		const h = (_e: unknown, d: { used: number; max: number; model: string; estimated: boolean }) =>
+			cb(d);
+		ipcRenderer.on("chat:usage", h);
+		return () => ipcRenderer.removeListener("chat:usage", h);
 	},
 	onToolCall: (cb: (d: unknown) => void) => {
 		const h = (_e: unknown, d: unknown) => cb(d);

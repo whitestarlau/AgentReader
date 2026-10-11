@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import {
 	type AgentStopReason,
+	type AgentUsage,
 	buildDocumentSystemPrompt,
 	type DocumentPromptInput,
 	runAgentLoop,
@@ -17,7 +18,12 @@ import {
 	resolveCurrentModel,
 } from "./ai.ts";
 import { buildChatTools } from "./chat-tools.ts";
-import { appendChatEntry, chatFile, ensureConversations, saveConversations } from "./conversations.ts";
+import {
+	appendChatEntry,
+	chatFile,
+	ensureConversations,
+	saveConversations,
+} from "./conversations.ts";
 import { readReaderChapter } from "./doc-state.ts";
 import { type DocText, getDocText } from "./doc-text.ts";
 import { getDocDir } from "./paths.ts";
@@ -28,6 +34,33 @@ import { loadSkills, readDocSkills, readTrusted } from "./skills.ts";
 
 /** In-flight chat streams keyed by `${docId}:${convId}`, so the UI can stop them. */
 export const activeChats = new Map<string, AbortController>();
+
+/**
+ * Rough token estimate used only when a provider does not report usage. CJK
+ * glyphs are counted as one token each; Latin text averages ~4 chars/token.
+ */
+function estimateTokens(text: string): number {
+	let cjk = 0;
+	let other = 0;
+	for (const ch of text) {
+		const code = ch.codePointAt(0) ?? 0;
+		if ((code >= 0x3000 && code <= 0x9fff) || (code >= 0xff00 && code <= 0xffef)) cjk++;
+		else other++;
+	}
+	return cjk + Math.ceil(other / 4);
+}
+
+/** Estimate the token size of one request (system prompt + messages + tools). */
+function estimateRequestTokens(
+	system: string,
+	messages: readonly { content: string }[],
+	answer = "",
+): number {
+	let n = estimateTokens(system) + 512; // tool schemas / protocol overhead
+	for (const m of messages) n += estimateTokens(m.content);
+	n += estimateTokens(answer);
+	return n;
+}
 
 /**
  * A short, user-facing note for an abnormal stop (tool-round cap, output-token
@@ -227,12 +260,32 @@ export function registerChatIpc() {
 			// Why the loop stopped, and the user-facing note it implies (if any).
 			let stopReason: AgentStopReason = "stop";
 			let notice: string | undefined;
+			// Provider-reported usage of the most recent model call, if any.
+			let usage: AgentUsage | null = null;
+			const emitUsage = (system: string) => {
+				const used = usage
+					? usage.inputTokens + usage.outputTokens
+					: estimateRequestTokens(system, messages as { content: string }[], full);
+				win?.webContents.send("chat:usage", {
+					used,
+					max: model.contextWindow ?? 0,
+					model: modelRef(model),
+					estimated: !usage,
+				});
+			};
 			const streamFn: StreamFn = (m, c, o) => runtime.stream(m, c, { ...o, sessionId: convId });
 
 			// 结构化记录本轮对话（思考 / 工具调用 / 最终回答），用于持久化与回放。
 			type StoredTimelineItem =
 				| { kind: "reasoning"; content: string }
-				| { kind: "tool"; id: string; name: string; args: string; result?: string; pending: boolean };
+				| {
+						kind: "tool";
+						id: string;
+						name: string;
+						args: string;
+						result?: string;
+						pending: boolean;
+				  };
 			const timeline: StoredTimelineItem[] = [];
 			let timelineReasoning: Extract<StoredTimelineItem, { kind: "reasoning" }> | null = null;
 			const pushReasoning = (delta: string) => {
@@ -298,6 +351,8 @@ export function registerChatIpc() {
 							result: r.result,
 						});
 						console.log("[tool] result", r.id, r.result.slice(0, 200));
+					} else if (evt.type === "usage") {
+						usage = (evt as { usage: AgentUsage }).usage;
 					} else if (evt.type === "done") {
 						console.log("[chat] agent done", evt);
 						if (evt.stopReason === "error") {
@@ -332,10 +387,16 @@ export function registerChatIpc() {
 								const delta = (e as { delta: string }).delta;
 								pushReasoning(delta);
 								win?.webContents.send("chat:reasoning_delta", delta);
-							} else if (e.type === "done" && (e as { stopReason: string }).stopReason === "error") {
+							} else if (e.type === "usage") {
+								usage = (e as { usage: AgentUsage }).usage;
+							} else if (
+								e.type === "done" &&
+								(e as { stopReason: string }).stopReason === "error"
+							) {
 								return { error: (e as { error?: string }).error || lastError };
 							}
 						}
+						emitUsage(fallbackSystemPrompt);
 						persistAssistant();
 						win?.webContents.send("chat:done", full);
 						return {
@@ -350,10 +411,16 @@ export function registerChatIpc() {
 					}
 				}
 				notice = stopNotice(stopReason, maxTurns);
+				emitUsage(systemPrompt);
 				persistAssistant();
 				if (notice) win?.webContents.send("chat:notice", notice);
 				win?.webContents.send("chat:done", full);
-				return { ok: true, content: full, title: generatedTitle ?? undefined, userId: userEntry?.id };
+				return {
+					ok: true,
+					content: full,
+					title: generatedTitle ?? undefined,
+					userId: userEntry?.id,
+				};
 			} catch (e) {
 				console.error("[chat] fetch error", e);
 				persistAssistant();

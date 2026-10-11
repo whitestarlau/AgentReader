@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { Icon } from "./Icons.tsx";
 import type { Annotation } from "./AnnotationLayer.tsx";
 import { type Selection, MODIFIER_LABEL, SELECTION_LABEL } from "../selection.ts";
+import { estimateTokens, formatTokens } from "../tokens.ts";
 
 type TimelineItem =
 	| { kind: "reasoning"; content: string }
@@ -22,7 +23,9 @@ type ChatRow = { id?: string; role?: string; content?: string; timeline?: Timeli
 type Conv = { id: string; title: string };
 /** A citation captured from the viewer, shown above the composer before send. */
 type Quote = { text: string; page: number; kind: Selection["kind"] };
-type Props = { selection: Selection | null; docId: string | null; page: number; isEpub?: boolean; annotations?: Annotation[] };
+type Props = { selection: Selection | null; docId: string | null; page: number; isEpub?: boolean; annotations?: Annotation[]; contextWindow?: number };
+/** Real or estimated context usage for the current conversation. */
+type ContextUsage = { used: number; max: number; estimated: boolean };
 
 type Outline = { unit: "page" | "chapter"; numPages: number; chapterLabels: string[]; toc: { label: string; href: string }[] };
 
@@ -157,7 +160,7 @@ function Disclosure({
 	);
 }
 
-export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: Props) {
+export function ChatPanel({ selection, docId, page, isEpub, annotations = [], contextWindow }: Props) {
 	const [convs, setConvs] = useState<Conv[]>([]);
 	const [convId, setConvId] = useState<string | null>(null);
 	const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -184,6 +187,9 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 	const [quote, setQuote] = useState<Quote | null>(null);
 	const [quoteEditing, setQuoteEditing] = useState(false);
 	const lastSelRef = useRef<Selection | null>(null);
+	// Latest context usage for this conversation: exact when a provider reports
+	// token usage, otherwise estimated from the loaded messages.
+	const [usage, setUsage] = useState<ContextUsage | null>(null);
 
 	const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
 		const el = scrollRef.current;
@@ -377,6 +383,7 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 	useEffect(() => { refreshConvs(); }, [docId]);
 	useEffect(() => {
 		if (!docId || !convId) { setMsgs([]); return; }
+		setUsage(null);
 		window.api.getChats(docId, convId).then((rows) => setMsgs(rows.map(toMsg)));
 	}, [docId, convId]);
 
@@ -430,7 +437,10 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 		const offNotice = window.api.onChatNotice((notice: string) =>
 			updateLast((m) => ({ ...m, notice })),
 		);
-		return () => { offDelta(); offReasoning(); offToolCall(); offToolResult(); offDone(); offNotice(); };
+		const offUsage = window.api.onChatUsage((u) =>
+			setUsage({ used: u.used, max: u.max, estimated: u.estimated }),
+		);
+		return () => { offDelta(); offReasoning(); offToolCall(); offToolResult(); offDone(); offNotice(); offUsage(); };
 	}, [updateLast, pushTimeline]);
 
 	// Jump to the bottom when switching conversations.
@@ -566,6 +576,16 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 		setEditingId(m.id);
 		setEditText(m.content);
 	};
+
+	// Context consumption: exact usage from the provider when available, else a
+	// rough estimate from the loaded messages plus fixed prompt/tool overhead.
+	const contextUsage = useMemo<ContextUsage | null>(() => {
+		if (usage) return usage;
+		if (!contextWindow || msgs.length === 0) return null;
+		let used = 1500;
+		for (const m of msgs) used += estimateTokens(m.content);
+		return { used, max: contextWindow, estimated: true };
+	}, [usage, msgs, contextWindow]);
 
 	const saveEdit = async () => {
 		if (!docId || !convId || !editingId) return;
@@ -769,43 +789,67 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 				</button>
 			)}
 
-			{quote && (
-				<div className="composer-quote">
-					<div className={`quote-box${quoteEditing ? " editing" : ""}`}>
-						<div className="quote-head">
-							<Icon name="chat" size={11} />
-							<span className="quote-where">
-								引用 · {isEpub ? `第${quote.page}章` : `P${quote.page}`} · {SELECTION_LABEL[quote.kind]}
+			{(contextUsage || quote) && (
+				<div className="composer-extras">
+					{contextUsage && contextUsage.max > 0 && (
+						<div
+							className={`context-usage${
+								contextUsage.used / contextUsage.max >= 0.8 ? " warn" : ""
+							}`}
+							title={`${contextUsage.estimated ? "约 " : ""}已用 ${contextUsage.used.toLocaleString()} / ${contextUsage.max.toLocaleString()} tokens${
+								contextUsage.estimated ? "（估算，发送后以服务商返回为准）" : ""
+							}`}
+						>
+							<div className="context-bar">
+								<span
+									style={{
+										width: `${Math.min(100, (contextUsage.used / contextUsage.max) * 100).toFixed(1)}%`,
+									}}
+								/>
+							</div>
+							<span className="context-label">
+								{contextUsage.estimated ? "≈ " : ""}
+								{formatTokens(contextUsage.used)} / {formatTokens(contextUsage.max)} 上下文
 							</span>
-							<span className="spacer" />
-							<button
-								type="button"
-								className="quote-act"
-								onClick={() => setQuoteEditing((v) => !v)}
-								title={quoteEditing ? "完成编辑" : "编辑引用内容"}
-							>
-								<Icon name={quoteEditing ? "check" : "edit"} size={12} />
-							</button>
-							<button
-								type="button"
-								className="quote-act"
-								onClick={() => { setQuote(null); setQuoteEditing(false); }}
-								title="移除引用"
-							>
-								<Icon name="close" size={12} />
-							</button>
 						</div>
-						{quoteEditing ? (
-							<textarea
-								className="quote-edit"
-								value={quote.text}
-								onChange={(e) => setQuote((q) => (q ? { ...q, text: e.target.value } : q))}
-								rows={3}
-							/>
-						) : (
-							<div className="quote-text">{quote.text}</div>
-						)}
-					</div>
+					)}
+					{quote && (
+						<div className="quote-box">
+							<div className="quote-head">
+								<Icon name="chat" size={11} />
+								<span className="quote-where">
+									引用 · {isEpub ? `第${quote.page}章` : `P${quote.page}`} · {SELECTION_LABEL[quote.kind]}
+								</span>
+								<span className="spacer" />
+								<button
+									type="button"
+									className="quote-act"
+									onClick={() => setQuoteEditing((v) => !v)}
+									title={quoteEditing ? "完成编辑" : "编辑引用内容"}
+								>
+									<Icon name={quoteEditing ? "check" : "edit"} size={12} />
+								</button>
+								<button
+									type="button"
+									className="quote-act"
+									onClick={() => { setQuote(null); setQuoteEditing(false); }}
+									title="移除引用"
+								>
+									<Icon name="close" size={12} />
+								</button>
+							</div>
+							{quoteEditing ? (
+								<textarea
+									className="quote-edit"
+									value={quote.text}
+									onChange={(e) => setQuote((q) => (q ? { ...q, text: e.target.value } : q))}
+									rows={3}
+								/>
+							) : (
+								<div className="quote-text">{quote.text}</div>
+							)}
+						</div>
+					)}
 				</div>
 			)}
 

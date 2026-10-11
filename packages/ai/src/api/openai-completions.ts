@@ -1,4 +1,4 @@
-import type { AssistantMessageEvent, Context, Model, StreamOptions } from "../types.ts";
+import type { AssistantMessageEvent, Context, Model, StreamOptions, TokenUsage } from "../types.ts";
 
 function normalizeBaseUrl(baseUrl: string): string {
 	return baseUrl
@@ -68,9 +68,8 @@ export async function* openAICompletionsStream(
 	if (options.apiKey) headers.Authorization = `Bearer ${options.apiKey}`;
 	if (options.sessionId) headers["x-opencode-session"] = options.sessionId;
 
-	let res: Response;
-	try {
-		res = await fetch(`${baseUrl}/chat/completions`, {
+	const post = (includeUsage: boolean) =>
+		fetch(`${baseUrl}/chat/completions`, {
 			method: "POST",
 			headers,
 			body: JSON.stringify({
@@ -78,11 +77,27 @@ export async function* openAICompletionsStream(
 				messages,
 				...(tools ? { tools, tool_choice: "auto" } : {}),
 				stream: true,
+				// Ask for a final usage chunk so we can report context consumption.
+				...(includeUsage ? { stream_options: { include_usage: true } } : {}),
 				max_tokens: options.maxTokens ?? model.maxTokens,
 				temperature: options.temperature ?? 0.7,
 			}),
 			signal: options.signal,
 		});
+
+	let res: Response;
+	try {
+		res = await post(true);
+		// Some OpenAI-compatible gateways reject `stream_options`; retry without it
+		// so usage reporting never breaks an otherwise working provider.
+		if (!res.ok && res.status === 400) {
+			const peek = await res.text().catch(() => "");
+			if (/stream_options|include_usage/i.test(peek)) res = await post(false);
+			else {
+				yield { type: "done", stopReason: "error", error: `HTTP ${res.status} ${peek.slice(0, 800)}` };
+				return;
+			}
+		}
 	} catch (e) {
 		yield { type: "done", stopReason: "error", error: errorMessage(e) };
 		return;
@@ -101,6 +116,8 @@ export async function* openAICompletionsStream(
 	const toolAccum = new Map<number, { id: string; name: string; args: string }>();
 	// finish_reason of the last chunk ("stop" / "tool_calls" / "length" / ...).
 	let finishReason: string | undefined;
+	// Provider-reported usage from the trailing usage chunk (stream_options).
+	let usage: TokenUsage | null = null;
 	try {
 		while (true) {
 			const { done, value } = await reader.read();
@@ -116,6 +133,7 @@ export async function* openAICompletionsStream(
 					if (finishReason !== "length")
 						for (const [, tc] of toolAccum)
 							yield { type: "tool_call", id: tc.id, name: tc.name, args: tc.args };
+					if (usage) yield { type: "usage", usage };
 					yield { type: "done", stopReason: doneReason(finishReason, toolAccum.size) };
 					return;
 				}
@@ -138,6 +156,7 @@ export async function* openAICompletionsStream(
 						};
 						finish_reason?: string;
 					}[];
+					usage?: { prompt_tokens?: number; completion_tokens?: number };
 				};
 				try {
 					json = JSON.parse(data);
@@ -145,6 +164,12 @@ export async function* openAICompletionsStream(
 					continue;
 				}
 				const choice = json.choices?.[0];
+				if (json.usage) {
+					usage = {
+						inputTokens: json.usage.prompt_tokens ?? 0,
+						outputTokens: json.usage.completion_tokens ?? 0,
+					};
+				}
 				if (choice?.finish_reason) finishReason = choice.finish_reason;
 				const delta = choice?.delta;
 				if (delta?.content) yield { type: "text_delta", delta: delta.content };
@@ -197,6 +222,7 @@ export async function* openAICompletionsStream(
 	if (finishReason !== "length")
 		for (const [, tc] of toolAccum)
 			yield { type: "tool_call", id: tc.id, name: tc.name, args: tc.args };
+	if (usage) yield { type: "usage", usage };
 	yield { type: "done", stopReason: doneReason(finishReason, toolAccum.size) };
 }
 

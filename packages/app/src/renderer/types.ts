@@ -35,6 +35,7 @@ export type AiModelOption = {
 	provider: string;
 	label: string;
 	contextWindow: number;
+	maxTokens?: number;
 	configured: boolean;
 };
 
@@ -80,4 +81,5 @@ export type AiConfig = {
 	providers: AiProviderSummary[];
 	webSearch: AiWebSearchConfig;
 	models: AiModelOption[];
+	modelOverrides: Record<string, Record<string, { contextWindow?: number; maxTokens?: number }>>;
 };

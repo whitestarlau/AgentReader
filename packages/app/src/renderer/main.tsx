@@ -60,6 +60,8 @@ declare global {
       saveAiConfig: (text: string) => Promise<{ ok: boolean; errors: string[] }>;
       openAiConfig: () => Promise<string>;
       setModel: (ref: string) => Promise<boolean>;
+      setModelOverride: (providerId: string, modelId: string, patch: { contextWindow?: number; maxTokens?: number }) => Promise<boolean>;
+      clearModelOverride: (providerId: string, modelId: string) => Promise<boolean>;
       setProviderKey: (providerId: string, key: string) => Promise<boolean>;
       refreshModels: (providerId?: string) => Promise<{ provider: string; added?: number; error?: string }[]>;
       listCustomProviders: () => Promise<Record<string, CustomProvider>>;
@@ -84,6 +86,7 @@ declare global {
       onChatReasoning: (cb: (d: string) => void) => () => void;
       onChatDone: (cb: (d: string) => void) => () => void;
       onChatNotice: (cb: (d: string) => void) => () => void;
+      onChatUsage: (cb: (d: { used: number; max: number; model: string; estimated: boolean }) => void) => () => void;
       onToolCall: (cb: (d: unknown) => void) => () => void;
       onToolResult: (cb: (d: unknown) => void) => () => void;
     };
@@ -370,7 +373,7 @@ function App() {
                   <Icon name="close" size={14} />
                 </button>
               </div>
-              <ChatPanel selection={selection} docId={selected} page={page} isEpub={isEpub} annotations={anns} />
+              <ChatPanel selection={selection} docId={selected} page={page} isEpub={isEpub} annotations={anns} contextWindow={ai?.models.find((m) => m.ref === ai.defaultModel)?.contextWindow} />
             </aside>
           </>
         )}

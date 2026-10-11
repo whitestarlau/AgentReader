@@ -43,6 +43,8 @@ export async function* runAgentLoop(
 			} else if (event.type === "tool_call") {
 				toolCalls.push(event);
 				yield { type: "tool_call", id: event.id, name: event.name, args: event.args };
+			} else if (event.type === "usage") {
+				yield { type: "usage", usage: event.usage };
 			} else if (event.type === "done") {
 				if (assistantContent || assistantReasoning) {
 					yield {

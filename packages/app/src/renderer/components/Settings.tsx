@@ -134,6 +134,22 @@ export function Settings({
 		notify();
 	};
 
+	// Per-model overrides: only the fields the user actually changes are stored;
+	// blank fields fall back to the catalog/default value.
+	const saveModelOverride = async (
+		providerId: string,
+		modelId: string,
+		patch: { contextWindow?: number; maxTokens?: number },
+	) => {
+		await window.api.setModelOverride(providerId, modelId, patch);
+		await load();
+	};
+
+	const resetModelOverride = async (providerId: string, modelId: string) => {
+		await window.api.clearModelOverride(providerId, modelId);
+		await load();
+	};
+
 	const saveCustom = async () => {
 		setBusy(true);
 		try {
@@ -362,6 +378,77 @@ export function Settings({
 									</select>
 								</div>
 							</div>
+
+							{providerModels.length > 0 && (
+								<div className="setting">
+									<div className="setting-label">
+										模型上下文
+										<span className="hint">
+											逐个覆盖上下文窗口 / 最大输出（留空用默认值），保存在 model-overrides.json
+										</span>
+									</div>
+									<div className="setting-control">
+										<div className="model-ctx-list">
+											{providerModels.map((m) => {
+												const ov = ai?.modelOverrides?.[m.provider]?.[m.id];
+												return (
+													<div className="model-ctx-row" key={m.ref}>
+														<span className="model-ctx-name" title={m.ref}>
+															{m.label}
+														</span>
+														<input
+															key={`${m.ref}:ctx:${m.contextWindow}`}
+															type="number"
+															min={1}
+															className="model-ctx-input"
+															defaultValue={m.contextWindow || ""}
+															placeholder="上下文"
+															title="上下文窗口（token）"
+															onBlur={(e) => {
+																const v = Number(e.target.value);
+																saveModelOverride(m.provider, m.id, {
+																	contextWindow:
+																		Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined,
+																	maxTokens: ov?.maxTokens,
+																});
+															}}
+														/>
+														<input
+															key={`${m.ref}:max:${m.maxTokens ?? ""}`}
+															type="number"
+															min={1}
+															className="model-ctx-input"
+															defaultValue={m.maxTokens ?? ""}
+															placeholder="最大输出"
+															title="最大输出 token（可选）"
+															onBlur={(e) => {
+																const v = Number(e.target.value);
+																saveModelOverride(m.provider, m.id, {
+																	contextWindow: ov?.contextWindow,
+																	maxTokens:
+																		Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined,
+																});
+															}}
+														/>
+														{ov ? (
+															<button
+																type="button"
+																className="model-ctx-reset"
+																title="恢复默认"
+																onClick={() => resetModelOverride(m.provider, m.id)}
+															>
+																重置
+															</button>
+														) : (
+															<span className="model-ctx-reset placeholder" />
+														)}
+													</div>
+												);
+											})}
+										</div>
+									</div>
+								</div>
+							)}
 
 							<div className="setting">
 								<div className="setting-label">

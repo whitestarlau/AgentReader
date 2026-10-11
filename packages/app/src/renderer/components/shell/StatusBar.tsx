@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AiModelOption, DocMeta } from "../../types.ts";
+import { formatTokens } from "../../tokens.ts";
 import { Icon } from "../Icons.tsx";
 
 type OcrStatus = { page: number; total: number; progress: number } | null;
@@ -118,6 +119,7 @@ export function StatusBar({
 										}}
 									>
 										<span>{m.label}</span>
+										<span className="model-picker-ctx">{formatTokens(m.contextWindow)}</span>
 										{!m.configured && <span className="model-picker-warn">未配置 Key</span>}
 									</button>
 								))}

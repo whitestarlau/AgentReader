@@ -133,3 +133,80 @@ export function readCustomProviders(): Record<string, CustomProvider> {
 export function writeCustomProviders(data: Record<string, CustomProvider>): void {
 	writeFileSync(customProvidersPath(), JSON.stringify(data, null, 2));
 }
+
+/** GUI-set per-model overrides (context window / max output), keyed provider → model. */
+export type ModelOverrideEntry = { contextWindow?: number; maxTokens?: number };
+
+function modelOverridesPath(): string {
+	return join(app.getPath("userData"), "model-overrides.json");
+}
+
+function sanitizeOverrideEntry(value: unknown): ModelOverrideEntry | null {
+	if (!value || typeof value !== "object") return null;
+	const v = value as Record<string, unknown>;
+	const out: ModelOverrideEntry = {};
+	if (
+		typeof v.contextWindow === "number" &&
+		Number.isFinite(v.contextWindow) &&
+		v.contextWindow > 0
+	) {
+		out.contextWindow = Math.floor(v.contextWindow);
+	}
+	if (typeof v.maxTokens === "number" && Number.isFinite(v.maxTokens) && v.maxTokens > 0) {
+		out.maxTokens = Math.floor(v.maxTokens);
+	}
+	return Object.keys(out).length ? out : null;
+}
+
+export function readModelOverrides(): Record<string, Record<string, ModelOverrideEntry>> {
+	const p = modelOverridesPath();
+	if (!existsSync(p)) return {};
+	try {
+		const parsed = JSON.parse(readFileSync(p, "utf-8"));
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+		const out: Record<string, Record<string, ModelOverrideEntry>> = {};
+		for (const [providerId, byModel] of Object.entries(parsed as Record<string, unknown>)) {
+			if (!byModel || typeof byModel !== "object" || Array.isArray(byModel)) continue;
+			const models: Record<string, ModelOverrideEntry> = {};
+			for (const [modelId, entry] of Object.entries(byModel as Record<string, unknown>)) {
+				const clean = sanitizeOverrideEntry(entry);
+				if (clean) models[modelId] = clean;
+			}
+			if (Object.keys(models).length) out[providerId] = models;
+		}
+		return out;
+	} catch {}
+	return {};
+}
+
+export function writeModelOverrides(
+	data: Record<string, Record<string, ModelOverrideEntry>>,
+): void {
+	writeFileSync(modelOverridesPath(), JSON.stringify(data, null, 2));
+}
+
+/**
+ * Replace a model's GUI override. An empty/invalid entry removes it so the
+ * model falls back to its catalog/default values.
+ */
+export function setModelOverride(
+	providerId: string,
+	modelId: string,
+	patch: ModelOverrideEntry,
+): void {
+	const data = readModelOverrides();
+	const clean = sanitizeOverrideEntry(patch);
+	if (!data[providerId]) data[providerId] = {};
+	if (clean) data[providerId][modelId] = clean;
+	else delete data[providerId][modelId];
+	if (Object.keys(data[providerId]).length === 0) delete data[providerId];
+	writeModelOverrides(data);
+}
+
+export function clearModelOverride(providerId: string, modelId: string): void {
+	const data = readModelOverrides();
+	if (!data[providerId]) return;
+	delete data[providerId][modelId];
+	if (Object.keys(data[providerId]).length === 0) delete data[providerId];
+	writeModelOverrides(data);
+}

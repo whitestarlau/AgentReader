@@ -10,11 +10,15 @@ import { ipcMain, shell } from "electron";
 import { getProviderKey, hasStoredKey, setProviderKey } from "./ai-auth.ts";
 import {
 	type CustomProvider,
+	clearModelOverride,
 	configPath,
 	ensureConfig,
+	type ModelOverrideEntry,
 	readConfig,
 	readCustomProviders,
 	readModelCache,
+	readModelOverrides,
+	setModelOverride,
 	writeConfigText,
 	writeCustomProviders,
 	writeModelCache,
@@ -36,7 +40,27 @@ export function mergeCustomProviders(
 	return { ...file, providers: { ...custom, ...declared } };
 }
 
-/** Build a model runtime from models.json + GUI providers + the encrypted auth store + env. */
+/**
+ * Apply GUI-managed model overrides (context window / max output) as provider
+ * `modelOverrides`, so they take effect without editing the AI-editable models.json.
+ */
+export function mergeModelOverrides(
+	file: ModelsFile,
+	overrides: Record<string, Record<string, ModelOverrideEntry>>,
+): ModelsFile {
+	const providers = { ...(file.providers ?? {}) };
+	for (const [providerId, byModel] of Object.entries(overrides)) {
+		const existing = providers[providerId] ?? {};
+		const merged = { ...(existing.modelOverrides ?? {}) } as Record<string, ModelOverrideEntry>;
+		for (const [modelId, patch] of Object.entries(byModel)) {
+			merged[modelId] = { ...(merged[modelId] ?? {}), ...patch };
+		}
+		providers[providerId] = { ...existing, modelOverrides: merged };
+	}
+	return { ...file, providers };
+}
+
+/** Build a model runtime from models.json + GUI providers + overrides + the encrypted auth store + env. */
 export function buildRuntime(): {
 	runtime: ModelRuntime;
 	file: ModelsFile;
@@ -44,7 +68,7 @@ export function buildRuntime(): {
 } {
 	const cfg = readConfig();
 	const custom = readCustomProviders();
-	const file = mergeCustomProviders(cfg.file, custom);
+	const file = mergeModelOverrides(mergeCustomProviders(cfg.file, custom), readModelOverrides());
 	const runtime = createModelRuntime({
 		file,
 		configErrors: cfg.errors,
@@ -251,8 +275,10 @@ function buildConfigPayload() {
 			provider: m.provider,
 			label: m.label,
 			contextWindow: m.contextWindow,
+			maxTokens: m.maxTokens,
 			configured: configuredById.get(m.provider) ?? false,
 		})),
+		modelOverrides: readModelOverrides(),
 	};
 }
 
@@ -277,6 +303,19 @@ export function registerAiIpc() {
 
 	ipcMain.handle("ai:model:set", (_e, ref: string) => {
 		updateSettings({ model: ref });
+		return true;
+	});
+
+	ipcMain.handle(
+		"ai:model:override:set",
+		(_e, providerId: string, modelId: string, patch: ModelOverrideEntry) => {
+			setModelOverride(String(providerId), String(modelId), patch ?? {});
+			return true;
+		},
+	);
+
+	ipcMain.handle("ai:model:override:clear", (_e, providerId: string, modelId: string) => {
+		clearModelOverride(String(providerId), String(modelId));
 		return true;
 	});
 

@@ -37,8 +37,8 @@ AgentReader 从 `{userData}/models.json` 读取提供商与模型配置。文件
 |---|---|---|
 | `id` | string | 模型 id（`models` 中必填）。 |
 | `name` | string | 显示名。 |
-| `contextWindow` | number | 上下文窗口（token）。仅用于展示。 |
-| `maxTokens` | number | 最大输出 token。 |
+| `contextWindow` | number | 上下文窗口（token）。用于上下文占用指示，GUI 可逐模型覆盖。 |
+| `maxTokens` | number | 最大输出 token。GUI 可逐模型覆盖。 |
 | `reasoning` | boolean | 是否为推理模型。 |
 | `api` | string | 覆盖协议（用于聚合网关中混合协议的模型）。 |
 | `hidden` | boolean | 在 `modelOverrides` 中设为 `true` 可隐藏该模型。 |
@@ -94,6 +94,21 @@ AgentReader 从 `{userData}/models.json` 读取提供商与模型配置。文件
 ```
 
 密钥同样存在 `auth.json`，不在这个文件里。
+
+## 模型上下文覆盖（GUI）
+
+「设置 → 模型与提供商 → 模型上下文」可为**任意提供商的任意模型**逐个覆盖上下文窗口与最大输出，
+结果写入同目录下的 `model-overrides.json`（键为 providerId → modelId）。运行时把它作为
+provider 的 `modelOverrides` 合并，因此**不会改动带注释的 models.json**；留空即恢复内置/默认值。
+
+```json
+{
+  "openai": { "gpt-4o-mini": { "contextWindow": 128000, "maxTokens": 16384 } },
+  "my-llm": { "qwen3-32b": { "contextWindow": 131072 } }
+}
+```
+
+`contextWindow` 决定对话里「上下文占用」进度条的满量程。
 
 ## tools.webSearch
 

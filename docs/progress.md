@@ -1,5 +1,22 @@
 # 进度记录
 
+## 2026-10-11 模型上下文：可逐模型配置 + 对话上下文占用显示
+
+- [x] 逐模型上下文配置：`Settings → 模型与提供商` 新增「模型上下文」列表，可为当前提供商的每个
+  模型覆盖上下文窗口 / 最大输出。写入新文件 `model-overrides.json`（providerId → modelId），
+  运行时作为 `modelOverrides` 合并，不改写 models.json；留空/重置回退内置或默认值
+- [x] 新增 IPC `ai:model:override:set` / `ai:model:override:clear`，`AiConfig` 载荷附带
+  `modelOverrides` 与每个模型的 `maxTokens`
+- [x] Token 用量采集：OpenAI 协议请求带 `stream_options.include_usage`，解析最终 usage chunk；
+  Anthropic 解析 `message_start`（输入）与 `message_delta`（输出）用量
+- [x] `AssistantMessageEvent`/`AgentEvent` 新增 `usage` 事件，agent-loop 透传
+- [x] `chat:send` 结束前通过 `chat:usage` 事件上报 `used/max/estimated`；无用量时按
+  CJK=1 token、拉丁≈4 字符/token 估算（系统提示 + 消息 + 工具额度）
+- [x] `ChatPanel` 在输入框上方显示上下文占用进度条与 `已用 / 上限`，≥80% 变黄；加载已有对话时
+  先显示估算值（`≈`），发送后以服务商返回的真实用量为准
+- [x] 文档：`docs/config-schema.md` 补充 model-overrides.json 与 contextWindow 说明
+- [x] 验证：ai / agent / app typecheck 与 app build 通过
+
 ## 2026-10-11 引用提问：发送前可见、可编辑、可移除
 
 - [x] 问题：选区引用只在点击发送时从 `selection` prop 读取，发送前对话框里看不到
