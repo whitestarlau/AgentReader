@@ -48,21 +48,34 @@ export type ModelMetadata = Record<
 	Record<string, { context?: number; output?: number; reasoning?: boolean }>
 >;
 
-/** Exact provider+model match first, then any provider that declares the same model id. */
-function lookupModelMetadata(
-	metadata: ModelMetadata | undefined,
-	providerId: string,
-	modelId: string,
-): { context?: number; output?: number; reasoning?: boolean } | undefined {
+type MetadataEntry = { context?: number; output?: number; reasoning?: boolean };
+
+/** Normalize a model id so dotted/hyphenated variants match (qwen3.6-plus ≈ qwen3-6-plus). */
+function normalizeModelId(id: string): string {
+	return id.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/** Prebuilt lookup: exact provider+model, then any provider by id or normalized id. */
+type ModelMetadataIndex = { get(providerId: string, modelId: string): MetadataEntry | undefined };
+
+function buildModelMetadataIndex(metadata?: ModelMetadata): ModelMetadataIndex | undefined {
 	if (!metadata) return undefined;
-	const direct = metadata[providerId]?.[modelId];
-	if (direct) return direct;
-	for (const [pid, models] of Object.entries(metadata)) {
-		if (pid === providerId) continue;
-		const m = models[modelId];
-		if (m) return m;
+	const exactGlobal = new Map<string, MetadataEntry>();
+	const normGlobal = new Map<string, MetadataEntry>();
+	for (const models of Object.values(metadata)) {
+		for (const [modelId, entry] of Object.entries(models)) {
+			if (!exactGlobal.has(modelId)) exactGlobal.set(modelId, entry);
+			const norm = normalizeModelId(modelId);
+			if (norm && !normGlobal.has(norm)) normGlobal.set(norm, entry);
+		}
 	}
-	return undefined;
+	return {
+		get(providerId, modelId) {
+			const direct = metadata[providerId]?.[modelId];
+			if (direct) return direct;
+			return exactGlobal.get(modelId) ?? normGlobal.get(normalizeModelId(modelId));
+		},
+	};
 }
 
 type ModelSeed = {
@@ -180,12 +193,12 @@ function sanitizeProvider(v: unknown): UserProviderConfig {
 function asModel(
 	provider: ResolvedProvider,
 	def: ModelSeed,
-	metadata: ModelMetadata | undefined,
+	metadata: ModelMetadataIndex | undefined,
 	override?: ModelOverride,
 ): Model | null {
 	if (override?.hidden || def.hidden) return null;
 	const inferred = inferModelMeta(def.id);
-	const meta = lookupModelMetadata(metadata, provider.id, def.id);
+	const meta = metadata?.get(provider.id, def.id);
 	const contextWindow =
 		override?.contextWindow ?? def.contextWindow ?? meta?.context ?? inferred.contextWindow;
 	const source: Model["contextWindowSource"] = override?.contextWindow
@@ -217,7 +230,7 @@ function buildModels(
 	builtin: readonly BuiltinModel[],
 	user: UserProviderConfig,
 	cache: readonly string[],
-	metadata: ModelMetadata | undefined,
+	metadata: ModelMetadataIndex | undefined,
 ): Model[] {
 	const overrides = user.modelOverrides ?? {};
 	const disabled = new Set(user.disabledModels ?? []);
@@ -260,7 +273,7 @@ export function createModelRuntime(options: CreateModelRuntimeOptions): ModelRun
 		? (file.providers as Record<string, UserProviderConfig>)
 		: {};
 	const cache = options.modelCache ?? {};
-	const metadata = options.modelMetadata;
+	const metadata = buildModelMetadataIndex(options.modelMetadata);
 	const errors = [...(options.configErrors ?? [])];
 	const providers: ResolvedProvider[] = [];
 

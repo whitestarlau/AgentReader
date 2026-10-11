@@ -17,6 +17,8 @@
   （来源标签 `目录`）；启动时缺失/陈旧（>14 天）自动后台同步，设置内提供手动「同步」按钮
 - [x] `createModelRuntime` 新增 `modelMetadata` 选项，模型解析优先级：
   用户覆盖 > models.json/内置目录 > models.dev 目录 > 内置模式表 > 128000 默认
+- [x] 目录匹配做 id 归一化（`qwen3.6-plus` ≈ `qwen3-6-plus`），先精确 provider+model，
+  再全局精确、再归一化匹配，兼容 models.dev 的连字符风格与各家的点号风格
 - [x] 文档：`docs/config-schema.md` 补充 models.dev 同步说明
 - [x] 文档：`docs/config-schema.md` 增加「模型元数据自动识别」说明
 - [x] 验证：ai / agent / app typecheck 与 app build 通过
