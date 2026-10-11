@@ -225,11 +225,14 @@ textarea::placeholder {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 18px;
-	height: 18px;
-	border-radius: 4px;
+	width: 20px;
+	height: 20px;
+	border-radius: 5px;
 	background: var(--vscode-accent);
 	color: #fff;
+}
+.titlebar-brand .brand-accent {
+	color: #6cb6ff;
 }
 .titlebar-center {
 	flex: 1;
@@ -553,9 +556,13 @@ textarea::placeholder {
 	justify-content: center;
 	width: 18px;
 	height: 18px;
+	padding: 0;
+	background: transparent;
+	border: none;
 	border-radius: 4px;
-	opacity: 0;
+	opacity: 0.55;
 	flex: 0 0 auto;
+	color: inherit;
 }
 .tab:hover .tab-close,
 .tab.active .tab-close {
@@ -889,9 +896,13 @@ textarea::placeholder {
 	justify-content: center;
 	width: 18px;
 	height: 18px;
+	padding: 0;
+	background: transparent;
+	border: none;
 	flex: 0 0 auto;
 	border-radius: 3px;
 	opacity: 0;
+	color: inherit;
 }
 .conv-item:hover .conv-item-del {
 	opacity: 0.6;

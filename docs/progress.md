@@ -1,5 +1,17 @@
 # 进度记录
 
+## 2026-10-11 界面小问题：设置图标、标题栏 logo、关闭按钮
+
+- [x] 反馈：设置入口图标像太阳不像设置；窗口标题栏图标错；关闭按钮没有「×」
+- [x] `settings` 图标替换为描边齿轮（原为「圆 + 8 条射线」像太阳/亮度）
+- [x] 标题栏品牌：原 `<span class="logo">Agent</span>Reader` 把「Agent」文字塞进 18px
+  色块里溢出，改为色块内放书本图标 + 「AgentReader」双色品牌
+- [x] 修复关闭按钮不显示「×」的根因：`.tab-close` / `.conv-item-del` 未覆盖全局
+  `button { padding: 4px 12px }`，配合 `box-sizing: border-box` 的 18px 尺寸把内容盒
+  压成负值，图标被压没 → 补 `padding:0; background:transparent; border:none`，
+  并让标签关闭按钮常态可见（opacity 0.55，hover 1）
+- [x] 验证：app typecheck 与 build 通过；齿轮/关闭图标经本地渲染确认
+
 ## 2026-10-11 模型上下文：内置参考表自动识别，免手动配置
 
 - [x] 反馈：逐模型上下文窗口需要手动配置过于繁琐

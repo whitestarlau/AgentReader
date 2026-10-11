@@ -22,8 +22,12 @@ export function TitleBar({ doc, leftOpen, chatOpen, onToggleLeft, onToggleChat, 
 				<Icon name="sidebarLeft" size={16} />
 			</button>
 			<div className="titlebar-brand">
-				<span className="logo">Agent</span>
-				Reader
+				<span className="logo">
+					<Icon name="book" size={12} />
+				</span>
+				<span>
+					Agent<span className="brand-accent">Reader</span>
+				</span>
 			</div>
 			<div className="titlebar-center">
 				{doc ? (
