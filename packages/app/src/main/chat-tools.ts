@@ -39,6 +39,10 @@ export function buildChatTools(opts: {
 				JSON.stringify({
 					title: docText.title,
 					ext: docText.ext,
+					author: docText.author,
+					publisher: docText.publisher,
+					publishedDate: docText.publishedDate,
+					language: docText.language,
 					totalChapters: docText.numPages,
 					// EPUB is reflowable and has no fixed page count; positions are
 					// chapters only.

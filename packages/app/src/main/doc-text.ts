@@ -21,6 +21,12 @@ export type DocText = {
 	toc: { label: string; href: string }[];
 	title: string;
 	ext: string;
+	/** Container metadata when the file carries it (EPUB OPF / PDF Info dict). */
+	author?: string;
+	publisher?: string;
+	publishedDate?: string;
+	/** Declared document language (e.g. "zh", "en"). */
+	language?: string;
 	isScanned: boolean;
 	ocrCount: number;
 	/** Reads any page/chapter by number, extracting (and caching) on demand. */
@@ -36,6 +42,8 @@ const EAGER_PAGES = 80;
 type PdfDocLike = {
 	numPages: number;
 	getPage: (n: number) => Promise<{ getTextContent: () => Promise<{ items: { str?: string }[] }> }>;
+	/** PDF Info dictionary (Title/Author/...); optional so stub docs still work. */
+	getMetadata?: () => Promise<{ info?: Record<string, unknown> }>;
 	destroy?: () => Promise<void>;
 };
 const pdfDocCache = new Map<string, Promise<PdfDocLike>>();
@@ -165,6 +173,13 @@ export async function getDocText(docId: string): Promise<DocText> {
 			const opfText = (await zip.file(opfPath)?.async("string")) ?? "";
 			const baseDir = opfPath.includes("/") ? opfPath.slice(0, opfPath.lastIndexOf("/") + 1) : "";
 
+			// Dublin Core metadata from the OPF (title/creator/publisher/date/language).
+			// The `dc:` prefix is optional; read each tag independently for robustness.
+			const opfTag = (tag: string) => {
+				const m = opfText.match(new RegExp(`<(?:dc:)?${tag}\\b[^>]*>([\\s\\S]*?)</(?:dc:)?${tag}>`, "i"));
+				return m ? stripTags(decodeXmlEntities(m[1])) : "";
+			};
+
 			// Manifest metadata, keyed by id. Attributes can appear in any order, so
 			// each is read independently. (The previous NCX regex required media-type
 			// before href, which calibre/EPUB2 files rarely use — so the TOC was never
@@ -261,8 +276,12 @@ export async function getDocText(docId: string): Promise<DocText> {
 				unit: "chapter",
 				chapterLabels,
 				toc,
-				title: meta.title,
+				title: opfTag("title") || meta.title,
 				ext,
+				author: opfTag("creator") || undefined,
+				publisher: opfTag("publisher") || undefined,
+				publishedDate: opfTag("date") || undefined,
+				language: opfTag("language") || undefined,
 				isScanned: false,
 				ocrCount: 0,
 				getPage: async (n) => chapters[Math.max(1, Math.min(chapters.length, n)) - 1] ?? "",
@@ -277,6 +296,16 @@ export async function getDocText(docId: string): Promise<DocText> {
 	try {
 		const doc = await getPdfDoc(docId);
 		const numPages = doc.numPages;
+		// PDF Info dictionary: only Title/Author are reliably meaningful (Producer
+		// and Creator name the software, not the book).
+		let info: Record<string, unknown> = {};
+		try {
+			info = (await doc.getMetadata?.())?.info ?? {};
+		} catch {}
+		const infoStr = (k: string) => {
+			const v = info[k];
+			return typeof v === "string" && v.trim() ? v.trim() : undefined;
+		};
 		const pages: string[] = [];
 		let hasTextLayer = false;
 		for (let i = 1; i <= Math.min(numPages, EAGER_PAGES); i++) {
@@ -289,8 +318,9 @@ export async function getDocText(docId: string): Promise<DocText> {
 			numPages,
 			unit: "page",
 			toc: [],
-			title: meta.title,
+			title: infoStr("Title") || meta.title,
 			ext,
+			author: infoStr("Author"),
 			isScanned: numPages > 0 && !hasTextLayer,
 			ocrCount: Object.keys(readOcr(docId)).length,
 			getPage: async (n) => {

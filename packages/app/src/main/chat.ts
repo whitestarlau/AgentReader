@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { buildDocumentSystemPrompt, runAgentLoop } from "@agentreader/agent";
+import {
+	buildDocumentSystemPrompt,
+	type DocumentPromptInput,
+	runAgentLoop,
+} from "@agentreader/agent";
 import type { StreamFn } from "@agentreader/ai";
 import { BrowserWindow, ipcMain } from "electron";
 import {
@@ -141,7 +145,7 @@ export function registerChatIpc() {
 			if (enabledSkills.length) toolNames.push("read_skill");
 			if (executableSkills.length) toolNames.push("run_skill_script");
 
-			const systemPrompt = buildDocumentSystemPrompt({
+			const promptInput: DocumentPromptInput = {
 				title: docText.title,
 				ext: docText.ext,
 				numPages: docText.numPages,
@@ -151,6 +155,11 @@ export function registerChatIpc() {
 				tocLabels: docText.toc.slice(0, 20).map((t) => t.label),
 				currentText: hintText,
 				ocr: { isScanned: docText.isScanned, ocrCount: docText.ocrCount },
+				author: docText.author,
+				publisher: docText.publisher,
+				publishedDate: docText.publishedDate,
+				language: docText.language,
+				now: new Date(),
 				toolNames,
 				webSearchEnabled: webSearch.enabled,
 				skills: enabledSkills.map((s) => ({
@@ -160,6 +169,16 @@ export function registerChatIpc() {
 					trusted: trustedSkills.has(s.name),
 				})),
 				skillsExecutionEnabled: skillsExecution,
+			};
+			const systemPrompt = buildDocumentSystemPrompt(promptInput);
+			// The no-tools retry below drops `tools` entirely, so it must also stop
+			// advertising them (tools, web search and skill instructions all reference
+			// capabilities that aren't wired up in that request).
+			const fallbackSystemPrompt = buildDocumentSystemPrompt({
+				...promptInput,
+				toolNames: [],
+				webSearchEnabled: false,
+				skills: [],
 			});
 
 			const messages = [...history, { role: "user", content: prompt }];
@@ -272,7 +291,7 @@ export function registerChatIpc() {
 					try {
 						const fallbackStream = streamFn;
 						const fallbackContext = {
-							systemPrompt,
+							systemPrompt: fallbackSystemPrompt,
 							messages: [...history, { role: "user", content: prompt }] as never,
 						};
 						for await (const e of fallbackStream(
