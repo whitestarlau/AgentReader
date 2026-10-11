@@ -20,6 +20,8 @@ type Msg = {
 };
 type ChatRow = { id?: string; role?: string; content?: string; timeline?: TimelineItem[]; notice?: string };
 type Conv = { id: string; title: string };
+/** A citation captured from the viewer, shown above the composer before send. */
+type Quote = { text: string; page: number; kind: Selection["kind"] };
 type Props = { selection: Selection | null; docId: string | null; page: number; isEpub?: boolean; annotations?: Annotation[] };
 
 type Outline = { unit: "page" | "chapter"; numPages: number; chapterLabels: string[]; toc: { label: string; href: string }[] };
@@ -177,6 +179,11 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 	const [showJump, setShowJump] = useState(false);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const composingRef = useRef(false);
+	// Current pending citation, captured from the viewer's latest selection so the
+	// user can review, edit, or remove it before sending.
+	const [quote, setQuote] = useState<Quote | null>(null);
+	const [quoteEditing, setQuoteEditing] = useState(false);
+	const lastSelRef = useRef<Selection | null>(null);
 
 	const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
 		const el = scrollRef.current;
@@ -208,6 +215,24 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 	}, []);
 
 	useEffect(() => { resizeInput(); }, [input, resizeInput]);
+
+	// Capture a fresh viewer selection into an editable composer citation. Each
+	// pick produces a new Selection object, so identity flags a re-selection;
+	// removing the citation does not re-add it because the selection is unchanged.
+	useEffect(() => {
+		if (!selection?.text?.trim()) return;
+		if (lastSelRef.current === selection) return;
+		lastSelRef.current = selection;
+		setQuote({ text: selection.text, page: selection.page, kind: selection.kind });
+		setQuoteEditing(false);
+	}, [selection]);
+
+	// A citation belongs to one document; drop it when the document changes.
+	useEffect(() => {
+		setQuote(null);
+		setQuoteEditing(false);
+		lastSelRef.current = null;
+	}, [docId]);
 
 	// Chapter labels for the "@" picker. Only EPUB has chapters, and calling
 	// getDocText on a PDF would eagerly extract pages, so skip it there.
@@ -499,12 +524,12 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 
 	const send = async () => {
 		if (!input.trim() || !docId || !convId || streaming) return;
-		const sel = selection;
-		const quote = sel?.text?.trim();
+		const q = quote;
+		const text = q?.text.trim();
 		// EPUB is reflowable and has no fixed page numbers — cite the chapter, not a page.
-		const where = isEpub ? `第${sel?.page ?? "?"}章` : `第${sel?.page ?? "?"}页`;
+		const where = isEpub ? `第${q?.page ?? "?"}章` : `第${q?.page ?? "?"}页`;
 		const blocks: string[] = [];
-		if (quote && sel) blocks.push(`【引用文本 · ${where} · ${SELECTION_LABEL[sel.kind]}】\n${quote.slice(0, 4000)}`);
+		if (text && q) blocks.push(`【引用文本 · ${where} · ${SELECTION_LABEL[q.kind]}】\n${text.slice(0, 4000)}`);
 		// Only include mentions whose token is still present in the composer.
 		const usedMentions = mentions.filter((m) => input.includes(m.token));
 		for (const m of usedMentions) blocks.push(m.ref);
@@ -517,6 +542,8 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 		setMsgs((m) => [...m, { role: "user", content: prompt }]);
 		setInput("");
 		setMention(null);
+		setQuote(null);
+		setQuoteEditing(false);
 		const res = await runChat(history, prompt);
 		// Attach the persisted id to the user turn so it becomes editable.
 		if (res?.userId) {
@@ -621,24 +648,13 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 			)}
 
 			{convId && msgs.length > 0 && (
-				<>
-					{selection?.text && (
-						<div className="quote-box">
-							<div className="quote-head">
-								引用 · P{selection.page} · {SELECTION_LABEL[selection.kind]}
-							</div>
-							<div className="quote-text">{selection.text.slice(0, 400)}</div>
-						</div>
-					)}
-
-					<div className="quick-actions">
-						{["解释", "总结", "翻译", "提问"].map((t) => (
-							<button key={t} type="button" onClick={() => setInput(t + (selection?.text ? "以上内容" : ""))}>
-								{t}
-							</button>
-						))}
-					</div>
-				</>
+				<div className="quick-actions">
+					{["解释", "总结", "翻译", "提问"].map((t) => (
+						<button key={t} type="button" onClick={() => setInput(t + (quote?.text ? "以上内容" : ""))}>
+							{t}
+						</button>
+					))}
+				</div>
 			)}
 
 			<div ref={scrollRef} className="chat-scroll" onScroll={onScroll}>
@@ -751,6 +767,46 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 				<button type="button" className="scroll-down-btn" onClick={() => scrollToBottom("smooth")} title="回到最新">
 					<Icon name="chevronDown" size={14} /> 回到最新
 				</button>
+			)}
+
+			{quote && (
+				<div className="composer-quote">
+					<div className={`quote-box${quoteEditing ? " editing" : ""}`}>
+						<div className="quote-head">
+							<Icon name="chat" size={11} />
+							<span className="quote-where">
+								引用 · {isEpub ? `第${quote.page}章` : `P${quote.page}`} · {SELECTION_LABEL[quote.kind]}
+							</span>
+							<span className="spacer" />
+							<button
+								type="button"
+								className="quote-act"
+								onClick={() => setQuoteEditing((v) => !v)}
+								title={quoteEditing ? "完成编辑" : "编辑引用内容"}
+							>
+								<Icon name={quoteEditing ? "check" : "edit"} size={12} />
+							</button>
+							<button
+								type="button"
+								className="quote-act"
+								onClick={() => { setQuote(null); setQuoteEditing(false); }}
+								title="移除引用"
+							>
+								<Icon name="close" size={12} />
+							</button>
+						</div>
+						{quoteEditing ? (
+							<textarea
+								className="quote-edit"
+								value={quote.text}
+								onChange={(e) => setQuote((q) => (q ? { ...q, text: e.target.value } : q))}
+								rows={3}
+							/>
+						) : (
+							<div className="quote-text">{quote.text}</div>
+						)}
+					</div>
+				</div>
 			)}
 
 			<div className="chat-composer">

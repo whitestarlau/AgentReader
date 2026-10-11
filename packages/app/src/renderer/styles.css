@@ -940,6 +940,51 @@ textarea::placeholder {
 	white-space: pre-wrap;
 }
 
+/* Editable citation pinned above the composer, before sending. */
+.composer-quote {
+	flex: 0 0 auto;
+	padding: 8px 8px 0;
+	border-top: 1px solid var(--vscode-border-soft);
+}
+.composer-quote .quote-box {
+	margin: 0;
+	max-height: 180px;
+}
+.quote-box .quote-head {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+.quote-box .quote-head .spacer {
+	flex: 1;
+}
+.quote-act {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 2px;
+	background: transparent;
+	border: none;
+	border-radius: 3px;
+	color: var(--vscode-fg-dim);
+	cursor: pointer;
+}
+.quote-act:hover {
+	background: var(--vscode-hover);
+	color: var(--vscode-fg);
+}
+.quote-box .quote-edit {
+	width: 100%;
+	resize: vertical;
+	min-height: 48px;
+	padding: 4px 6px;
+	font-size: 12px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	background: #3c3c3c;
+	border-radius: 3px;
+}
+
 .quick-actions {
 	display: flex;
 	gap: 6px;
