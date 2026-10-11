@@ -45,7 +45,7 @@ export type AssistantMessageEvent =
 	| { type: "text_delta"; delta: string }
 	| { type: "reasoning_delta"; delta: string }
 	| { type: "tool_call"; id: string; name: string; args: string }
-	| { type: "done"; stopReason: "stop" | "tool_calls" | "error" | "aborted"; error?: string };
+	| { type: "done"; stopReason: "stop" | "tool_calls" | "error" | "aborted" | "length"; error?: string };
 
 export type StreamOptions = {
 	signal?: AbortSignal;

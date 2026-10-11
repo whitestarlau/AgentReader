@@ -15,8 +15,10 @@ type Msg = {
 	content: string;
 	timeline?: TimelineItem[];
 	stopped?: boolean;
+	/** User-facing note about an abnormal stop (tool cap / truncation / empty reply). */
+	notice?: string;
 };
-type ChatRow = { id?: string; role?: string; content?: string; timeline?: TimelineItem[] };
+type ChatRow = { id?: string; role?: string; content?: string; timeline?: TimelineItem[]; notice?: string };
 type Conv = { id: string; title: string };
 type Props = { selection: Selection | null; docId: string | null; page: number; isEpub?: boolean; annotations?: Annotation[] };
 
@@ -48,6 +50,7 @@ function toMsg(r: ChatRow): Msg {
 		role: r.role === "assistant" ? "assistant" : "user",
 		content: r.content ?? "",
 		timeline: r.timeline,
+		notice: r.notice,
 	};
 }
 
@@ -399,7 +402,10 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 			});
 		});
 		const offDone = window.api.onChatDone(() => setStreaming(false));
-		return () => { offDelta(); offReasoning(); offToolCall(); offToolResult(); offDone(); };
+		const offNotice = window.api.onChatNotice((notice: string) =>
+			updateLast((m) => ({ ...m, notice })),
+		);
+		return () => { offDelta(); offReasoning(); offToolCall(); offToolResult(); offDone(); offNotice(); };
 	}, [updateLast, pushTimeline]);
 
 	// Jump to the bottom when switching conversations.
@@ -697,6 +703,7 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [] }: 
 											{isLast && streaming && !m.content && tl.length === 0 && <div className="msg-status">思考中…</div>}
 											{isLast && streaming && !m.content && tl.length > 0 && <div className="msg-status">生成中…</div>}
 											{isLast && stopped && !streaming && <div className="msg-status">已停止</div>}
+											{m.notice && <div className="msg-status warn">{m.notice}</div>}
 										</>
 									) : editingId && m.id === editingId ? (
 										<div className="msg-edit">

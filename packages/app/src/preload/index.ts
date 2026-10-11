@@ -80,6 +80,11 @@ contextBridge.exposeInMainWorld("api", {
 		ipcRenderer.on("chat:done", h);
 		return () => ipcRenderer.removeListener("chat:done", h);
 	},
+	onChatNotice: (cb: (d: string) => void) => {
+		const h = (_e: unknown, d: string) => cb(d);
+		ipcRenderer.on("chat:notice", h);
+		return () => ipcRenderer.removeListener("chat:notice", h);
+	},
 	onToolCall: (cb: (d: unknown) => void) => {
 		const h = (_e: unknown, d: unknown) => cb(d);
 		ipcRenderer.on("chat:tool_call", h);

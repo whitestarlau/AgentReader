@@ -55,8 +55,14 @@ export async function* runAgentLoop(
 					};
 				}
 				if (event.stopReason === "error") {
-					const err = (event as { error?: string }).error || "unknown";
-					yield { type: "done", stopReason: "error", error: err } as unknown as AgentEvent;
+					const err = event.error || "unknown";
+					yield { type: "done", stopReason: "error", error: err };
+					return;
+				}
+				// User abort / output-token limit: surface it instead of letting the
+				// loop look like a normal completion.
+				if (event.stopReason === "aborted" || event.stopReason === "length") {
+					yield { type: "done", stopReason: event.stopReason };
 					return;
 				}
 				break;
@@ -90,7 +96,9 @@ export async function* runAgentLoop(
 			} catch {}
 		}
 		if (toolCalls.length === 0) {
-			yield { type: "done", stopReason: "stop" };
+			// No tool call and nothing to say: distinguish a genuinely empty reply
+			// from a normal one so the caller can tell the user.
+			yield { type: "done", stopReason: assistantContent || assistantReasoning ? "stop" : "empty" };
 			return;
 		}
 
@@ -119,5 +127,6 @@ export async function* runAgentLoop(
 			currentMessages.push({ role: "tool", content: result, toolCallId: tc.id, toolName: tc.name });
 		}
 	}
-	yield { type: "done", stopReason: "stop" };
+	// Fell out of the loop: maxTurns tool rounds were used without a final answer.
+	yield { type: "done", stopReason: "max_turns" };
 }

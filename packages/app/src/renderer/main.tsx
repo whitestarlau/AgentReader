@@ -83,6 +83,7 @@ declare global {
       onChatDelta: (cb: (d: string) => void) => () => void;
       onChatReasoning: (cb: (d: string) => void) => () => void;
       onChatDone: (cb: (d: string) => void) => () => void;
+      onChatNotice: (cb: (d: string) => void) => () => void;
       onToolCall: (cb: (d: unknown) => void) => () => void;
       onToolResult: (cb: (d: unknown) => void) => () => void;
     };

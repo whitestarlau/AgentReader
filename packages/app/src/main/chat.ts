@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import {
+	type AgentStopReason,
 	buildDocumentSystemPrompt,
 	type DocumentPromptInput,
 	runAgentLoop,
@@ -27,6 +28,23 @@ import { loadSkills, readDocSkills, readTrusted } from "./skills.ts";
 
 /** In-flight chat streams keyed by `${docId}:${convId}`, so the UI can stop them. */
 export const activeChats = new Map<string, AbortController>();
+
+/**
+ * A short, user-facing note for an abnormal stop (tool-round cap, output-token
+ * limit, empty reply). Returns undefined for a clean finish, which needs no note.
+ */
+function stopNotice(reason: AgentStopReason, maxTurns: number): string | undefined {
+	switch (reason) {
+		case "max_turns":
+			return `已达到单轮工具调用上限（${maxTurns} 回合），回答可能不完整。可继续追问，或在设置中调高「最大工具回合数」。`;
+		case "length":
+			return "回答达到模型输出长度上限，内容可能被截断。回复「继续」可让它接着写。";
+		case "empty":
+			return "模型没有返回任何内容，请重试或更换模型。";
+		default:
+			return undefined;
+	}
+}
 
 export function registerChatIpc() {
 	ipcMain.handle("chat:stop", (_e, docId: string, convId: string) => {
@@ -206,6 +224,9 @@ export function registerChatIpc() {
 			});
 
 			let full = "";
+			// Why the loop stopped, and the user-facing note it implies (if any).
+			let stopReason: AgentStopReason = "stop";
+			let notice: string | undefined;
 			const streamFn: StreamFn = (m, c, o) => runtime.stream(m, c, { ...o, sessionId: convId });
 
 			// 结构化记录本轮对话（思考 / 工具调用 / 最终回答），用于持久化与回放。
@@ -222,7 +243,7 @@ export function registerChatIpc() {
 				timelineReasoning.content += delta;
 			};
 			const persistAssistant = () => {
-				if (!full && timeline.length === 0) return;
+				if (!full && timeline.length === 0 && !notice) return;
 				appendFileSync(
 					chatFile(docId, convId),
 					`${JSON.stringify({
@@ -231,11 +252,13 @@ export function registerChatIpc() {
 						role: "assistant",
 						content: full,
 						timeline,
+						...(notice ? { notice } : {}),
 					})}\n`,
 				);
 			};
 
 			let lastError: string | null = null;
+			const maxTurns = getAgentMaxTurns();
 			try {
 				for await (const evt of runAgentLoop(
 					messages as never,
@@ -244,7 +267,7 @@ export function registerChatIpc() {
 					{
 						systemPrompt,
 						tools,
-						maxTurns: getAgentMaxTurns(),
+						maxTurns,
 					} as never,
 					controller.signal,
 				)) {
@@ -276,11 +299,12 @@ export function registerChatIpc() {
 						});
 						console.log("[tool] result", r.id, r.result.slice(0, 200));
 					} else if (evt.type === "done") {
-						const d = evt as { stopReason: string; error?: string };
-						console.log("[chat] agent done", d);
-						if (d.stopReason === "error") {
-							lastError = d.error || "unknown";
-							console.error("[chat] agent error", JSON.stringify(d));
+						console.log("[chat] agent done", evt);
+						if (evt.stopReason === "error") {
+							lastError = evt.error || "unknown";
+							console.error("[chat] agent error", JSON.stringify(evt));
+						} else if (evt.stopReason !== "aborted") {
+							stopReason = evt.stopReason;
 						}
 					}
 				}
@@ -325,7 +349,9 @@ export function registerChatIpc() {
 						return { error: lastError };
 					}
 				}
+				notice = stopNotice(stopReason, maxTurns);
 				persistAssistant();
+				if (notice) win?.webContents.send("chat:notice", notice);
 				win?.webContents.send("chat:done", full);
 				return { ok: true, content: full, title: generatedTitle ?? undefined, userId: userEntry?.id };
 			} catch (e) {

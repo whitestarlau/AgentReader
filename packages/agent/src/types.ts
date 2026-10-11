@@ -22,6 +22,18 @@ export type AgentState = {
 	pendingToolCalls: { id: string; name: string; args: string }[];
 };
 
+export type AgentStopReason =
+	| "stop"
+	| "tool_calls"
+	| "error"
+	| "aborted"
+	/** Provider cut the reply at the output-token limit. */
+	| "length"
+	/** The tool-call loop hit `maxTurns` before a final answer was produced. */
+	| "max_turns"
+	/** The model returned no text, no reasoning and no tool call. */
+	| "empty";
+
 export type AgentEvent =
 	| { type: "message_start"; message: AgentMessage }
 	| { type: "message_delta"; delta: string }
@@ -29,7 +41,7 @@ export type AgentEvent =
 	| { type: "message_end"; message: AgentMessage }
 	| { type: "tool_call"; id: string; name: string; args: string }
 	| { type: "tool_result"; id: string; name: string; result: string }
-	| { type: "done"; stopReason: string };
+	| { type: "done"; stopReason: AgentStopReason; error?: string };
 
 export type AgentConfig = {
 	systemPrompt?: string;

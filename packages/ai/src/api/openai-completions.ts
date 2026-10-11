@@ -99,6 +99,8 @@ export async function* openAICompletionsStream(
 	let buffer = "";
 
 	const toolAccum = new Map<number, { id: string; name: string; args: string }>();
+	// finish_reason of the last chunk ("stop" / "tool_calls" / "length" / ...).
+	let finishReason: string | undefined;
 	try {
 		while (true) {
 			const { done, value } = await reader.read();
@@ -110,9 +112,11 @@ export async function* openAICompletionsStream(
 				if (!line.startsWith("data: ")) continue;
 				const data = line.slice(6).trim();
 				if (data === "[DONE]") {
-					for (const [, tc] of toolAccum)
-						yield { type: "tool_call", id: tc.id, name: tc.name, args: tc.args };
-					yield { type: "done", stopReason: toolAccum.size ? "tool_calls" : "stop" };
+					// A length-truncated stream may hold partial tool calls; don't run them.
+					if (finishReason !== "length")
+						for (const [, tc] of toolAccum)
+							yield { type: "tool_call", id: tc.id, name: tc.name, args: tc.args };
+					yield { type: "done", stopReason: doneReason(finishReason, toolAccum.size) };
 					return;
 				}
 				let json: {
@@ -141,6 +145,7 @@ export async function* openAICompletionsStream(
 					continue;
 				}
 				const choice = json.choices?.[0];
+				if (choice?.finish_reason) finishReason = choice.finish_reason;
 				const delta = choice?.delta;
 				if (delta?.content) yield { type: "text_delta", delta: delta.content };
 				// Thinking content: field names vary across providers.
@@ -188,9 +193,21 @@ export async function* openAICompletionsStream(
 		yield { type: "done", stopReason: isAbort(msg) ? "aborted" : "error", error: msg };
 		return;
 	}
-	for (const [, tc] of toolAccum)
-		yield { type: "tool_call", id: tc.id, name: tc.name, args: tc.args };
-	yield { type: "done", stopReason: toolAccum.size ? "tool_calls" : "stop" };
+	// A length-truncated stream may hold partial tool calls; don't run them.
+	if (finishReason !== "length")
+		for (const [, tc] of toolAccum)
+			yield { type: "tool_call", id: tc.id, name: tc.name, args: tc.args };
+	yield { type: "done", stopReason: doneReason(finishReason, toolAccum.size) };
+}
+
+/** Map an OpenAI finish_reason (+ accumulated tool calls) onto our stop reasons. */
+function doneReason(
+	finishReason: string | undefined,
+	toolCalls: number,
+): "stop" | "tool_calls" | "length" {
+	if (finishReason === "length") return "length";
+	if (finishReason === "tool_calls" || toolCalls > 0) return "tool_calls";
+	return "stop";
 }
 
 function errorMessage(e: unknown): string {

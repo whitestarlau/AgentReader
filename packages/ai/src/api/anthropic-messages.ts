@@ -161,7 +161,7 @@ export async function* anthropicMessagesStream(
 	let dataLines: string[] = [];
 	const toolAccum = new Map<number, { id: string; name: string; args: string }>();
 	let emittedTools = false;
-	let stopReason: "stop" | "tool_calls" = "stop";
+	let stopReason: "stop" | "tool_calls" | "length" = "stop";
 
 	const emitTools = function* (): Generator<AssistantMessageEvent> {
 		for (const [, tc] of toolAccum) {
@@ -229,6 +229,8 @@ export async function* anthropicMessagesStream(
 							}
 						} else if (json.type === "message_delta") {
 							if (json.delta?.stop_reason === "tool_use") stopReason = "tool_calls";
+							else if (json.delta?.stop_reason === "max_tokens" && stopReason !== "tool_calls")
+								stopReason = "length";
 						} else if (json.type === "error") {
 							yield {
 								type: "done",
