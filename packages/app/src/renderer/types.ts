@@ -27,6 +27,16 @@ export type PermissionRequest = {
 
 export type DocMeta = { id: string; title: string; ext?: string };
 
+export type DocSearchHit = { locator: number; label: string; count: number; snippets: string[] };
+
+export type DocSearchResult = {
+	unit: "page" | "chapter";
+	query: string;
+	total: number;
+	range?: { from: number; to: number };
+	hits: DocSearchHit[];
+};
+
 export type ActivityView = "explorer" | "search" | "annotations";
 
 export type AiModelOption = {

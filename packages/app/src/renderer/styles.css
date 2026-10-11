@@ -487,6 +487,105 @@ textarea::placeholder {
 	line-height: 1.45;
 }
 
+/* in-document search */
+.search-scope {
+	display: flex;
+	gap: 4px;
+	margin-top: 8px;
+}
+.search-scope button {
+	font-size: 11px;
+	padding: 3px 10px;
+	background: transparent;
+	border-color: var(--vscode-border);
+	color: var(--vscode-fg-dim);
+}
+.search-scope button.active {
+	background: var(--vscode-accent);
+	border-color: var(--vscode-accent);
+	color: #fff;
+}
+.search-hit {
+	margin: 2px 8px;
+	padding: 6px 8px;
+	border-radius: 4px;
+	background: #2d2d2d;
+	border: 1px solid transparent;
+}
+.search-hit:hover {
+	background: #333334;
+}
+.search-hit.active {
+	background: var(--vscode-active);
+}
+.search-hit-head {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11px;
+	color: var(--vscode-fg-dim);
+}
+.search-hit-toggle {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 4px;
+	background: transparent;
+	border: none;
+	border-radius: 3px;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.search-hit-toggle:hover {
+	background: rgba(255, 255, 255, 0.06);
+}
+.search-hit-toggle .spacer {
+	flex: 1;
+}
+.search-hit-jump {
+	flex: 0 0 auto;
+	font-size: 11px;
+	padding: 1px 8px;
+	background: transparent;
+	border: 1px solid var(--vscode-border);
+	color: var(--vscode-fg-dim);
+}
+.search-hit-jump:hover {
+	color: #fff;
+	background: var(--vscode-accent);
+	border-color: var(--vscode-accent);
+}
+.search-hit-head .page-tag {
+	color: var(--vscode-accent);
+	font-weight: 600;
+	flex: 0 0 auto;
+}
+.search-hit-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.search-hit-count {
+	flex: 0 0 auto;
+}
+.search-hit-snippet {
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--vscode-fg);
+	white-space: normal;
+	overflow-wrap: anywhere;
+	margin-top: 3px;
+}
+.search-hit-snippet mark {
+	background: #d7ba7d;
+	color: #1e1e1e;
+	border-radius: 2px;
+	padding: 0 1px;
+}
+
 /* ------------------------------------------------------------------ editor */
 .editor {
 	flex: 1;

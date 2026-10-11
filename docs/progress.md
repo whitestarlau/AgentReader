@@ -1,5 +1,20 @@
 # 进度记录
 
+## 2026-10-11 文档内搜索：把 AI 的全文检索开放给用户
+
+- [x] 反馈：左侧「搜索」只能按标题过滤文档；文档内全文检索此前只作为 AI 工具
+- [x] 抽出可复用检索内核 `packages/app/src/main/doc-search.ts` 的 `searchDocText`：
+  大小写不敏感，多词时回退「全部命中」，按命中次数排序，返回
+  `{ locator(page/chapter), label, count, snippets }`；chat-tools 的 `search_document`
+  改为调用它（行为不变，AI 默认仍返回 5 条）
+- [x] 新增 IPC `doc:search`（注册在 doc-text.ts，复用缓存好的 `getDocText`）
+- [x] `SideBar` 搜索视图新增范围切换「当前文档 / 文档标题」：当前文档模式下 180ms
+  防抖全文检索，结果卡片显示 章/页 + 章节名 + 命中次数，**片段默认折叠**，
+  点击行头展开、右侧「跳转」按钮跳转
+- [x] EPUB 跳转：`EpubViewer` 新增 `goto` 属性（章节 + token），按 spine section href
+  `rendition.display`；PDF 复用 `page`；顺带让标注卡片点击也能跳转 EPUB 章节
+- [x] 验证：app typecheck 与 build 通过；`searchDocText` 用样例文档跑通排序与命中
+
 ## 2026-10-11 界面小问题：设置图标、标题栏 logo、关闭按钮
 
 - [x] 反馈：设置入口图标像太阳不像设置；窗口标题栏图标错；关闭按钮没有「×」

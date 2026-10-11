@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld("api", {
 		ipcRenderer.invoke("doc:ocr:save", docId, page, text),
 	getDocPath: (docId: string) => ipcRenderer.invoke("doc:path", docId),
 	getDocOutline: (docId: string) => ipcRenderer.invoke("doc:outline", docId),
+	searchDoc: (
+		docId: string,
+		query: string,
+		opts?: { limit?: number; chapter?: number; from?: number; to?: number },
+	) => ipcRenderer.invoke("doc:search", docId, query, opts),
 	readFile: (path: string) => ipcRenderer.invoke("doc:read", path),
 	getReaderChapter: (docId: string) => ipcRenderer.invoke("doc:chapter:get", docId),
 	setReaderChapter: (docId: string, chapter: number) =>

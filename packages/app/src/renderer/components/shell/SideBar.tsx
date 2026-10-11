@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../Icons.tsx";
 import type { Annotation } from "../AnnotationLayer.tsx";
-import type { ActivityView, DocMeta } from "../../types.ts";
+import type { ActivityView, DocMeta, DocSearchResult } from "../../types.ts";
 
 type Props = {
 	view: ActivityView;
@@ -25,6 +25,19 @@ const TITLES: Record<ActivityView, string> = {
 	annotations: "标注",
 };
 
+/** Wrap the first case-insensitive match of `q` in a <mark>. */
+function highlightMatch(text: string, q: string) {
+	const i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
+	if (i < 0) return text;
+	return (
+		<>
+			{text.slice(0, i)}
+			<mark>{text.slice(i, i + q.length)}</mark>
+			{text.slice(i + q.length)}
+		</>
+	);
+}
+
 export function SideBar({
 	view,
 	width,
@@ -42,12 +55,60 @@ export function SideBar({
 }: Props) {
 	const [query, setQuery] = useState("");
 	const [docsOpen, setDocsOpen] = useState(true);
+	// In-document full-text search (same engine as the AI's search_document tool).
+	const [scope, setScope] = useState<"doc" | "titles">("doc");
+	const [searching, setSearching] = useState(false);
+	const [docResult, setDocResult] = useState<DocSearchResult | null>(null);
+	// Locators whose snippets are expanded (results are collapsed by default).
+	const [expanded, setExpanded] = useState<Set<number>>(new Set());
+	const searchSeq = useRef(0);
+
+	const toggleHit = (locator: number) =>
+		setExpanded((prev) => {
+			const next = new Set(prev);
+			if (next.has(locator)) next.delete(locator);
+			else next.add(locator);
+			return next;
+		});
 
 	const filtered = useMemo(() => {
 		const q = query.trim().toLowerCase();
 		if (!q) return docs;
 		return docs.filter((d) => d.title.toLowerCase().includes(q));
 	}, [docs, query]);
+
+	// Default to in-document search whenever a document is open.
+	useEffect(() => {
+		setScope(selectedId ? "doc" : "titles");
+	}, [selectedId]);
+
+	// Debounced full-text search of the current document.
+	useEffect(() => {
+		const q = query.trim();
+		if (scope !== "doc" || !selectedId || !q) {
+			setDocResult(null);
+			setSearching(false);
+			setExpanded(new Set());
+			return;
+		}
+		setSearching(true);
+		setExpanded(new Set());
+		const seq = ++searchSeq.current;
+		const t = window.setTimeout(() => {
+			window.api
+				.searchDoc(selectedId, q, { limit: 60 })
+				.then((res) => {
+					if (seq === searchSeq.current) setDocResult(res);
+				})
+				.catch(() => {
+					if (seq === searchSeq.current) setDocResult(null);
+				})
+				.finally(() => {
+					if (seq === searchSeq.current) setSearching(false);
+				});
+		}, 180);
+		return () => window.clearTimeout(t);
+	}, [query, scope, selectedId]);
 
 	return (
 		<aside className="sidebar" style={{ width, flexBasis: width }}>
@@ -125,27 +186,114 @@ export function SideBar({
 							autoFocus
 							value={query}
 							onChange={(e) => setQuery(e.target.value)}
-							placeholder="按标题搜索文档"
+							placeholder={scope === "doc" ? "在当前文档中检索…" : "按标题搜索文档"}
 							style={{ width: "100%" }}
 						/>
-						<div className="toolbar-muted" style={{ marginTop: 8 }}>
-							{query ? `${filtered.length} / ${docs.length} 个结果` : `共 ${docs.length} 个文档`}
+						<div className="search-scope">
+							<button
+								type="button"
+								className={scope === "doc" ? "active" : ""}
+								disabled={!selectedId}
+								title={selectedId ? "在当前文档全文检索" : "请先打开一个文档"}
+								onClick={() => setScope("doc")}
+							>
+								当前文档
+							</button>
+							<button
+								type="button"
+								className={scope === "titles" ? "active" : ""}
+								onClick={() => setScope("titles")}
+							>
+								文档标题
+							</button>
 						</div>
 					</div>
-					{filtered.map((d) => (
-						<div
-							key={d.id}
-							className={`row${selectedId === d.id ? " active" : ""}`}
-							onClick={() => onOpenDoc(d.id)}
-							onKeyDown={(e) => e.key === "Enter" && onOpenDoc(d.id)}
-							role="button"
-							tabIndex={0}
-						>
-							<Icon name={d.ext === "epub" ? "book" : "file"} size={14} />
-							<span className="row-label">{d.title}</span>
-						</div>
-					))}
-					{query && filtered.length === 0 && <div className="empty-hint">没有匹配「{query}」的文档</div>}
+
+					{scope === "doc" ? (
+						!selectedId ? (
+							<div className="empty-hint">先打开一个文档，再在当前文档中检索。</div>
+						) : !query.trim() ? (
+							<div className="empty-hint">
+								<div className="empty-hint-title">文档内全文检索</div>
+								输入关键词，按章节 / 页码命中次数排序；点击结果可跳转。
+							</div>
+						) : searching && !docResult ? (
+							<div className="toolbar-muted" style={{ padding: "0 8px" }}>
+								搜索中…
+							</div>
+						) : !docResult || docResult.hits.length === 0 ? (
+							<div className="empty-hint">未找到「{query.trim()}」</div>
+						) : (
+							<div className="sidebar-section">
+								<div className="toolbar-muted" style={{ padding: "0 8px 6px" }}>
+									{docResult.hits.length} 个{docResult.unit === "chapter" ? "章节" : "页面"}命中 · 共{" "}
+									{docResult.hits.reduce((n, h) => n + h.count, 0)} 处
+								</div>
+								{docResult.hits.map((h) => {
+									const open = expanded.has(h.locator);
+									return (
+										<div
+											key={h.locator}
+											className={`search-hit${open ? " open" : ""}${page === h.locator ? " active" : ""}`}
+										>
+											<div className="search-hit-head">
+												<button
+													type="button"
+													className="search-hit-toggle"
+													onClick={() => toggleHit(h.locator)}
+													title={open ? "收起片段" : "展开片段"}
+												>
+													<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
+													<span className="page-tag">
+														{isEpub ? `第${h.locator}章` : `P${h.locator}`}
+													</span>
+													{h.label && <span className="search-hit-label">{h.label}</span>}
+													<span className="spacer" style={{ flex: 1 }} />
+													<span className="search-hit-count">{h.count} 处</span>
+												</button>
+												<button
+													type="button"
+													className="search-hit-jump"
+													title={isEpub ? "跳转到该章" : "跳转到该页"}
+													onClick={() => onJumpToPage(h.locator)}
+												>
+													跳转
+												</button>
+											</div>
+											{open &&
+												h.snippets.map((s, i) => (
+													<div key={i} className="search-hit-snippet">
+														{highlightMatch(s, query.trim())}
+													</div>
+												))}
+										</div>
+									);
+								})}
+							</div>
+						)
+					) : (
+						<>
+							<div className="toolbar-muted" style={{ padding: "0 8px 6px" }}>
+								{query ? `${filtered.length} / ${docs.length} 个结果` : `共 ${docs.length} 个文档`}
+							</div>
+							{filtered.map((d) => (
+								<div
+									key={d.id}
+									className={`row${selectedId === d.id ? " active" : ""}`}
+									onClick={() => onOpenDoc(d.id)}
+									onKeyDown={(e) => e.key === "Enter" && onOpenDoc(d.id)}
+									role="button"
+									tabIndex={0}
+								>
+									<Icon name={d.ext === "epub" ? "book" : "file"} size={14} />
+									<span className="row-label">{d.title}</span>
+								</div>
+							))}
+							{query && filtered.length === 0 && (
+								<div className="empty-hint">没有匹配「{query}」的文档</div>
+							)}
+						</>
+					)}
 				</div>
 			)}
 

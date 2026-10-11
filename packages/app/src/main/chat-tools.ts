@@ -2,6 +2,7 @@ import type { AgentTool } from "@agentreader/agent";
 import type { BrowserWindow } from "electron";
 import type { WebSearchRuntime } from "./ai.ts";
 import type { DocText } from "./doc-text.ts";
+import { searchDocText } from "./doc-search.ts";
 import { requestPermission } from "./permissions.ts";
 import {
 	type SkillInfo,
@@ -104,107 +105,37 @@ export function buildChatTools(opts: {
 					from?: number;
 					to?: number;
 				};
-				const q = String(p.query ?? "").trim().toLowerCase();
+				const q = String(p.query ?? "").trim();
 				if (!q) return JSON.stringify({ hint: "查询为空" });
-				const max = Math.max(1, Math.min(20, Number(p.limit) || 5));
-				const terms = q.split(/\s+/).filter(Boolean);
-
-				// Resolve the requested range, clamped to the document. `chapter`
-				// (EPUB) is a shorthand for a single-unit range.
-				const total = docText.numPages;
-				let lo = Math.max(1, Math.floor(Number(p.from ?? p.chapter ?? 1) || 1));
-				let hi = Math.min(total, Math.floor(Number(p.to ?? p.chapter ?? total) || total));
-				if (hi < lo) [lo, hi] = [hi, lo];
-				const scoped = !(lo === 1 && hi === total);
-
-				// EPUB: search unit by unit; hits are reported by chapter (the only
-				// stable locator for reflowable text).
+				const res = await searchDocText(docText, q, {
+					limit: Number(p.limit) || 5,
+					chapter: p.chapter,
+					from: p.from,
+					to: p.to,
+				});
+				if (!res.hits.length) {
+					return JSON.stringify({ hint: "未找到相关段落", query: p.query, range: res.range });
+				}
 				if (unit === "chapter") {
-					const byChapter = new Map<number, { chapter: number; count: number; snippets: string[] }>();
-					for (let n = lo; n <= hi; n++) {
-						const text = await docText.getPage(n);
-						if (!text) continue;
-						const lower = text.toLowerCase();
-						const positions: number[] = [];
-						let from = 0;
-						for (;;) {
-							const idx = lower.indexOf(q, from);
-							if (idx === -1) break;
-							positions.push(idx);
-							from = idx + q.length;
-						}
-						if (!positions.length && terms.length > 1 && terms.every((t) => lower.includes(t))) {
-							positions.push(Math.max(0, lower.indexOf(terms[0])));
-						}
-						if (!positions.length) continue;
-						const h = byChapter.get(n) ?? { chapter: n, count: 0, snippets: [] };
-						h.count += positions.length;
-						for (const idx of positions) {
-							if (h.snippets.length >= 3) break;
-							const snip = text.slice(Math.max(0, idx - 120), idx + 280).replace(/\s+/g, " ").trim();
-							if (snip && !h.snippets.includes(snip)) h.snippets.push(snip);
-						}
-						byChapter.set(n, h);
-					}
-					const results = [...byChapter.values()]
-						.sort((a, b) => b.count - a.count || a.chapter - b.chapter)
-						.slice(0, max)
-						.map(({ chapter, count, snippets }) => {
-							const label = chapterLabel(chapter);
-							return {
-								chapter,
-								label: label ? `第 ${chapter} 章 · ${label}` : `第 ${chapter} 章`,
-								count,
-								snippets,
-							};
-						});
-					if (!results.length) return JSON.stringify({ hint: "未找到相关段落", query: p.query, range: scoped ? { from: lo, to: hi } : undefined });
 					return JSON.stringify({
 						query: p.query,
-						totalChapters: total,
-						...(scoped ? { searchedRange: { from: lo, to: hi } } : {}),
+						totalChapters: res.total,
+						...(res.range ? { searchedRange: res.range } : {}),
 						locator: "chapter",
-						results,
+						results: res.hits.map((h) => ({
+							chapter: h.locator,
+							label: h.label ? `第 ${h.locator} 章 · ${h.label}` : `第 ${h.locator} 章`,
+							count: h.count,
+							snippets: h.snippets,
+						})),
 					});
 				}
-
-				// PDF: search over pages (within the requested range), return page numbers.
-				const byPage = new Map<number, { page: number; count: number; snippets: string[] }>();
-				for (let n = lo; n <= hi; n++) {
-					const text = await docText.getPage(n);
-					if (!text) continue;
-					const lower = text.toLowerCase();
-					const positions: number[] = [];
-					let from = 0;
-					for (;;) {
-						const idx = lower.indexOf(q, from);
-						if (idx === -1) break;
-						positions.push(idx);
-						from = idx + q.length;
-					}
-					if (!positions.length && terms.length > 1 && terms.every((t) => lower.includes(t))) {
-						positions.push(Math.max(0, lower.indexOf(terms[0])));
-					}
-					if (!positions.length) continue;
-					const h = byPage.get(n) ?? { page: n, count: 0, snippets: [] };
-					h.count += positions.length;
-					for (const idx of positions) {
-						if (h.snippets.length >= 3) break;
-						const snip = text.slice(Math.max(0, idx - 120), idx + 280).replace(/\s+/g, " ").trim();
-						if (snip && !h.snippets.includes(snip)) h.snippets.push(snip);
-					}
-					byPage.set(n, h);
-				}
-				const results = [...byPage.values()]
-					.sort((a, b) => b.count - a.count || a.page - b.page)
-					.slice(0, max);
-				if (!results.length) return JSON.stringify({ hint: "未找到相关段落", query: p.query, range: scoped ? { from: lo, to: hi } : undefined });
 				return JSON.stringify({
 					query: p.query,
-					totalPages: total,
-					...(scoped ? { searchedRange: { from: lo, to: hi } } : {}),
+					totalPages: res.total,
+					...(res.range ? { searchedRange: res.range } : {}),
 					locator: "page",
-					results,
+					results: res.hits.map((h) => ({ page: h.locator, count: h.count, snippets: h.snippets })),
 				});
 			},
 		},

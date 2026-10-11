@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ipcMain } from "electron";
+import { type DocSearchOptions, searchDocText } from "./doc-search.ts";
 import { getDocDir } from "./paths.ts";
 
 /**
@@ -371,6 +372,14 @@ export function registerDocTextIpc() {
 		const d = await getDocText(docId).catch(() => null);
 		if (!d) return { unit: "page" as const, numPages: 0, chapterLabels: [] as string[], toc: [] as { label: string; href: string }[] };
 		return { unit: d.unit, numPages: d.numPages, chapterLabels: d.chapterLabels ?? [], toc: d.toc };
+	});
+
+	// Full-text search over the current document (shared with the AI's
+	// search_document tool). Used by the sidebar's in-document search.
+	ipcMain.handle("doc:search", async (_e, docId: string, query: string, opts?: DocSearchOptions) => {
+		const d = await getDocText(docId).catch(() => null);
+		if (!d) return { unit: "page" as const, query: String(query ?? ""), total: 0, hits: [] };
+		return searchDocText(d, String(query ?? ""), opts ?? {});
 	});
 
 	ipcMain.handle("doc:path", (_e, docId: string) => {

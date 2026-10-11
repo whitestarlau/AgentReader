@@ -22,6 +22,8 @@ type Props = {
 	annotations?: Annotation[];
 	onAnnotationCreate?: (a: Annotation) => void;
 	onAnnotationDelete?: (id: string) => void;
+	/** Jump to a chapter (from in-document search etc.). Token forces a re-jump. */
+	goto?: { chapter: number; token: number } | null;
 };
 
 type SpreadMode = "single" | "double";
@@ -112,10 +114,12 @@ export function EpubViewer({
 	annotations = [],
 	onAnnotationCreate,
 	onAnnotationDelete,
+	goto,
 }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	const areaRef = useRef<HTMLDivElement>(null);
 	const renditionRef = useRef<Rendition | null>(null);
+	const bookRef = useRef<EpubBook | null>(null);
 	const [toc, setToc] = useState<{ label: string; href: string }[]>([]);
 	const [atStart, setAtStart] = useState(true);
 	const [atEnd, setAtEnd] = useState(false);
@@ -201,6 +205,7 @@ export function EpubViewer({
 				book = createBook(buffer);
 			await book.ready;
 			console.log("[epub] ready", book);
+			bookRef.current = book;
 			setToc((book.navigation as { toc: { label: string; href: string }[] })?.toc ?? []);
 			const rendition = book.renderTo(ref.current, { width: "100%", height: "100%", flow: "paginated", allowScriptedContent: true, minSpreadWidth: 0 });
 			// 显式应用当前分栏选择（minSpreadWidth=0 时不会因窗口宽度退化）
@@ -361,6 +366,18 @@ export function EpubViewer({
 			try { book?.destroy(); } catch {}
 		};
 	}, [docId]);
+
+	// Jump to a chapter requested from outside (in-document search results). The
+	// token lets the same chapter be re-targeted; display() by section href.
+	useEffect(() => {
+		if (!goto || !ready) return;
+		const rendition = renditionRef.current;
+		const book = bookRef.current;
+		if (!rendition || !book) return;
+		const section = book.spine.get(Math.max(0, goto.chapter - 1)) as { href?: string } | undefined;
+		if (!section?.href) return;
+		Promise.resolve(rendition.display(section.href)).catch(() => {});
+	}, [goto, ready]);
 
 	// Draw persisted highlights inside the book. epub.js keeps annotations per
 	// rendition and re-injects them whenever a view renders, so we only add the

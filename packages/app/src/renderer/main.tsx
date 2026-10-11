@@ -20,6 +20,7 @@ import type {
   AiConfig,
   CustomProvider,
   DocMeta,
+  DocSearchResult,
   PermissionDecision,
   PermissionRequest,
   SkillImportResult,
@@ -42,6 +43,7 @@ declare global {
       saveOcr: (id: string, page: number, text: string) => Promise<void>;
       getDocPath: (id: string) => Promise<string | null>;
       getDocOutline: (id: string) => Promise<{ unit: "page" | "chapter"; numPages: number; chapterLabels: string[]; toc: { label: string; href: string }[] }>;
+      searchDoc: (docId: string, query: string, opts?: { limit?: number; chapter?: number; from?: number; to?: number }) => Promise<DocSearchResult>;
       readFile: (path: string) => Promise<Uint8Array>;
       getReaderChapter: (id: string) => Promise<number | null>;
       setReaderChapter: (id: string, chapter: number) => Promise<void>;
@@ -107,6 +109,7 @@ function App() {
   const [ai, setAi] = useState<AiConfig | null>(null);
   const [anns, setAnns] = useState<Annotation[]>([]);
   const [page, setPage] = useState(1);
+  const [gotoChapter, setGotoChapter] = useState<{ chapter: number; token: number } | null>(null);
   const [total, setTotal] = useState(0);
   const [zoom, setZoom] = useState(1.2);
   const [ocrJob, setOcrJob] = useState<{ running: boolean; page: number; total: number; progress: number } | null>(null);
@@ -256,6 +259,12 @@ function App() {
     }
   };
 
+  // Jump to a page (PDF) or chapter (EPUB) from annotations or search results.
+  const jumpToLocator = (n: number) => {
+    if (isEpub) setGotoChapter({ chapter: n, token: Date.now() });
+    else setPage(n);
+  };
+
   const openDocList = openDocs
     .map((id) => docs.find((d) => d.id === id))
     .filter((d): d is DocMeta => Boolean(d));
@@ -295,7 +304,7 @@ function App() {
               onImport={importDoc}
               onOpenDoc={openDoc}
               onRemoveDoc={removeDoc}
-              onJumpToPage={setPage}
+              onJumpToPage={jumpToLocator}
               onDeleteAnnotation={deleteAnn}
               onClearAnnotations={() => { if (confirm("清空当前文档的所有标注？")) persist([]); }}
             />
@@ -327,6 +336,7 @@ function App() {
                 onAnnotationDelete={deleteAnn}
                 onPageChange={setPage}
                 onTotalChange={setTotal}
+                goto={gotoChapter}
                 onTextSelected={(t, p) => {
                   setSelection({ text: t, page: p, kind: "highlight" });
                   setChatOpen(true);
