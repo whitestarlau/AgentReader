@@ -1,5 +1,25 @@
 # 进度记录
 
+## 2026-10-11 修复 EPUB 单栏在开合侧栏后又变双栏 / 内容被遮挡
+
+- [x] 反馈：选「单栏」后打开左/右侧栏，阅读区变窄却仍像双栏，且右侧被裁掉
+- [x] 根因：epub.js 的 `Rendition.spread()` 只改「当前 layout 的 `_spread` 标志」，
+  而 layout 自身捕获的 `settings.spread`（来自 `globalLayoutProperties`，渲染时确定）
+  没有被更新。容器宽度变化会触发 view 的 AXIS 事件 → `manager.updateAxis()` →
+  `layout.spread(layout.settings.spread)` 把 `_spread` 重新设回原始的 `"auto"`；
+  叠加我们之前 `minSpreadWidth=0`，`calculate()` 恒判 `divisor=2` → 单栏变双栏、
+  右半被容器裁掉
+- [x] 新增 `setSpread(rendition, mode)`：同时写入 `globalLayoutProperties` 的
+  `spread`/`minSpreadWidth`（单栏设 `minSpreadWidth=+∞`，即使回落到 `auto` 也只能单栏），
+  再调 `rendition.spread()`；`applySpread`/初始化/就绪确认/ResizeObserver 全部改用它
+- [x] ResizeObserver 重排前再兜底 `setSpread` 一次
+- [x] 重排改为按「章节 href + 偏移」重新 `applyLocation`（不再用 `rendition.resize()`
+  的 CFI 重定位），并同时观察 `.editor-area`，以覆盖右侧 chat 栏开合等容器尺寸变化
+- [x] 新增 `layoutSignal` 属性（`sidebarOpen:chatOpen:sidebarWidth:chatWidth`）：
+  chrome 变化时显式触发 `reflow`，不再依赖 ResizeObserver 是否命中，保证左右
+  侧栏/chat 任意开合都重排
+- [x] 验证：typecheck 与 build 通过（逻辑上单栏在任意宽度变化后恒为 1 栏）
+
 ## 2026-10-11 文档内搜索：把 AI 的全文检索开放给用户
 
 - [x] 反馈：左侧「搜索」只能按标题过滤文档；文档内全文检索此前只作为 AI 工具

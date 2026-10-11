@@ -337,6 +337,7 @@ function App() {
                 onPageChange={setPage}
                 onTotalChange={setTotal}
                 goto={gotoChapter}
+                layoutSignal={`${sidebarOpen}:${chatOpen}:${sidebarWidth}:${chatWidth}`}
                 onTextSelected={(t, p) => {
                   setSelection({ text: t, page: p, kind: "highlight" });
                   setChatOpen(true);

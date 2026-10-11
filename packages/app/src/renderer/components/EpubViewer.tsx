@@ -24,9 +24,34 @@ type Props = {
 	onAnnotationDelete?: (id: string) => void;
 	/** Jump to a chapter (from in-document search etc.). Token forces a re-jump. */
 	goto?: { chapter: number; token: number } | null;
+	/** Changes when surrounding chrome (sidebars/chat) toggles or resizes. */
+	layoutSignal?: string;
 };
 
 type SpreadMode = "single" | "double";
+
+/**
+ * Apply the single/double column choice and persist it into the layout's
+ * captured properties too. epub.js's `Rendition.spread()` only toggles the live
+ * layout flag, while internal axis/flow updates later re-apply
+ * `layout.settings.spread` (captured from `globalLayoutProperties` at render
+ * time). Leaving that stale means a container resize re-enables spreads and
+ * 单栏 snaps back to two columns. We also bump `minSpreadWidth` to +∞ for single
+ * so even an "auto" re-apply can never produce two columns.
+ */
+function setSpread(rendition: Rendition, mode: SpreadMode) {
+	const wantDouble = mode === "double";
+	const glp = (
+		rendition as unknown as {
+			settings?: { globalLayoutProperties?: { spread?: string; minSpreadWidth?: number } };
+		}
+	).settings?.globalLayoutProperties;
+	if (glp) {
+		glp.spread = wantDouble ? "auto" : "none";
+		glp.minSpreadWidth = wantDouble ? 0 : Number.POSITIVE_INFINITY;
+	}
+	rendition.spread(wantDouble ? "both" : "none", wantDouble ? 0 : Number.POSITIVE_INFINITY);
+}
 
 // epubjs 的类型是 UMD：`import ePub from "epubjs"` 在 Node16 解析下拿到的是模块命名空间，
 // 而不是可调用的默认导出。这里从模块声明的 `default` 导出里恢复真实的工厂/实例类型。
@@ -115,11 +140,15 @@ export function EpubViewer({
 	onAnnotationCreate,
 	onAnnotationDelete,
 	goto,
+	layoutSignal,
 }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	const areaRef = useRef<HTMLDivElement>(null);
 	const renditionRef = useRef<Rendition | null>(null);
 	const bookRef = useRef<EpubBook | null>(null);
+	// Reflow entry point installed by the load effect; lets the layout-signal
+	// effect (and ResizeObserver) share one implementation.
+	const reflowRef = useRef<() => void>(() => {});
 	const [toc, setToc] = useState<{ label: string; href: string }[]>([]);
 	const [atStart, setAtStart] = useState(true);
 	const [atEnd, setAtEnd] = useState(false);
@@ -163,7 +192,7 @@ export function EpubViewer({
 		const saved = captureLocation(rendition);
 		// "both" + minSpreadWidth=0：显式按用户选择生效，不会再出现第三栏。
 		// spread() 自身会触发 updateLayout() 重排列，不需要再 resize()。
-		rendition.spread(mode === "double" ? "both" : "none", 0);
+		setSpread(rendition, mode);
 		if (!saved) return;
 		void (async () => {
 			// 等重排完成后再按新页宽把偏移对齐到页起点。
@@ -209,7 +238,7 @@ export function EpubViewer({
 			setToc((book.navigation as { toc: { label: string; href: string }[] })?.toc ?? []);
 			const rendition = book.renderTo(ref.current, { width: "100%", height: "100%", flow: "paginated", allowScriptedContent: true, minSpreadWidth: 0 });
 			// 显式应用当前分栏选择（minSpreadWidth=0 时不会因窗口宽度退化）
-			rendition.spread(spreadModeRef.current === "double" ? "both" : "none", 0);
+			setSpread(rendition, spreadModeRef.current);
 			renditionRef.current = rendition as unknown as typeof renditionRef.current;
 			rendition.themes.default({
 				body: { "font-family": "Inter, sans-serif", "line-height": "1.7", padding: "24px", "background-color": "#fff", "max-width": "100%", "word-wrap": "break-word", "overflow-wrap": "break-word" },
@@ -315,22 +344,29 @@ export function EpubViewer({
 			// 另外 epub.js 的 resize() 会用 currentLocation().start.cfi 重定位，
 			// 而该 CFI 在双栏下会跳到更早一页，所以重排后按偏移量校正回来。
 			if (!disposed && ref.current) {
+				// Reflow on any container size change (sidebar/chat toggle, splitter
+				// drag, window resize). Re-assert the column mode, then re-render the
+				// current section at the new width via href (not CFI, which drifts),
+				// restoring the scroll offset afterwards.
+				const reflow = () => {
+					if (disposed) return;
+					const at = captureLocation(rendition);
+					try { setSpread(rendition, spreadModeRef.current); } catch {}
+					if (at) {
+						void applyLocation(rendition, at);
+					} else {
+						try { (rendition as unknown as { resize: () => void }).resize(); } catch {}
+					}
+				};
+				reflowRef.current = reflow;
 				ro = new ResizeObserver(() => {
 					if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
-					resizeTimer = window.setTimeout(() => {
-						const at = captureLocation(rendition);
-						try { (rendition as unknown as { resize: () => void }).resize(); } catch {}
-						if (!at) return;
-						window.setTimeout(() => {
-							const manager = getManager(rendition);
-							if (manager?.scrollTo && manager.container) {
-								const maxOffset = Math.max(0, manager.container.scrollWidth - manager.container.clientWidth);
-								manager.scrollTo(Math.min(at.offset, maxOffset), 0, true);
-							}
-						}, 60);
-					}, 120);
+					resizeTimer = window.setTimeout(reflow, 120);
 				});
 				ro.observe(ref.current);
+				// Also watch the editor area: some toggles change it a frame before
+				// the inner stage reports its new size.
+				if (areaRef.current) ro.observe(areaRef.current);
 			}
 			// 少数书的元数据会把 spread 强制为 none，这里在监听就绪后按用户选择再确认一次。
 			// 同样不用 clear()+display(cfi)（会因 CFI 偏差跳页），改为重排后按偏移恢复。
@@ -339,7 +375,7 @@ export function EpubViewer({
 				const divisor = (rendition as unknown as { manager?: { layout?: { divisor?: number } } }).manager?.layout?.divisor;
 				if ((wantDouble && divisor !== 2) || (!wantDouble && divisor !== 1)) {
 					const at = captureLocation(rendition);
-					rendition.spread(wantDouble ? "both" : "none", 0);
+					setSpread(rendition, wantDouble ? "double" : "single");
 					if (at) {
 						await new Promise((r) => setTimeout(r, 250));
 						const manager = getManager(rendition);
@@ -359,6 +395,7 @@ export function EpubViewer({
 		})();
 		return () => {
 			disposed = true;
+			reflowRef.current = () => {};
 			setReady(false);
 			if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
 			ro?.disconnect();
@@ -366,6 +403,15 @@ export function EpubViewer({
 			try { book?.destroy(); } catch {}
 		};
 	}, [docId]);
+
+	// Reflow when the surrounding chrome changes (left sidebar / right chat panel
+	// toggled or resized). This does not depend on the ResizeObserver firing, so
+	// every toggle is guaranteed to re-layout the reader at the new width.
+	useEffect(() => {
+		if (!layoutSignal) return;
+		const t = window.setTimeout(() => reflowRef.current(), 140);
+		return () => window.clearTimeout(t);
+	}, [layoutSignal]);
 
 	// Jump to a chapter requested from outside (in-document search results). The
 	// token lets the same chapter be re-targeted; display() by section href.
