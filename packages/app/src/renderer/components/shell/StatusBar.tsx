@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { MOD_KEY } from "../../platform.ts";
 import type { AiModelOption, DocMeta } from "../../types.ts";
 import { formatTokens } from "../../tokens.ts";
 import { Icon } from "../Icons.tsx";
@@ -133,7 +134,7 @@ export function StatusBar({
 				className="status-item clickable"
 				style={{ background: "none", border: "none", color: "inherit", font: "inherit", borderRadius: 0 }}
 				onClick={onToggleChat}
-				title="切换 AI 对话面板 (⌘J)"
+				title={`切换 AI 对话面板 (${MOD_KEY}J)`}
 			>
 				<Icon name="chat" size={12} />
 				{chatOpen ? "对话已开" : "对话"}

@@ -40,6 +40,10 @@ npm run dev:web --workspace=@agentreader/app
 
 设置 API Key：启动后点击侧边栏 `设置`，填 `Base URL / Model / API Key`。
 
+> macOS 提示：`npm install` / `npm run dev` 会自动执行 `packages/app/scripts/patch-dev-app-name.mjs`，
+> 把 `node_modules` 里 Electron.app 的名称补丁为 AgentReader 并 ad-hoc 重签名（macOS 菜单栏/
+> Dock 名称取自 .app 包的 CFBundleName，`app.setName` 改不了）。如需还原：重装 electron 即可。
+
 ## 打包
 
 在 `packages/app` 下构建 macOS 应用（`.app`）或安装包（`.dmg`）：
@@ -52,11 +56,19 @@ npm run package:dir --workspace=@agentreader/app   # -> out/mac-arm64/AgentReade
 npm run package --workspace=@agentreader/app       # -> out/AgentReader-<version>-arm64.dmg
 ```
 
-产物输出到仓库根的 `out/` 目录。当前仅支持 **arm64** 且 **未签名**（`packages/app/electron-builder.json` 中 `identity: null`）。首次启动时 macOS Gatekeeper 可能拦截未签名应用 —— 右键 → 打开，或执行：
+产物输出到仓库根的 `out/` 目录。当前 macOS 仅支持 **arm64** 且 **未签名**（`packages/app/electron-builder.json` 中 `identity: null`）。首次启动时 macOS Gatekeeper 可能拦截未签名应用 —— 右键 → 打开，或执行：
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/AgentReader.app
 ```
+
+Windows 端已预留打包配置（NSIS 安装包，x64，`build/icon.png` 自动转 ico）：
+
+```bash
+npm run package --workspace=@agentreader/app -- --win   # -> out/AgentReader-Setup-<version>.exe
+```
+
+未签名安装包在 Windows 上会触发 SmartScreen 提示（「更多信息 → 仍要运行」）；正式发布前需补代码签名证书。Windows 的菜单、快捷键提示（Ctrl+…）与单实例行为已适配，但尚未在真机验证。
 
 ## 文档
 

@@ -1,15 +1,16 @@
-import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow } from "electron";
+import { registerAiIpc } from "./ai.ts";
 import { setProviderKey } from "./ai-auth.ts";
 import { ensureConfig } from "./ai-config.ts";
-import { registerAiIpc } from "./ai.ts";
 import { registerChatIpc } from "./chat.ts";
 import { registerConversationIpc } from "./conversations.ts";
 import { registerDocStateIpc } from "./doc-state.ts";
 import { registerDocTextIpc } from "./doc-text.ts";
+import { applyAppIcon, ICON_PATH, setupAboutPanel, setupAppIdentity } from "./identity.ts";
 import { registerLibraryIpc } from "./library.ts";
+import { installAppMenu } from "./menu.ts";
 import { registerPermissionIpc } from "./permissions.ts";
 import { readSettings } from "./settings.ts";
 import { registerSkillsIpc } from "./skills-ipc.ts";
@@ -21,17 +22,8 @@ import { registerSkillsIpc } from "./skills-ipc.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// App icon. `dist-electron/main.js` sits next to the source at `src/main/`, and the
-// icon lives at `build/icon.png` relative to the package root in both dev and packaged
-// layouts. On macOS the window icon is ignored (the .app bundle icon is used), so for
-// dev we also set the Dock icon explicitly — otherwise it shows the Electron default.
-const ICON_PATH = join(__dirname, "../build/icon.png");
-
-function applyAppIcon() {
-	if (process.platform === "darwin") {
-		if (!app.isPackaged && existsSync(ICON_PATH)) app.dock?.setIcon(ICON_PATH);
-	}
-}
+// 统一应用名并迁移 userData（决定 macOS 菜单名 / userData 路径），必须最先执行。
+setupAppIdentity();
 
 registerLibraryIpc();
 registerDocTextIpc();
@@ -46,6 +38,7 @@ function createWindow() {
 	const win = new BrowserWindow({
 		width: 1200,
 		height: 800,
+		title: "AgentReader",
 		icon: ICON_PATH,
 		webPreferences: {
 			preload: join(__dirname, "preload.js"),
@@ -69,15 +62,36 @@ function createWindow() {
 	});
 }
 
-app.whenReady().then(() => {
-	applyAppIcon();
-	// Seed models.json on first run, migrating the legacy single-provider settings
-	// (and moving its encrypted key into the auth store) when present.
-	const legacy = readSettings();
-	const created = ensureConfig({ baseUrl: legacy.baseUrl, model: legacy.model });
-	if (created && legacy.apiKey) setProviderKey("legacy", legacy.apiKey);
-	createWindow();
-});
-app.on("window-all-closed", () => {
-	if (process.platform !== "darwin") app.quit();
-});
+// 单实例锁（仅打包版）：Windows 下重复双击快捷方式不应开出第二个进程——两个实例
+// 会同时读写同一份书库/设置。dev 下 vite 重启存在新旧进程交接窗口，不加锁以免误退。
+if (app.isPackaged && !app.requestSingleInstanceLock()) {
+	app.quit();
+} else {
+	app.on("second-instance", () => {
+		const win = BrowserWindow.getAllWindows()[0];
+		if (!win) return;
+		if (win.isMinimized()) win.restore();
+		win.focus();
+	});
+
+	app.whenReady().then(() => {
+		applyAppIcon();
+		setupAboutPanel();
+		installAppMenu();
+		// Seed models.json on first run, migrating the legacy single-provider settings
+		// (and moving its encrypted key into the auth store) when present.
+		const legacy = readSettings();
+		const created = ensureConfig({ baseUrl: legacy.baseUrl, model: legacy.model });
+		if (created && legacy.apiKey) setProviderKey("legacy", legacy.apiKey);
+		createWindow();
+	});
+
+	app.on("window-all-closed", () => {
+		if (process.platform !== "darwin") app.quit();
+	});
+
+	// macOS：关闭窗口后点击 Dock 图标应重新打开窗口，否则应用看起来「卡死」。
+	app.on("activate", () => {
+		if (BrowserWindow.getAllWindows().length === 0) createWindow();
+	});
+}

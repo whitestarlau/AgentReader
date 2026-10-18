@@ -1,4 +1,5 @@
 import { Icon } from "../Icons.tsx";
+import { MOD_KEY } from "../../platform.ts";
 import type { ActivityView } from "../../types.ts";
 
 type Props = {
@@ -36,12 +37,12 @@ export function ActivityBar({
 	return (
 		<nav className="activitybar" aria-label="活动栏">
 			<div className="activitybar-top">
-				{item("library", "图书馆 (⌘B)", sidebarOpen && view === "explorer", () => onSelectView("explorer"))}
+				{item("library", `图书馆 (${MOD_KEY}B)`, sidebarOpen && view === "explorer", () => onSelectView("explorer"))}
 				{item("search", "搜索文档", sidebarOpen && view === "search", () => onSelectView("search"))}
 				{item("annotations", "标注", sidebarOpen && view === "annotations", () => onSelectView("annotations"), annotationCount)}
 			</div>
 			<div className="activitybar-bottom">
-				{item("chat", "AI 对话 (⌘J)", secondaryOpen, onToggleChat)}
+				{item("chat", `AI 对话 (${MOD_KEY}J)`, secondaryOpen, onToggleChat)}
 				{item("settings", "设置", false, onOpenSettings)}
 			</div>
 		</nav>

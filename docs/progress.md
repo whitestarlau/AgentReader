@@ -1,5 +1,39 @@
 # 进度记录
 
+## 2026-10-18 菜单栏修复 + Windows 端适配准备
+
+- [x] 反馈：macOS 菜单栏完全不对。实测（System Events 读取）：菜单是 Electron
+  **默认菜单** —— 应用名显示包名 `@agentreader/app`、条目全英文（File/Edit/View/
+  Window/Help）、帮助指向 electronjs.org、视图里挂着开发者工具。根因：主进程从未
+  调用 `Menu.setApplicationMenu()`，且从未设置 `app.name`
+- [x] 新增 `main/identity.ts`：`app.setName("AgentReader")`、Windows AppUserModelID
+  (`com.agentreader.app`)、关于面板内容、图标路径（统一为 `build/icon.png`）。
+  同时迁移 userData：`{appData}/@agentreader/app` → `{appData}/AgentReader`
+  （同盘 rename，失败则沿用旧目录），已有书库/设置/密钥无感迁移（实测 72MB、3 本书）
+- [x] 新增 `main/menu.ts`：显式构建中文菜单并区分平台 —— macOS 有应用菜单
+  （关于/设置/服务/隐藏/退出），Windows 把设置/退出放「文件」、关于放「帮助」，
+  不出现 services/hideOthers/front 等 macOS 专有项；开发者工具只在 dev 暴露；
+  帮助菜单提供「打开数据目录」
+- [x] 菜单动作打通渲染层：`app:menu` 事件（preload `onMenuCommand`）驱动导入
+  (⌘/Ctrl+O)、新建对话 (⌘/Ctrl+N)、设置…(⌘/Ctrl+,)、侧栏 (⌘/Ctrl+B)、
+  AI 对话 (⌘/Ctrl+J)；渲染层用 ref 保存最新处理函数，避免闭包读到旧状态
+- [x] Windows 适配：electron-builder 增加 win/nsis 配置（x64 安装包，icon 由
+  1024px PNG 自动转 ico）；`build/icon.png` 加入打包 files（此前未打进 asar，
+  Windows/Linux 窗口图标会缺失）；打包版加单实例锁（dev 不加，避免 vite 重启误退）；
+  `window-all-closed` 退出与 `activate` 重开窗口补齐
+- [x] 渲染层平台化：新增 `renderer/platform.ts`（⌘/Ctrl、⌥/Alt），TitleBar/
+  StatusBar/ActivityBar/Welcome 的快捷键提示不再硬编码 ⌘；`selection.ts` 复用
+- [x] dev 菜单栏应用名也改为 AgentReader：macOS 的名称取自 .app 包的 CFBundleName
+  （实测 app.setName 与菜单首项 label 均被忽略），dev 跑在 Electron.app 里必然显示
+  "Electron"。新增 `scripts/patch-dev-app-name.mjs`：把 node_modules 里 Electron.app 的
+  CFBundleName/CFBundleDisplayName 改为 AgentReader 并 ad-hoc 重签名（不改 plist 会破坏
+  签名，Apple Silicon 上无法启动），幂等，挂在 postinstall + predev 上，重装/升级
+  electron 后自动重打；打包版由 electron-builder 写 productName，不受影响
+- [x] 验证：typecheck 与 build 通过；dev 与打包版菜单经 System Events 逐一核对
+  （dev 与打包版首项均为「AgentReader」、无开发者工具项）；模拟 `process.platform=win32`
+  加载构建产物核对 Windows 菜单结构；CDP 端到端验证菜单点击 → 主进程 → 渲染层
+  （切侧栏/新建对话/打开设置均生效）；打包产物 asar 内含 `build/icon.png`
+
 ## 2026-10-18 对话：思考/工具调用按回合合并折叠（Codex 风格，两级折叠）
 
 - [x] 反馈：右侧 chat 里一个回合的思考与工具调用逐条平铺（思考、read_chapter、思考、

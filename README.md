@@ -40,6 +40,8 @@ npm run dev:web --workspace=@agentreader/app
 
 Set the API key: after launch, open `Settings` in the sidebar and fill in `Base URL / Model / API Key`.
 
+> macOS note: `npm install` / `npm run dev` runs `packages/app/scripts/patch-dev-app-name.mjs`, which renames the dev `Electron.app` inside `node_modules` to AgentReader and re-signs it ad-hoc (the macOS menu bar / Dock name comes from the bundle's `CFBundleName`; `app.setName` cannot change it). To revert, reinstall electron.
+
 ## Packaging
 
 Build a macOS app (`.app`) or installer (`.dmg`) from `packages/app`:
@@ -52,11 +54,19 @@ npm run package:dir --workspace=@agentreader/app   # -> out/mac-arm64/AgentReade
 npm run package --workspace=@agentreader/app       # -> out/AgentReader-<version>-arm64.dmg
 ```
 
-Artifacts land in the repo-root `out/` directory. Packaging is currently **arm64 only** and **unsigned** (`identity: null` in `packages/app/electron-builder.json`). On first launch macOS Gatekeeper may block the unsigned app — right-click → Open, or:
+Artifacts land in the repo-root `out/` directory. macOS packaging is currently **arm64 only** and **unsigned** (`identity: null` in `packages/app/electron-builder.json`). On first launch macOS Gatekeeper may block the unsigned app — right-click → Open, or:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/AgentReader.app
 ```
+
+Windows packaging is configured (NSIS installer, x64, `build/icon.png` auto-converted to ico):
+
+```bash
+npm run package --workspace=@agentreader/app -- --win   # -> out/AgentReader-Setup-<version>.exe
+```
+
+The unsigned installer triggers SmartScreen (More info → Run anyway); a code-signing certificate is needed before release. Menus, shortcut hints (Ctrl+…) and single-instance behavior are wired for Windows but not yet verified on a real machine.
 
 ## Docs
 

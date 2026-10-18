@@ -124,4 +124,9 @@ contextBridge.exposeInMainWorld("api", {
 	},
 	replyPermission: (id: string, decision: string) =>
 		ipcRenderer.invoke("permission:reply", id, decision),
+	onMenuCommand: (cb: (cmd: string) => void) => {
+		const h = (_e: unknown, cmd: string) => cb(cmd);
+		ipcRenderer.on("app:menu", h);
+		return () => ipcRenderer.removeListener("app:menu", h);
+	},
 });

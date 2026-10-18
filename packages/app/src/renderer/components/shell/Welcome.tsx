@@ -1,4 +1,5 @@
 import { Icon } from "../Icons.tsx";
+import { MOD_KEY } from "../../platform.ts";
 import type { DocMeta } from "../../types.ts";
 
 type Props = {
@@ -39,7 +40,7 @@ export function Welcome({ docs, onOpenDoc, onImport, onOpenSettings }: Props) {
 						<Icon name="settings" size={15} />
 						<span>配置 AI 提供商</span>
 						<span className="kbd-group">
-							<span className="kbd">⌘,</span>
+							<span className="kbd">{MOD_KEY},</span>
 						</span>
 					</div>
 				</div>

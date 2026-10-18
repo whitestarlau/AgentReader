@@ -1,9 +1,7 @@
-const isMac =
-	typeof navigator !== "undefined" &&
-	/Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+import { ALT_KEY } from "./platform.ts";
 
 /** Modifier used to start a rectangle selection: ⌥ on macOS, Alt elsewhere. */
-export const MODIFIER_LABEL = isMac ? "⌥" : "Alt";
+export const MODIFIER_LABEL = ALT_KEY;
 
 export type SelectionKind = "highlight" | "rect" | "ocr";
 

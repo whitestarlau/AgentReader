@@ -23,7 +23,7 @@ type ChatRow = { id?: string; role?: string; content?: string; timeline?: Timeli
 type Conv = { id: string; title: string };
 /** A citation captured from the viewer, shown above the composer before send. */
 type Quote = { text: string; page: number; kind: Selection["kind"] };
-type Props = { selection: Selection | null; docId: string | null; page: number; isEpub?: boolean; annotations?: Annotation[]; contextWindow?: number };
+type Props = { selection: Selection | null; docId: string | null; page: number; isEpub?: boolean; annotations?: Annotation[]; contextWindow?: number; newChatToken?: number };
 /** Real or estimated context usage for the current conversation. */
 type ContextUsage = { used: number; max: number; estimated: boolean };
 
@@ -249,7 +249,7 @@ function TimelineGroup({ items, live }: { items: TimelineItem[]; live: boolean }
 	);
 }
 
-export function ChatPanel({ selection, docId, page, isEpub, annotations = [], contextWindow }: Props) {
+export function ChatPanel({ selection, docId, page, isEpub, annotations = [], contextWindow, newChatToken = 0 }: Props) {
 	const [convs, setConvs] = useState<Conv[]>([]);
 	const [convId, setConvId] = useState<string | null>(null);
 	const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -573,6 +573,11 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 		setConvId(c.id);
 		setMsgs([]);
 	};
+
+	// 菜单「新建对话」(⌘N / Ctrl+N) 信号。
+	useEffect(() => {
+		if (newChatToken) void createNew();
+	}, [newChatToken]);
 
 	const del = async (id: string) => {
 		if (!docId) return;

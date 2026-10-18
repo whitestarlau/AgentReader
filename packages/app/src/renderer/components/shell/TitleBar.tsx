@@ -1,4 +1,5 @@
 import { Icon } from "../Icons.tsx";
+import { MOD_KEY } from "../../platform.ts";
 import type { DocMeta } from "../../types.ts";
 
 type Props = {
@@ -17,7 +18,7 @@ export function TitleBar({ doc, leftOpen, chatOpen, onToggleLeft, onToggleChat, 
 				type="button"
 				className={`icon-btn${leftOpen ? " active" : ""}`}
 				onClick={onToggleLeft}
-				title="切换主侧栏 (⌘B)"
+				title={`切换主侧栏 (${MOD_KEY}B)`}
 			>
 				<Icon name="sidebarLeft" size={16} />
 			</button>
@@ -42,7 +43,7 @@ export function TitleBar({ doc, leftOpen, chatOpen, onToggleLeft, onToggleChat, 
 				type="button"
 				className={`icon-btn${chatOpen ? " active" : ""}`}
 				onClick={onToggleChat}
-				title="切换 AI 对话 (⌘J)"
+				title={`切换 AI 对话 (${MOD_KEY}J)`}
 			>
 				<Icon name="sidebarRight" size={16} />
 			</button>

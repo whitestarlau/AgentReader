@@ -92,6 +92,7 @@ declare global {
       onChatUsage: (cb: (d: { used: number; max: number; model: string; estimated: boolean }) => void) => () => void;
       onToolCall: (cb: (d: unknown) => void) => () => void;
       onToolResult: (cb: (d: unknown) => void) => () => void;
+      onMenuCommand: (cb: (cmd: string) => void) => () => void;
     };
   }
 }
@@ -115,6 +116,8 @@ function App() {
   const [ocrJob, setOcrJob] = useState<{ running: boolean; page: number; total: number; progress: number } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
+  // 菜单「新建对话」信号：递增 token，ChatPanel 监听后新建。
+  const [newChatToken, setNewChatToken] = useState(0);
 
   // shell layout state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -215,6 +218,20 @@ function App() {
       if (saved) setPage(saved);
     }
   };
+
+  // 菜单命令（主进程 app:menu 事件）。用 ref 保存最新处理函数，订阅只建立一次，
+  // 避免闭包里读到旧的 docs/selected。
+  const menuHandlerRef = useRef<(cmd: string) => void>(() => {});
+  useEffect(() => {
+    menuHandlerRef.current = (cmd: string) => {
+      if (cmd === "settings") setShowSettings(true);
+      else if (cmd === "import") void importDoc();
+      else if (cmd === "toggle-sidebar") setSidebarOpen((v) => !v);
+      else if (cmd === "toggle-chat") setChatOpen((v) => !v);
+      else if (cmd === "new-chat") setNewChatToken(Date.now());
+    };
+  });
+  useEffect(() => window.api.onMenuCommand((cmd) => menuHandlerRef.current(cmd)), []);
 
   const closeTab = (id: string) => {
     const idx = openDocs.indexOf(id);
@@ -385,7 +402,7 @@ function App() {
                   <Icon name="close" size={14} />
                 </button>
               </div>
-              <ChatPanel selection={selection} docId={selected} page={page} isEpub={isEpub} annotations={anns} contextWindow={ai?.models.find((m) => m.ref === ai.defaultModel)?.contextWindow} />
+              <ChatPanel selection={selection} docId={selected} page={page} isEpub={isEpub} annotations={anns} contextWindow={ai?.models.find((m) => m.ref === ai.defaultModel)?.contextWindow} newChatToken={newChatToken} />
             </aside>
           </>
         )}

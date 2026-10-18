@@ -5,13 +5,23 @@
 	"directories": {
 		"output": "../../out"
 	},
-	"files": ["dist/**", "dist-electron/**", "package.json"],
+	"files": ["dist/**", "dist-electron/**", "build/icon.png", "package.json"],
 	"asar": true,
 	"mac": {
 		"target": [{ "target": "dmg", "arch": ["arm64"] }],
 		"category": "public.app-category.productivity",
 		"icon": "build/icon.icns",
 		"identity": null
+	},
+	"win": {
+		"target": [{ "target": "nsis", "arch": ["x64"] }],
+		"icon": "build/icon.png"
+	},
+	"nsis": {
+		"oneClick": false,
+		"perMachine": false,
+		"allowToChangeInstallationDirectory": true,
+		"artifactName": "${productName}-Setup-${version}.${ext}"
 	},
 	"dmg": {
 		"artifactName": "${productName}-${version}-${arch}.${ext}"

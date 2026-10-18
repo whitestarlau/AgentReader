@@ -1,20 +1,29 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { dialog, ipcMain } from "electron";
 import { clearChapterCache } from "./doc-state.ts";
 import { clearDocCaches } from "./doc-text.ts";
-import { LIBRARY_ROOT, ensureLibrary, getDocDir } from "./paths.ts";
+import { ensureLibrary, getDocDir, libraryRoot } from "./paths.ts";
 
 /** Import-based library management under `library/{hash}/`. */
 
 export function registerLibraryIpc() {
 	ipcMain.handle("library:list", () => {
 		ensureLibrary();
-		if (!existsSync(LIBRARY_ROOT)) return [];
-		return readdirSync(LIBRARY_ROOT)
-			.filter((id) => existsSync(join(LIBRARY_ROOT, id, "doc.json")))
-			.map((id) => JSON.parse(readFileSync(join(LIBRARY_ROOT, id, "doc.json"), "utf-8")));
+		const root = libraryRoot();
+		if (!existsSync(root)) return [];
+		return readdirSync(root)
+			.filter((id) => existsSync(join(root, id, "doc.json")))
+			.map((id) => JSON.parse(readFileSync(join(root, id, "doc.json"), "utf-8")));
 	});
 
 	ipcMain.handle("library:import", async () => {
