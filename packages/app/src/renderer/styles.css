@@ -1348,12 +1348,66 @@ textarea::placeholder {
 	font-size: 12px;
 }
 
-/* reasoning / tool-call timeline */
-.timeline {
+/* reasoning / tool-call work log: one collapsed line per assistant turn */
+.timeline-group {
+	margin-bottom: 7px;
+}
+.disclosure-head .disclosure-title {
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
+.disclosure-head .disclosure-meta {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.timeline-group > .disclosure-head .disclosure-meta {
+	max-width: none;
+	text-align: right;
+}
+.timeline-group.active > .disclosure-head .disclosure-title::after {
+	content: "";
+	display: inline-block;
+	width: 5px;
+	height: 5px;
+	margin-left: 6px;
+	border-radius: 50%;
+	vertical-align: middle;
+	background: #e0a458;
+	animation: timeline-pulse 1s ease-in-out infinite;
+}
+@keyframes timeline-pulse {
+	0%,
+	100% {
+		opacity: 0.25;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+.timeline-steps {
 	display: flex;
 	flex-direction: column;
-	gap: 5px;
-	margin-bottom: 7px;
+	gap: 3px;
+	margin-left: 5px;
+	padding-left: 9px;
+	border-left: 2px solid var(--vscode-border-soft);
+}
+/* second level: steps inside the expanded group are borderless disclosures */
+.disclosure.sub {
+	border-color: transparent;
+	background: transparent;
+}
+.disclosure.sub > .disclosure-head {
+	padding: 3px 6px;
+	border-radius: 4px;
+}
+.disclosure.sub > .disclosure-body {
+	border-top: none;
+	padding: 2px 6px 7px 10px;
+}
+.timeline-step-state {
+	font-size: 11px;
+	color: #e0a458;
 }
 .disclosure {
 	border: 1px solid var(--vscode-border-soft);

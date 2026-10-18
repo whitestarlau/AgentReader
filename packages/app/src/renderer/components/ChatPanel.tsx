@@ -132,30 +132,119 @@ function UserMessage({ content }: { content: string }) {
 	);
 }
 
-/** One collapsible block. Collapsed by default; opens only on explicit click. */
+/** Live label for the work log while the turn is streaming. */
+function liveLabel(items: TimelineItem[]): string {
+	const last = items[items.length - 1];
+	if (last?.kind === "tool") return last.pending ? `正在调用 ${last.name}…` : "正在生成回答…";
+	return "正在思考…";
+}
+
+/** Summary of a finished turn's work log, e.g. "思考 2 段 · 工具 2 次". */
+function timelineSummary(items: TimelineItem[]): string {
+	const toolCount = items.filter((it) => it.kind === "tool").length;
+	const reasoningCount = items.length - toolCount;
+	const parts: string[] = [];
+	if (reasoningCount > 0) parts.push(reasoningCount > 1 ? `思考 ${reasoningCount} 段` : "思考");
+	if (toolCount > 0) parts.push(`工具 ${toolCount} 次`);
+	return parts.join(" · ");
+}
+
+/**
+ * One step inside the work log (a reasoning burst or a tool call). Collapsed by
+ * default, so expanding the group first shows a compact overview of the steps.
+ */
+function TimelineStep({ item }: { item: TimelineItem }) {
+	if (item.kind === "reasoning") {
+		const preview = item.content.replace(/\s+/g, " ").trim().slice(0, 60);
+		return (
+			<Disclosure icon="sparkle" title="思考" preview={preview}>
+				<div className="reasoning-text">{item.content || "…"}</div>
+			</Disclosure>
+		);
+	}
+	return (
+		<Disclosure
+			icon="tool"
+			title={item.name}
+			meta={toolSummary(item.name, item.args)}
+			state={item.pending ? "进行中" : undefined}
+		>
+			<div className="tool-args">
+				<code>{item.args}</code>
+			</div>
+			{item.result !== undefined && <pre className="tool-result">{item.result.slice(0, 4000)}</pre>}
+		</Disclosure>
+	);
+}
+
+/** One collapsible step. Collapsed by default; opens only on explicit click. */
 function Disclosure({
 	icon,
 	title,
 	meta,
-	streaming,
+	preview,
+	state,
 	children,
 }: {
 	icon: "sparkle" | "tool";
 	title: string;
 	meta?: string;
-	streaming?: boolean;
+	/** Shown in place of the meta while collapsed (e.g. a reasoning preview). */
+	preview?: string;
+	state?: string;
 	children?: React.ReactNode;
 }) {
 	const [open, setOpen] = useState(false);
 	return (
-		<div className={`disclosure${open ? " open" : ""}${streaming ? " active" : ""}`}>
+		<div className={`disclosure sub${open ? " open" : ""}`}>
 			<button type="button" className="disclosure-head" onClick={() => setOpen((v) => !v)}>
 				<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
-				<span className="disclosure-icon">{icon === "sparkle" ? <Icon name="sparkle" size={12} /> : <Icon name="tool" size={12} />}</span>
+				<span className="disclosure-icon">
+					{icon === "sparkle" ? <Icon name="sparkle" size={12} /> : <Icon name="tool" size={12} />}
+				</span>
 				<span className="disclosure-title">{title}</span>
-				{meta && <span className="disclosure-meta">{meta}</span>}
+				{!open && preview && <span className="disclosure-meta">{preview}</span>}
+				{!open && meta && <span className="disclosure-meta">{meta}</span>}
+				{!open && state && <span className="timeline-step-state">{state}</span>}
 			</button>
 			{open && <div className="disclosure-body">{children}</div>}
+		</div>
+	);
+}
+
+/**
+ * Codex-style work log for one assistant turn: all reasoning and tool calls are
+ * folded into a single line, collapsed by default, so multi-round turns stay
+ * compact. While the turn is streaming the line shows the live step instead.
+ * Expanding reveals the steps, each of which folds again (second level) so you
+ * can drill into just the one you care about.
+ */
+function TimelineGroup({ items, live }: { items: TimelineItem[]; live: boolean }) {
+	const [open, setOpen] = useState(false);
+	const hasReasoning = items.some((it) => it.kind === "reasoning");
+	const toolNames = items
+		.filter((it): it is Extract<TimelineItem, { kind: "tool" }> => it.kind === "tool")
+		.map((it) => it.name)
+		.filter((name, i, all) => name && all.indexOf(name) === i);
+	return (
+		<div className={`disclosure timeline-group${open ? " open" : ""}${live ? " active" : ""}`}>
+			<button type="button" className="disclosure-head" onClick={() => setOpen((v) => !v)}>
+				<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
+				<span className="disclosure-icon">
+					<Icon name={hasReasoning ? "sparkle" : "tool"} size={12} />
+				</span>
+				<span className="disclosure-title">{live ? liveLabel(items) : timelineSummary(items)}</span>
+				{!live && toolNames.length > 0 && <span className="disclosure-meta">{toolNames.join("、")}</span>}
+			</button>
+			{open && (
+				<div className="disclosure-body">
+					<div className="timeline-steps">
+						{items.map((it, j) => (
+							<TimelineStep key={j} item={it} />
+						))}
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -697,32 +786,7 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 								<div className="msg-body">
 									{m.role === "assistant" ? (
 										<>
-											{tl.length > 0 && (
-												<div className="timeline">
-													{tl.map((it, j) =>
-														it.kind === "reasoning" ? (
-															<Disclosure key={j} icon="sparkle" title="思考" streaming={streaming && isLast && it.content !== ""}>
-																<div className="reasoning-text">{it.content || "…"}</div>
-															</Disclosure>
-														) : (
-															<Disclosure
-																key={j}
-																icon="tool"
-																title={it.name}
-																meta={toolSummary(it.name, it.args)}
-																streaming={!!it.pending}
-															>
-																<div className="tool-args">
-																	<code>{it.args}</code>
-																</div>
-																{it.result !== undefined && (
-																	<pre className="tool-result">{it.result.slice(0, 4000)}</pre>
-																)}
-															</Disclosure>
-														),
-													)}
-												</div>
-											)}
+											{tl.length > 0 && <TimelineGroup items={tl} live={streaming && isLast && !m.content} />}
 											{(m.content || !isLast || tl.length === 0) && (
 												<div className="markdown">
 													<ReactMarkdown
@@ -737,7 +801,6 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 												</div>
 											)}
 											{isLast && streaming && !m.content && tl.length === 0 && <div className="msg-status">思考中…</div>}
-											{isLast && streaming && !m.content && tl.length > 0 && <div className="msg-status">生成中…</div>}
 											{isLast && stopped && !streaming && <div className="msg-status">已停止</div>}
 											{m.notice && <div className="msg-status warn">{m.notice}</div>}
 										</>
