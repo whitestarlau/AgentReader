@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { Icon } from "./Icons.tsx";
 import type { Annotation } from "./AnnotationLayer.tsx";
 import { type Selection, MODIFIER_LABEL, SELECTION_LABEL } from "../selection.ts";
+import { buildHistory, type HistoryMessage } from "../history.ts";
 import { estimateTokens, formatTokens } from "../tokens.ts";
 
 type TimelineItem =
@@ -598,7 +599,7 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 	 * The caller must have already appended the user message to `msgs`.
 	 */
 	const runChat = async (
-		history: { role: string; content: string }[],
+		history: HistoryMessage[],
 		prompt: string,
 		persistUser = true,
 	) => {
@@ -640,7 +641,8 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 		const prompt = blocks.length
 			? `${blocks.join("\n\n")}\n\n【问题】\n${input}`
 			: input;
-		const history = msgs.map((m) => ({ role: m.role, content: m.content }));
+		// 历史带上此前各轮的工具调用与结果，追问时模型不会丢失上一轮读到的内容。
+		const history = buildHistory(msgs);
 		// Sending is an explicit intent to follow the reply, so re-pin to bottom.
 		stickRef.current = true;
 		setMsgs((m) => [...m, { role: "user", content: prompt }]);
@@ -672,12 +674,16 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 	};
 
 	// Context consumption: exact usage from the provider when available, else a
-	// rough estimate from the loaded messages plus fixed prompt/tool overhead.
+	// rough estimate from the rebuilt history (tool calls/results included) plus
+	// fixed prompt/tool overhead.
 	const contextUsage = useMemo<ContextUsage | null>(() => {
 		if (usage) return usage;
 		if (!contextWindow || msgs.length === 0) return null;
 		let used = 1500;
-		for (const m of msgs) used += estimateTokens(m.content);
+		for (const m of buildHistory(msgs)) {
+			used += estimateTokens(m.content);
+			if (m.toolCalls) used += estimateTokens(JSON.stringify(m.toolCalls));
+		}
 		return { used, max: contextWindow, estimated: true };
 	}, [usage, msgs, contextWindow]);
 
@@ -697,11 +703,7 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 		setMsgs(mapped);
 		const last = mapped[mapped.length - 1];
 		if (last) {
-			await runChat(
-				mapped.slice(0, -1).map((m) => ({ role: m.role, content: m.content })),
-				last.content,
-				false,
-			);
+			await runChat(buildHistory(mapped.slice(0, -1)), last.content, false);
 		}
 	};
 

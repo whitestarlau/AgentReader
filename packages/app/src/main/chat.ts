@@ -92,7 +92,13 @@ export function registerChatIpc() {
 			docId: string,
 			convId: string,
 			prompt: string,
-			history: { role: string; content: string }[],
+			history: {
+				role: string;
+				content: string;
+				toolCalls?: { id: string; name: string; arguments: string }[];
+				toolCallId?: string;
+				toolName?: string;
+			}[],
 			page?: number,
 			persistUser = true,
 		) => {
@@ -334,6 +340,8 @@ export function registerChatIpc() {
 					} else if (evt.type === "tool_call") {
 						const t = evt as { id: string; name: string; args: string };
 						timeline.push({ kind: "tool", id: t.id, name: t.name, args: t.args, pending: true });
+						// 下一轮的思考另起一段：落盘后仍能看出「思考 → 工具 → 思考」的先后。
+						timelineReasoning = null;
 						win?.webContents.send("chat:tool_call", { id: t.id, name: t.name, args: t.args });
 						console.log("[tool] call", t.name, t.args);
 					} else if (evt.type === "tool_result") {
@@ -371,7 +379,13 @@ export function registerChatIpc() {
 						const fallbackStream = streamFn;
 						const fallbackContext = {
 							systemPrompt: fallbackSystemPrompt,
-							messages: [...history, { role: "user", content: prompt }] as never,
+							// 无工具重试：剥掉历史里的工具调用/结果，只留纯文本对话。
+							messages: [
+								...history
+									.filter((m) => m.role !== "tool")
+									.map((m) => ({ role: m.role, content: m.content })),
+								{ role: "user", content: prompt },
+							] as never,
 						};
 						for await (const e of fallbackStream(
 							model,

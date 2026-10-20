@@ -1,5 +1,30 @@
 # 进度记录
 
+## 2026-10-19 修复：追问时历史丢失上一轮工具调用与结果
+
+- [x] 反馈：多轮工具调用的会话里，前面的调用结果没有正确进入上下文
+- [x] 定位：**同轮内没问题** —— agent-loop 逐轮累积消息，OpenAI / Anthropic 适配器
+  都正确回放 `assistant(tool_calls) → tool(result)` 与 `tool_use → tool_result`
+  （用真实适配器 + 本地假服务逐轮核对过请求报文）。问题在**跨轮**：`ChatPanel`
+  发送时把历史压成 `msgs.map(m => ({ role, content }))`，此前各轮的工具调用与结果
+  全部丢弃（只留在 UI timeline 与落盘记录里），追问时模型看不到上一轮读到的章节/
+  检索结果，只能重读或凭印象回答
+- [x] 新增 `renderer/history.ts: buildHistory()`：把界面消息还原成模型可用的消息序列
+  —— assistant 的 timeline 拆成若干「模型轮次」还原为 `assistant(tool_calls)` +
+  `tool(result)` 消息对；「工具调用之后又出现思考」视为新一轮；未完成的工具调用
+  整条跳过，避免出现「有调用无结果」的非法消息对
+- [x] 历史预算：单条工具结果截断 4000 字；历史中工具结果合计不超过 20000 字，
+  超出时从最旧的工具轮次整轮丢弃（各轮的最终回答文本始终保留）。常量在
+  `history.ts` 顶部，可调
+- [x] `ChatPanel` 发送与「编辑并重新生成」都改用 `buildHistory`；上下文占用估算也
+  改为基于重建后的历史（含工具结果与调用参数），更贴近真实请求
+- [x] 主进程 `chat.ts`：history 类型接受 `toolCalls`/`toolCallId`/`toolName`；无工具
+  兜底重试剥掉工具消息只留文本；`pushReasoning` 在工具调用后重置，落盘 timeline
+  保留「思考 → 工具 → 思考」的先后（此前多轮思考会被合并成一段）
+- [x] 验证：typecheck 与 build 通过；`buildHistory` 覆盖新/旧两种落盘格式、中断
+  工具、空结果、预算截断；真实落盘会话（4 条记录 → 10 条消息，工具结果 9110 字）
+  重建正确；重建历史经两条协议发到本地假服务，报文合法
+
 ## 2026-10-18 菜单栏修复 + Windows 端适配准备
 
 - [x] 反馈：macOS 菜单栏完全不对。实测（System Events 读取）：菜单是 Electron
