@@ -869,7 +869,17 @@ textarea::placeholder {
 	width: 1px;
 	background: var(--vscode-border-soft);
 	cursor: col-resize;
+	touch-action: none;
 	z-index: 5;
+}
+/* While dragging, keep every pointer event in the app document: an EPUB iframe
+   is a separate document and would otherwise swallow pointermove/pointerup. */
+body.resizing {
+	cursor: col-resize;
+	user-select: none;
+}
+body.resizing iframe {
+	pointer-events: none;
 }
 .resizer::after {
 	content: "";
