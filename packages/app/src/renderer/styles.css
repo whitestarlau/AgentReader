@@ -197,6 +197,7 @@ textarea::placeholder {
 }
 
 /* ---------------------------------------------------------------- titlebar */
+/* 高度需与主进程 titleBarOverlay.height / trafficLightPosition.y 对应。 */
 .titlebar {
 	height: 35px;
 	flex: 0 0 35px;
@@ -211,6 +212,15 @@ textarea::placeholder {
 }
 .titlebar .icon-btn {
 	-webkit-app-region: no-drag;
+}
+/* macOS hidden 标题栏：给左上角系统红黄绿按钮留出空间。 */
+.titlebar-mac {
+	padding-left: 80px;
+}
+/* Windows/Linux titleBarOverlay：用系统暴露的安全区避开窗口控件（RTL 也适用）。 */
+.titlebar-win {
+	padding-left: max(8px, env(titlebar-area-x, 0px));
+	padding-right: calc(100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%));
 }
 .titlebar-brand {
 	display: flex;

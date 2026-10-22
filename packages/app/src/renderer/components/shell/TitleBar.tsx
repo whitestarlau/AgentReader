@@ -1,5 +1,5 @@
 import { Icon } from "../Icons.tsx";
-import { MOD_KEY } from "../../platform.ts";
+import { IS_MAC, MOD_KEY } from "../../platform.ts";
 import type { DocMeta } from "../../types.ts";
 
 type Props = {
@@ -13,7 +13,7 @@ type Props = {
 
 export function TitleBar({ doc, leftOpen, chatOpen, onToggleLeft, onToggleChat, onOpenSettings }: Props) {
 	return (
-		<header className="titlebar">
+		<header className={`titlebar ${IS_MAC ? "titlebar-mac" : "titlebar-win"}`}>
 			<button
 				type="button"
 				className={`icon-btn${leftOpen ? " active" : ""}`}

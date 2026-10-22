@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, type BrowserWindowConstructorOptions } from "electron";
 import { registerAiIpc } from "./ai.ts";
 import { setProviderKey } from "./ai-auth.ts";
 import { ensureConfig } from "./ai-config.ts";
@@ -34,12 +34,36 @@ registerSkillsIpc();
 registerPermissionIpc();
 registerChatIpc();
 
+/**
+ * 沉浸式标题栏：内容延伸到标题栏区域，同时保留系统原生窗口按钮。
+ * - macOS：hidden 保留左上角红黄绿按钮，并用 trafficLightPosition 对齐标题栏。
+ * - Windows/Linux：hidden + titleBarOverlay 由系统在右上角绘制最小化/最大化/关闭，
+ *   窗口控件颜色与渲染层标题栏保持一致（--vscode-titlebar: #3c3c3c）。
+ */
+function immersiveTitleBar(): Pick<
+	BrowserWindowConstructorOptions,
+	"titleBarStyle" | "titleBarOverlay" | "trafficLightPosition"
+> {
+	if (process.platform === "darwin") {
+		return {
+			titleBarStyle: "hidden",
+			// 与渲染层 35px 标题栏垂直居中（按钮命中区 16px）。
+			trafficLightPosition: { x: 14, y: 10 },
+		};
+	}
+	return {
+		titleBarStyle: "hidden",
+		titleBarOverlay: { color: "#3c3c3c", symbolColor: "#cccccc", height: 35 },
+	};
+}
+
 function createWindow() {
 	const win = new BrowserWindow({
 		width: 1200,
 		height: 800,
 		title: "AgentReader",
 		icon: ICON_PATH,
+		...immersiveTitleBar(),
 		webPreferences: {
 			preload: join(__dirname, "preload.js"),
 			contextIsolation: true,
