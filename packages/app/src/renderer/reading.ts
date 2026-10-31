@@ -62,7 +62,18 @@ export function savePdfLocation(docId: string, loc: PdfLocation) {
  * made the reader resume / re-layout at the wrong spot. href + scroll offset
  * round-trips exactly.
  */
-export type EpubLocation = { href: string; offset: number };
+export type EpubFlow = "paged" | "scrolled";
+
+export type EpubLocation = {
+	href: string;
+	offset: number;
+	/** Which layout produced `offset` (pixels are horizontal in paged, vertical in scrolled). */
+	flow?: EpubFlow;
+};
+
+function parseEpubFlow(raw: unknown): EpubFlow | undefined {
+	return raw === "paged" || raw === "scrolled" ? raw : undefined;
+}
 
 /** Parse a serialized location. Accepts the new JSON form and plain CFIs. */
 export function parseEpubLocation(raw: string | null | undefined): EpubLocation | null {
@@ -77,7 +88,12 @@ export function parseEpubLocation(raw: string | null | undefined): EpubLocation 
 				typeof o.offset === "number" &&
 				Number.isFinite(o.offset)
 			) {
-				return { href: o.href, offset: Math.max(0, Math.floor(o.offset)) };
+				const flow = parseEpubFlow((o as { flow?: unknown }).flow);
+				return {
+					href: o.href,
+					offset: Math.max(0, Math.floor(o.offset)),
+					...(flow ? { flow } : {}),
+				};
 			}
 		} catch {}
 		return null;
@@ -86,7 +102,12 @@ export function parseEpubLocation(raw: string | null | undefined): EpubLocation 
 }
 
 export function serializeEpubLocation(loc: EpubLocation): string {
-	return JSON.stringify({ t: "epub", href: loc.href, offset: Math.max(0, Math.floor(loc.offset)) });
+	return JSON.stringify({
+		t: "epub",
+		href: loc.href,
+		offset: Math.max(0, Math.floor(loc.offset)),
+		...(loc.flow ? { flow: loc.flow } : {}),
+	});
 }
 
 export function loadReadingLoc(docId: string): EpubLocation | null {

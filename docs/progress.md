@@ -1,5 +1,26 @@
 # 进度记录
 
+## 2026-10-31 EPUB 连续滑动阅读（保留翻页）
+
+- [x] 反馈：EPUB 能否像 PDF 一样滑动查看，同时保留现有翻页
+- [x] 工具栏新增「翻页 / 滑动」切换：翻页沿用单/双栏；滑动使用 epub.js
+  continuous manager（`manager: "continuous"` + `flow: "scrolled"`），按章预加载/裁剪分节
+- [x] 阅读位置：`EpubLocation` 增加 `flow`；翻页存横向页偏移，滑动存「章节内纵向偏移」；
+  模式切换只按章节恢复（两种像素偏移不互换），localStorage 与 doc.json 都带 flow
+- [x] 滑动模式定位：`currentLocation().start.index` → 章节；滚动会高频触发 relocated，
+  章节回调/`setReaderChapter` 只在换章时执行，本地保存 200ms 节流、IPC 800ms 节流
+- [x] 键盘：滑动模式下方向键/空格/PageUp/Down/Home/End 滚动 manager 容器；翻页模式保持 next/prev
+- [x] 章节按钮：滑动模式跳到上/下一章；翻页模式保持原行为
+- [x] 修复 epub.js silent `scrollTo` 残留 `ignore` 标志：位置不变时不会触发 scroll 事件，
+  下一次真实滚动会被忽略，导致 continuous 不填充分节 / relocated 不更新
+- [x] 模式切换/加载时显示「排版中…」；重建 rendition 后不再重复执行上次 `goto` 跳转；
+  切换文档时清空 `goto`
+- [x] 验证：三国志（4MB / 80 章）滑动到第 2 章，localStorage 为
+  `{"href":"index_split_000.html","offset":4614,"flow":"scrolled"}`；重新打开恢复到
+  scrollTop 5905；切回翻页 manager=default、单/双栏正常，再切滑动仍停在第 2 章；
+  滑动模式选中文本菜单为「高亮标注 / 引用提问 / 复制 / ✕」，点高亮生成 CFI 高亮；
+  @ 仍为「章节 / 标注」
+
 ## 2026-10-31 PDF 与 EPUB 的选中 / 高亮 / @ 对齐
 
 - [x] 反馈：PDF 的选中、高亮、@ 操作和 EPUB 版本不一致

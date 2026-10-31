@@ -35,6 +35,7 @@ type Props = {
 type FlipBookTocNode = { label?: string; href?: string; subitems?: FlipBookTocNode[] };
 
 type SpreadMode = "single" | "double";
+type FlowMode = "paged" | "scrolled";
 
 /**
  * Apply the single/double column choice and persist it into the layout's
@@ -66,20 +67,44 @@ type Rendition = ReturnType<EpubBook["renderTo"]>;
 
 const createBook = ePub as unknown as (input: string | ArrayBuffer) => EpubBook;
 
+type ViewLike = {
+	section?: { index?: number; href?: string };
+	position?: () => { top: number; left: number; width: number; height: number };
+};
+
 type ManagerLike = {
-	container?: { scrollLeft: number; clientWidth: number; scrollWidth: number };
+	container?: HTMLElement;
 	scrollTo?: (x: number, y: number, silent?: boolean) => void;
 	currentLocation: () => unknown;
 	layout?: { divisor?: number; delta?: number; pageWidth?: number };
+	views?: { first: () => ViewLike | null; all?: () => ViewLike[] };
+	/** epub.js sets this while a programmatic scroll must not emit relocated. */
+	ignore?: boolean;
+};
+
+type LocatedLike = {
+	start?: { index?: number; href?: string; cfi?: string };
+	end?: { cfi?: string };
+	atStart?: boolean;
+	atEnd?: boolean;
 };
 
 const SPREAD_STORAGE_KEY = "epub-spread-mode";
+const FLOW_STORAGE_KEY = "epub-flow-mode";
 
 function readSpreadMode(): SpreadMode {
 	try {
 		return localStorage.getItem(SPREAD_STORAGE_KEY) === "single" ? "single" : "double";
 	} catch {
 		return "double";
+	}
+}
+
+function readFlowMode(): FlowMode {
+	try {
+		return localStorage.getItem(FLOW_STORAGE_KEY) === "scrolled" ? "scrolled" : "paged";
+	} catch {
+		return "paged";
 	}
 }
 
@@ -100,40 +125,80 @@ function chapterOfCfi(cfi: string): number {
  * text translation and is always exact. Falls back to the CFI path when the view
  * hasn't materialized yet.
  */
-function currentChapterIndex(rendition: Rendition | null): number {
+function currentChapterIndex(rendition: Rendition | null, flow: FlowMode, located?: LocatedLike): number {
+	if (flow === "scrolled") {
+		const loc = located ?? (rendition?.currentLocation() as LocatedLike | undefined);
+		if (typeof loc?.start?.index === "number") return loc.start.index;
+		if (loc?.start?.cfi) return chapterOfCfi(loc.start.cfi);
+	}
 	const manager = getManager(rendition);
-	const views = (
-		manager as unknown as { views?: { first: () => { section?: { index?: number } } | null } }
-	)?.views;
-	const idx = views?.first?.()?.section?.index;
+	const idx = manager?.views?.first?.()?.section?.index;
 	if (typeof idx === "number") return idx;
-	const cfi = (rendition?.currentLocation() as unknown as { start?: { cfi?: string } })?.start?.cfi;
+	const cfi = (located ?? (rendition?.currentLocation() as LocatedLike | undefined))?.start?.cfi;
 	return cfi ? chapterOfCfi(cfi) : 0;
 }
 
-/** Section href + in-section scroll offset for the current view. */
-function captureLocation(rendition: Rendition | null): EpubLocation | null {
+function viewForHref(rendition: Rendition | null, href: string): ViewLike | null {
+	const views = getManager(rendition)?.views?.all?.() ?? [];
+	const clean = href.split("#")[0];
+	return (
+		views.find((view) => view.section?.href === href) ??
+		views.find((view) => view.section?.href?.split("#")[0] === clean) ??
+		null
+	);
+}
+
+/**
+ * Section href + in-section offset. Paged mode stores the horizontal scroll
+ * offset; continuous (scrolled) mode stores how far the section's top has been
+ * scrolled above the viewport, which survives reflow/window resizes.
+ */
+function captureLocation(rendition: Rendition | null, flow: FlowMode, located?: LocatedLike): EpubLocation | null {
 	const manager = getManager(rendition);
 	if (!manager?.container) return null;
-	const views = (manager as unknown as { views?: { first: () => { section?: { href?: string } } | null } }).views;
-	const section = views?.first?.()?.section;
+	if (flow === "scrolled") {
+		const loc = located ?? (rendition?.currentLocation() as LocatedLike | undefined);
+		const href = loc?.start?.href ?? manager.views?.first?.()?.section?.href;
+		if (!href) return null;
+		const view = viewForHref(rendition, href);
+		const containerRect = manager.container.getBoundingClientRect();
+		const viewRect = view?.position?.();
+		const offset = viewRect ? Math.max(0, Math.round(containerRect.top - viewRect.top)) : 0;
+		return { href, offset, flow };
+	}
+	const section = manager.views?.first?.()?.section;
 	if (!section?.href) return null;
-	return { href: section.href, offset: Math.max(0, Math.round(manager.container.scrollLeft)) };
+	return { href: section.href, offset: Math.max(0, Math.round(manager.container.scrollLeft)), flow };
 }
 
 /** Place the reader at a saved section + offset without using CFIs. */
-async function applyLocation(rendition: Rendition, loc: EpubLocation) {
+async function applyLocation(rendition: Rendition, loc: EpubLocation, flow: FlowMode) {
 	try {
 		await rendition.display(loc.href);
 	} catch {
 		return;
 	}
 	// display() is async about layout; give the container a beat to settle.
-	await new Promise((r) => setTimeout(r, 120));
+	// Continuous mode also has to fill in neighbouring sections first.
+	await new Promise((r) => setTimeout(r, flow === "scrolled" ? 240 : 120));
 	const manager = getManager(rendition);
-	if (manager?.scrollTo && manager.container) {
+	if (!manager?.scrollTo || !manager.container) return;
+	const offset = loc.flow && loc.flow !== flow ? 0 : Math.max(0, loc.offset);
+	if (flow === "scrolled") {
+		const view = viewForHref(rendition, loc.href);
+		const containerRect = manager.container.getBoundingClientRect();
+		const viewRect = view?.position?.();
+		const base = viewRect ? manager.container.scrollTop + (viewRect.top - containerRect.top) : manager.container.scrollTop;
+		const maxOffset = Math.max(0, manager.container.scrollHeight - manager.container.clientHeight);
+		// A silent scrollTo can leave epub.js's `ignore` flag set when the
+		// position does not change, swallowing the next real scroll. Use a
+		// normal scroll so the continuous manager fills/relocates reliably.
+		manager.ignore = false;
+		manager.scrollTo(0, Math.min(maxOffset, Math.max(0, base + offset)), false);
+	} else {
 		const maxOffset = Math.max(0, manager.container.scrollWidth - manager.container.clientWidth);
-		manager.scrollTo(Math.min(loc.offset, maxOffset), 0, true);
+		manager.ignore = false;
+		manager.scrollTo(Math.min(offset, maxOffset), 0, false);
 	}
 }
 
@@ -162,6 +227,12 @@ export function EpubViewer({
 	const [spreadMode, setSpreadMode] = useState<SpreadMode>(readSpreadMode);
 	const spreadModeRef = useRef<SpreadMode>(spreadMode);
 	spreadModeRef.current = spreadMode;
+	const [flowMode, setFlowMode] = useState<FlowMode>(readFlowMode);
+	const flowModeRef = useRef<FlowMode>(flowMode);
+	flowModeRef.current = flowMode;
+	const lastChapterRef = useRef(0);
+	const lastLocalSaveRef = useRef(0);
+	const lastApiSaveRef = useRef(0);
 
 	// Pending text selection in the book, shown as a floating action menu so the
 	// user chooses between highlighting it and quoting it to the AI.
@@ -184,6 +255,9 @@ export function EpubViewer({
 	// Current chapter (1-based), mirrored in a ref so the once-bound selection
 	// handler reports the *current* chapter rather than the mount-time value.
 	const chapterRef = useRef(1);
+	// Avoid re-applying the last external jump when the rendition is rebuilt
+	// (e.g. switching between 翻页 and 滑动).
+	const appliedGotoRef = useRef<number | null>(null);
 
 	const [error, setError] = useState<string | null>(null);
 
@@ -192,6 +266,7 @@ export function EpubViewer({
 	// CFI 重定位到比 currentLocation() 报告更早的一页，会导致"翻页接不上"。
 	// 改为按「章节 href + 页偏移」恢复。
 	const applySpread = useCallback((mode: SpreadMode) => {
+		if (flowModeRef.current !== "paged") return;
 		setSpreadMode(mode);
 		spreadModeRef.current = mode;
 		try {
@@ -199,7 +274,7 @@ export function EpubViewer({
 		} catch {}
 		const rendition = renditionRef.current;
 		if (!rendition) return;
-		const saved = captureLocation(rendition);
+		const saved = captureLocation(rendition, flowModeRef.current);
 		// "both" + minSpreadWidth=0：显式按用户选择生效，不会再出现第三栏。
 		// spread() 自身会触发 updateLayout() 重排列，不需要再 resize()。
 		setSpread(rendition, mode);
@@ -221,12 +296,43 @@ export function EpubViewer({
 		})();
 	}, []);
 
+	/** Switch between paginated and continuous scrolling; the load effect rebuilds the rendition. */
+	const applyFlowMode = useCallback(
+		(mode: FlowMode) => {
+			if (mode === flowModeRef.current) return;
+			const rendition = renditionRef.current;
+			if (rendition) {
+				const at = captureLocation(rendition, flowModeRef.current);
+				if (at) saveReadingLoc(docId, at);
+			}
+			try {
+				localStorage.setItem(FLOW_STORAGE_KEY, mode);
+			} catch {}
+			setFlowMode(mode);
+		},
+		[docId],
+	);
+
+	const stepChapter = useCallback((delta: number) => {
+		const rendition = renditionRef.current;
+		const book = bookRef.current;
+		if (!rendition || !book) return;
+		const idx = currentChapterIndex(rendition, flowModeRef.current);
+		const section = book.spine.get(Math.max(0, idx + delta)) as { href?: string } | undefined;
+		if (section?.href) Promise.resolve(rendition.display(section.href)).catch(() => {});
+	}, []);
+
 	useEffect(() => {
 		let book: EpubBook | null = null;
 		let ro: ResizeObserver | null = null;
 		let resizeTimer: number | undefined;
 		let disposed = false;
+		const flow = flowMode;
+		const scrolled = flow === "scrolled";
 		appliedRef.current = new Set();
+		lastChapterRef.current = 0;
+		lastLocalSaveRef.current = 0;
+		lastApiSaveRef.current = 0;
 		setReady(false);
 		setMenu(null);
 		setActiveAnnId(null);
@@ -268,9 +374,20 @@ export function EpubViewer({
 			};
 			walkToc(rawToc, 0);
 			outlineCb.current?.(flatToc);
-			const rendition = book.renderTo(ref.current, { width: "100%", height: "100%", flow: "paginated", allowScriptedContent: true, minSpreadWidth: 0 });
-			// 显式应用当前分栏选择（minSpreadWidth=0 时不会因窗口宽度退化）
-			setSpread(rendition, spreadModeRef.current);
+			const rendition = book.renderTo(ref.current, {
+				width: "100%",
+				height: "100%",
+				flow: scrolled ? "scrolled" : "paginated",
+				manager: scrolled ? "continuous" : "default",
+				allowScriptedContent: true,
+				minSpreadWidth: 0,
+			});
+			// 显式应用当前分栏选择（滚动模式不分栏；minSpreadWidth=0 时不会因窗口宽度退化）
+			if (scrolled) {
+				try { rendition.spread("none"); } catch {}
+			} else {
+				setSpread(rendition, spreadModeRef.current);
+			}
 			renditionRef.current = rendition as unknown as typeof renditionRef.current;
 			rendition.themes.default({
 				body: { "font-family": "Inter, sans-serif", "line-height": "1.7", padding: "24px", "background-color": "#fff", "max-width": "100%", "word-wrap": "break-word", "overflow-wrap": "break-word" },
@@ -284,36 +401,70 @@ export function EpubViewer({
 			const savedLoc = loadReadingLoc(docId) ?? parseEpubLocation(stored?.location);
 			const legacyCfi = loadReadingCfi(docId) ?? (stored?.location && !parseEpubLocation(stored.location) ? stored.location : null);
 			if (savedLoc) {
-				await applyLocation(rendition, savedLoc);
+				await applyLocation(rendition, savedLoc, flow);
 			} else {
 				await rendition.display(legacyCfi ?? undefined);
 			}
+			// display()/counter use silent scrolls internally; a no-op silent
+			// scroll leaves epub.js's ignore flag set and swallows the next user
+			// scroll. Clear it once the initial position is in place.
+			{
+				const mgr = getManager(rendition);
+				if (mgr) mgr.ignore = false;
+			}
 			console.log("[epub] displayed");
-			const update = () => {
+			const update = (located?: LocatedLike) => {
 				setMenu(null);
-				setActiveAnnId(null);
-				const loc = rendition.currentLocation() as unknown as { atStart: boolean; atEnd: boolean; start?: { cfi?: string } };
+				const loc = located ?? (rendition.currentLocation() as LocatedLike | undefined);
 				setAtStart(!!loc?.atStart);
 				setAtEnd(!!loc?.atEnd);
-				// Persist reading position (href + offset) so reopening resumes here.
-				const current = captureLocation(rendition);
-				if (current) {
-					saveReadingLoc(docId, current);
-					window.api.saveReading(docId, { location: serializeEpubLocation(current) }).catch(() => {});
-				}
 				// Report the current chapter (1-based). EPUB is reflowable and has no
 				// stable page numbers, so the UI and the AI both anchor on chapters.
-				const chapter = currentChapterIndex(rendition) + 1;
+				const chapter = currentChapterIndex(rendition, flow, loc) + 1;
+				const chapterChanged = chapter !== lastChapterRef.current;
+				if (chapterChanged) lastChapterRef.current = chapter;
 				chapterRef.current = chapter;
-				window.api.setReaderChapter(docId, chapter).catch(() => {});
-				pageCb.current?.(chapter);
+				// When scrolling, a relocated event fires continuously; only dismiss
+				// the highlight action bar when the reader crosses into another chapter.
+				if (!scrolled || chapterChanged) setActiveAnnId(null);
+				// Persist reading position (href + offset) so reopening resumes here.
+				const current = captureLocation(rendition, flow, loc);
+				if (current) {
+					const now = Date.now();
+					if (now - lastLocalSaveRef.current > 200) {
+						lastLocalSaveRef.current = now;
+						saveReadingLoc(docId, current);
+					}
+					if (now - lastApiSaveRef.current > 800) {
+						lastApiSaveRef.current = now;
+						window.api.saveReading(docId, { location: serializeEpubLocation(current) }).catch(() => {});
+					}
+				}
+				if (chapterChanged) {
+					window.api.setReaderChapter(docId, chapter).catch(() => {});
+					pageCb.current?.(chapter);
+				}
 				totalCb.current?.(0);
 			};
 			rendition.on("relocated", update);
+			const scrollReader = (dy: number) => {
+				const container = getManager(rendition)?.container;
+				if (container) container.scrollBy({ top: dy, behavior: "auto" });
+			};
 			const bindKeys = (doc: Document | undefined) => {
 				if (!doc || (doc as unknown as { __arKeys?: boolean }).__arKeys) return;
 				(doc as unknown as { __arKeys?: boolean }).__arKeys = true;
 				doc.addEventListener("keydown", (e: KeyboardEvent) => {
+					if (scrolled) {
+						const height = getManager(rendition)?.container?.clientHeight || 700;
+						if (e.key === "ArrowDown") { e.preventDefault(); scrollReader(80); }
+						else if (e.key === "ArrowUp") { e.preventDefault(); scrollReader(-80); }
+						else if (e.key === " " || e.key === "PageDown") { e.preventDefault(); scrollReader((e.key === " " && e.shiftKey ? -1 : 1) * height * 0.9); }
+						else if (e.key === "PageUp") { e.preventDefault(); scrollReader(-height * 0.9); }
+						else if (e.key === "Home") { e.preventDefault(); const container = getManager(rendition)?.container; if (container) container.scrollTop = 0; }
+						else if (e.key === "End") { e.preventDefault(); const container = getManager(rendition)?.container; if (container) container.scrollTop = container.scrollHeight; }
+						return;
+					}
 					if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") { e.preventDefault(); rendition.next(); }
 					else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); rendition.prev(); }
 				});
@@ -383,10 +534,12 @@ export function EpubViewer({
 				// restoring the scroll offset afterwards.
 				const reflow = () => {
 					if (disposed) return;
-					const at = captureLocation(rendition);
-					try { setSpread(rendition, spreadModeRef.current); } catch {}
+					const at = captureLocation(rendition, flow);
+					if (!scrolled) {
+						try { setSpread(rendition, spreadModeRef.current); } catch {}
+					}
 					if (at) {
-						void applyLocation(rendition, at);
+						void applyLocation(rendition, at, flow);
 					} else {
 						try { (rendition as unknown as { resize: () => void }).resize(); } catch {}
 					}
@@ -403,11 +556,11 @@ export function EpubViewer({
 			}
 			// 少数书的元数据会把 spread 强制为 none，这里在监听就绪后按用户选择再确认一次。
 			// 同样不用 clear()+display(cfi)（会因 CFI 偏差跳页），改为重排后按偏移恢复。
-			{
+			if (!scrolled) {
 				const wantDouble = spreadModeRef.current === "double";
 				const divisor = (rendition as unknown as { manager?: { layout?: { divisor?: number } } }).manager?.layout?.divisor;
 				if ((wantDouble && divisor !== 2) || (!wantDouble && divisor !== 1)) {
-					const at = captureLocation(rendition);
+					const at = captureLocation(rendition, flow);
 					setSpread(rendition, wantDouble ? "double" : "single");
 					if (at) {
 						await new Promise((r) => setTimeout(r, 250));
@@ -432,14 +585,23 @@ export function EpubViewer({
 			setReady(false);
 			if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
 			ro?.disconnect();
+			const rendition = renditionRef.current;
+			if (rendition) {
+				const at = captureLocation(rendition, flow);
+				if (at) saveReadingLoc(docId, at);
+			}
 			try { renditionRef.current?.destroy(); } catch {}
 			try { book?.destroy(); } catch {}
 		};
-	}, [docId]);
+	}, [docId, flowMode]);
 
 	// Reflow when the surrounding chrome changes (left sidebar / right chat panel
 	// toggled or resized). This does not depend on the ResizeObserver firing, so
 	// every toggle is guaranteed to re-layout the reader at the new width.
+	useEffect(() => {
+		appliedGotoRef.current = null;
+	}, [docId]);
+
 	useEffect(() => {
 		if (!layoutSignal) return;
 		const t = window.setTimeout(() => reflowRef.current(), 140);
@@ -450,6 +612,8 @@ export function EpubViewer({
 	// token lets the same chapter be re-targeted; display() by section href.
 	useEffect(() => {
 		if (!goto || !ready) return;
+		if (appliedGotoRef.current === goto.token) return;
+		appliedGotoRef.current = goto.token;
 		const rendition = renditionRef.current;
 		const book = bookRef.current;
 		if (!rendition || !book) return;
@@ -540,6 +704,21 @@ export function EpubViewer({
 		const onKey = (e: KeyboardEvent) => {
 			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 			if ((e.target as HTMLElement)?.closest?.("iframe")) return;
+			if (flowModeRef.current === "scrolled") {
+				const container = getManager(renditionRef.current)?.container;
+				if (!container) return;
+				const height = container.clientHeight || 700;
+				if (e.key === "ArrowDown") { e.preventDefault(); container.scrollBy({ top: 80, behavior: "auto" }); }
+				else if (e.key === "ArrowUp") { e.preventDefault(); container.scrollBy({ top: -80, behavior: "auto" }); }
+				else if (e.key === " " || e.key === "PageDown") {
+					e.preventDefault();
+					const dir = e.key === " " && e.shiftKey ? -1 : 1;
+					container.scrollBy({ top: dir * height * 0.9, behavior: "auto" });
+				} else if (e.key === "PageUp") { e.preventDefault(); container.scrollBy({ top: -height * 0.9, behavior: "auto" }); }
+				else if (e.key === "Home") { e.preventDefault(); container.scrollTop = 0; }
+				else if (e.key === "End") { e.preventDefault(); container.scrollTop = container.scrollHeight; }
+				return;
+			}
 			if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") { e.preventDefault(); renditionRef.current?.next(); }
 			else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); renditionRef.current?.prev(); }
 		};
@@ -561,14 +740,50 @@ export function EpubViewer({
 	return (
 		<div ref={areaRef} className="editor-area" style={{ background: "#fff" }}>
 			<div className="editor-toolbar">
-				<button type="button" className="icon-btn" onClick={() => renditionRef.current?.prev()} disabled={atStart} title="上一章" style={{ width: "auto", padding: "0 8px" }}>
+				<button
+					type="button"
+					className="icon-btn"
+					onClick={() => (flowMode === "scrolled" ? stepChapter(-1) : renditionRef.current?.prev())}
+					disabled={atStart}
+					title="上一章"
+					style={{ width: "auto", padding: "0 8px" }}
+				>
 					<Icon name="chevronLeft" size={14} /> 上一章
 				</button>
-				<button type="button" className="icon-btn" onClick={() => renditionRef.current?.next()} disabled={atEnd} title="下一章" style={{ width: "auto", padding: "0 8px" }}>
+				<button
+					type="button"
+					className="icon-btn"
+					onClick={() => (flowMode === "scrolled" ? stepChapter(1) : renditionRef.current?.next())}
+					disabled={atEnd}
+					title="下一章"
+					style={{ width: "auto", padding: "0 8px" }}
+				>
 					下一章 <Icon name="chevronRight" size={14} />
 				</button>
 				<span className="toolbar-sep" />
-				<div className="toolbar-group" role="group" aria-label="分栏方式">
+				<div className="toolbar-group" role="group" aria-label="阅读方式">
+					<button
+						type="button"
+						className={`icon-btn${flowMode === "paged" ? " active" : ""}`}
+						onClick={() => applyFlowMode("paged")}
+						title="翻页阅读（单/双栏）"
+						aria-pressed={flowMode === "paged"}
+						style={{ width: "auto", padding: "0 8px" }}
+					>
+						翻页
+					</button>
+					<button
+						type="button"
+						className={`icon-btn${flowMode === "scrolled" ? " active" : ""}`}
+						onClick={() => applyFlowMode("scrolled")}
+						title="连续滑动阅读"
+						aria-pressed={flowMode === "scrolled"}
+						style={{ width: "auto", padding: "0 8px" }}
+					>
+						滑动
+					</button>
+				</div>
+				{flowMode === "paged" && <div className="toolbar-group" role="group" aria-label="分栏方式">
 					<button
 						type="button"
 						className={`icon-btn${spreadMode === "single" ? " active" : ""}`}
@@ -589,9 +804,9 @@ export function EpubViewer({
 					>
 						双栏
 					</button>
-				</div>
+				</div>}
 				<span className="toolbar-muted" style={{ marginLeft: 8 }}>
-					方向键翻页 · 选中文本可高亮或引用
+					{flowMode === "scrolled" ? "滚动阅读 · 选中文本可高亮或引用" : "方向键翻页 · 选中文本可高亮或引用"}
 				</span>
 				{toc.length > 0 && (
 					<select
@@ -608,7 +823,15 @@ export function EpubViewer({
 					</select>
 				)}
 			</div>
-			<div ref={ref} style={{ flex: 1, overflow: "hidden", background: "#fff", minHeight: 0, minWidth: 0, maxWidth: "100%" }} />
+			<div className="epub-viewport">
+				<div ref={ref} className="epub-viewport-inner" />
+				{!ready && (
+					<div className="epub-loading">
+						<span className="pdf-spinner" />
+						排版中…
+					</div>
+				)}
+			</div>
 
 			{menu && (
 				<div

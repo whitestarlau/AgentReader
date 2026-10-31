@@ -965,6 +965,33 @@ textarea::placeholder {
 	pointer-events: none;
 	font-variant-numeric: tabular-nums;
 }
+.epub-viewport {
+	flex: 1;
+	min-height: 0;
+	min-width: 0;
+	max-width: 100%;
+	position: relative;
+	background: #fff;
+}
+.epub-viewport-inner {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	background: #fff;
+}
+.epub-loading {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	background: rgba(255, 255, 255, 0.86);
+	color: #666;
+	font-size: 13px;
+	z-index: 5;
+	pointer-events: none;
+}
 .pdf-stage-message {
 	position: absolute;
 	inset: 0;

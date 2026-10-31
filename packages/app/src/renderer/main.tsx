@@ -184,8 +184,9 @@ function App() {
     // their own persisted page instead of inheriting the previous document's.
     setTotal(0);
     setOutline([]);
-    // A pending citation belongs to the document it was selected in.
+    // A pending citation / external jump belongs to the document it was made in.
     setSelection(null);
+    setGotoChapter(null);
     setPage(ext === "epub" ? 1 : (loadReadingPage(selected) ?? 1));
   }, [selected]);
 
