@@ -12,6 +12,8 @@ import {
 // @ts-ignore
 import ePub from "epubjs";
 
+import type { OutlineItem } from "../types.ts";
+
 type Props = {
 	docId: string;
 	/** `chapter` is 1-based; EPUB has no fixed page numbers (reflowable text). */
@@ -26,7 +28,11 @@ type Props = {
 	goto?: { chapter: number; token: number } | null;
 	/** Changes when surrounding chrome (sidebars/chat) toggles or resizes. */
 	layoutSignal?: string;
+	/** Flattened TOC for the shell's outline view (chapter is the locator). */
+	onOutlineChange?: (items: OutlineItem[]) => void;
 };
+
+type FlipBookTocNode = { label?: string; href?: string; subitems?: FlipBookTocNode[] };
 
 type SpreadMode = "single" | "double";
 
@@ -141,6 +147,7 @@ export function EpubViewer({
 	onAnnotationDelete,
 	goto,
 	layoutSignal,
+	onOutlineChange,
 }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	const areaRef = useRef<HTMLDivElement>(null);
@@ -170,6 +177,8 @@ export function EpubViewer({
 	pageCb.current = onPageChange;
 	const totalCb = useRef(onTotalChange);
 	totalCb.current = onTotalChange;
+	const outlineCb = useRef(onOutlineChange);
+	outlineCb.current = onOutlineChange;
 
 	// Current chapter (1-based), mirrored in a ref so the once-bound selection
 	// handler reports the *current* chapter rather than the mount-time value.
@@ -233,9 +242,31 @@ export function EpubViewer({
 				console.log("[epub] loading", path, "size", (buffer as ArrayBuffer).byteLength);
 				book = createBook(buffer);
 			await book.ready;
+			// The user may have switched documents while the EPUB was parsing;
+			// don't publish a stale outline into the new document.
+			if (disposed) return;
 			console.log("[epub] ready", book);
 			bookRef.current = book;
-			setToc((book.navigation as { toc: { label: string; href: string }[] })?.toc ?? []);
+			const rawToc = (book.navigation as { toc?: FlipBookTocNode[] } | undefined)?.toc ?? [];
+			setToc(rawToc.map((t) => ({ label: String(t.label ?? ""), href: String(t.href ?? "") })));
+			// Flatten the (nested) TOC and resolve each entry to the spine index
+			// used by the chapter-based locator. Same list feeds the shell's
+			// outline sidebar as the PDF bookmarks do.
+			const flatToc: OutlineItem[] = [];
+			const walkToc = (nodes: FlipBookTocNode[], depth: number) => {
+				for (const node of nodes) {
+					const href = String(node.href ?? "").split("#")[0];
+					let chapter: number | null = null;
+					try {
+						const section = href ? (bookRef.current?.spine.get(href) as { index?: number } | null | undefined) : null;
+						if (typeof section?.index === "number") chapter = section.index + 1;
+					} catch {}
+					flatToc.push({ title: String(node.label ?? "").trim() || "（未命名）", page: chapter, depth });
+					if (node.subitems?.length) walkToc(node.subitems, depth + 1);
+				}
+			};
+			walkToc(rawToc, 0);
+			outlineCb.current?.(flatToc);
 			const rendition = book.renderTo(ref.current, { width: "100%", height: "100%", flow: "paginated", allowScriptedContent: true, minSpreadWidth: 0 });
 			// 显式应用当前分栏选择（minSpreadWidth=0 时不会因窗口宽度退化）
 			setSpread(rendition, spreadModeRef.current);

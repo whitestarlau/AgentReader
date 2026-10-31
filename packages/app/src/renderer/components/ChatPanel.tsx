@@ -312,6 +312,14 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 
 	useEffect(() => { resizeInput(); }, [input, resizeInput]);
 
+	// Switching documents must not carry a citation (or its text) into the new
+	// conversation.
+	useEffect(() => {
+		setQuote(null);
+		setQuoteEditing(false);
+		lastSelRef.current = null;
+	}, [docId]);
+
 	// Capture a fresh viewer selection into an editable composer citation. Each
 	// pick produces a new Selection object, so identity flags a re-selection;
 	// removing the citation does not re-add it because the selection is unchanged.
@@ -779,7 +787,7 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 						<div className="chat-empty-icon">
 							<Icon name="sparkle" size={30} />
 						</div>
-						选中文本或 {MODIFIER_LABEL} 框选后提问
+						选中文本 → 引用提问 · {MODIFIER_LABEL} 拖拽框选
 						<br />
 						AI 会结合引用与全书上下文回答
 					</div>

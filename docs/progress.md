@@ -1,5 +1,58 @@
 # 进度记录
 
+## 2026-10-31 PDF 阅读体验重做：连续滚动 / 选择菜单 / 目录 / 渲染管线
+
+- [x] 反馈：PDF 阅读体验不好
+- [x] 定位到的问题（按影响排序）：
+  - 全局键盘处理只排除了 `<input>`，在 AI 输入框（`textarea`）里按空格/方向键会被
+    `preventDefault` 并翻页 —— 空格打不出来、方向键移不动光标，输入框和阅读器抢键盘
+  - 只有单页模式：上一页/下一页按钮 + 页内滚动；切页整页重绘，没有相邻页预取；
+    快速拖动侧栏/缩放时同一 canvas 并发 render，pdf.js 会抛
+    “Cannot use the same canvas during multiple render() operations”
+  - 每个看过的页都保留 canvas backing store（A4 @2x ≈ 20MB/页），长文档内存持续上涨
+  - `.document-stage` 用 `justify-content: center` + `overflow: auto`：放大后左侧被裁掉、
+    滚不到；缩放只有「适应宽度 / 固定比例」，没有「适应页面」
+  - PDF 自带书签目录完全没用上，长文档只能靠页码/全文检索
+  - 选中任何文本都会立刻落一条高亮并打开对话（误触、只想复制的文本也会被标注）
+  - 打开新 PDF 且没有保存过位置时，会沿用上一本文档的 `page`，页面串号
+- [x] 重写 `PdfViewer` + 新增 `PdfPage`：
+  - 连续滚动（默认）/ 单页翻页；连续模式用 IntersectionObserver 维护「视口 ±900px」
+    活跃页，只有活跃页持有 canvas，滚出后清空 backing store；单页模式只挂载当前页
+  - 每页独立 render，`RenderTask.cancel()` + `TextLayer.cancel()` 消除并发渲染竞态；
+    HiDPI 仍按 devicePixelRatio 放大 backing store
+  - 当前页按「可见面积最大」实时计算；目录/检索/标注跳转走 `jumpToPage`；页内偏移按
+    比例保存/恢复（`reading.pdf.{docId}`，兼容旧的 `reading.page.{docId}`）
+  - 缩放支持适应宽度 / 适应页面 / 自定义；`Ctrl/⌘ + 滚轮` 以指针为锚点缩放（实测缩放
+    前后指针下的页内相对坐标误差 < 0.001）；窗口/侧栏尺寸变化时保持当前页阅读锚点
+  - 页码输入改为本地草稿 + Enter/失焦提交，可输入多位数；首页/末页按钮在窄宽度下由
+    container query 自动隐藏，避免工具栏换行；OCR 收进下拉菜单
+  - 顶部增加阅读进度条
+- [x] 选择/标注交互与 EPUB 对齐：
+  - 选中文本弹出「高亮 / 引用提问 / 复制」浮动菜单，不再自动落高亮
+  - 已有高亮/框选点击后可「引用」或「删除」
+  - `main.tsx` 的 PDF `onTextSelected` 不再建标注，只设置引用并打开对话
+  - 选中效果改为自绘：把 `Range.getClientRects()` 按行合并成圆角高亮，
+    隐藏 `textLayer` 的原生 `::selection`。CJK PDF 的文本层 span 经常重叠/拆碎，
+    原生高亮会出现深浅不一和锯齿块；现在是每行一个干净的浅蓝色圆角条
+  - 三击选中整段（双击保持浏览器原生的选词）：PDF 文本层没有可靠段落结构（实测
+    《巴菲特致股东的信》一页是 1550 个逐字 span，连 `markedContent` 都没有），因此
+    按几何重建：按 top 聚成行、按水平大间距切成列/单元格，再用「首行缩进 / 段落行距 /
+    上一行是否短行」切段；三击 glyph 后把选区扩成整段，菜单、高亮、引用都作用在整段上
+    （用 `MouseEvent.detail === 3` 计数，遵循系统双击间隔与位置）
+  - 高亮标注支持 `rects`（多行逐行矩形）：三击整段后点「高亮」会得到 9 条贴合行高
+    的黄色条，而不是一个覆盖整段的巨大包围盒
+  - 验证：在该书第 3 页三击「这一切」，选中 363 字 / 9 行的完整段落，与用户截图
+    中的选区一致；自绘高亮为 9 个干净圆角条；点「高亮」后生成 1 条标注 / 9 个行矩形
+- [x] 目录（PDF 书签 + EPUB TOC）：
+  - `PdfViewer` 用 `pdf.getOutline()` 递归解析，`getDestination`/`getPageIndex` 解析成页码后
+    回报 shell；活动栏新增「目录」视图，侧栏列表支持缩进、当前页高亮、点击跳转
+  - EPUB 复用 `book.navigation.toc`，按 spine index 映射到章节；PDF 工具栏提供目录入口
+- [x] 修复：新开 PDF 使用自身持久化页（`loadReadingPage(id) ?? 1`），不再继承上一篇文档
+- [x] 验证：`typecheck` / `build` / `biome check` 通过；离屏 Electron harness 验证连续↔单页、
+  适应页面、滚轮缩放锚点、选择菜单→高亮落点、textarea 空格不被劫持、阅读位置恢复；
+  1501 页文档跳到第 1000 页后只保留 2 个活跃 canvas；打包版 + 临时 userData 库经 CDP
+  打开 PDF/EPUB，核对工具栏、目录、选择引用与状态栏
+
 ## 2026-10-19 修复：追问时历史丢失上一轮工具调用与结果
 
 - [x] 反馈：多轮工具调用的会话里，前面的调用结果没有正确进入上下文

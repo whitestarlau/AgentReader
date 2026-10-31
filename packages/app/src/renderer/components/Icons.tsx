@@ -4,6 +4,7 @@ type IconName =
 	| "library"
 	| "search"
 	| "annotations"
+	| "toc"
 	| "chat"
 	| "settings"
 	| "close"
@@ -38,6 +39,11 @@ const PATHS: Record<IconName, ReactNode> = {
 		</>
 	),
 	annotations: <path d="M3.2 2.4h9.6v11.2L8 10.6l-4.8 3z" />,
+	toc: (
+		<>
+			<path d="M2.6 4h1.2M6 4h7.4M2.6 8h1.2M6 8h7.4M2.6 12h1.2M6 12h7.4" />
+		</>
+	),
 	chat: <path d="M2.4 3.4h11.2v7.2H7.2L3.4 13.6l.6-3H2.4z" />,
 	settings: (
 		<g transform="scale(0.66667)">

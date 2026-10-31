@@ -2,11 +2,15 @@ import { useState, useRef, useEffect } from "react";
 import { ocrCanvas } from "../ocr.ts";
 import { MODIFIER_LABEL, type SelectionKind } from "../selection.ts";
 
+export type AnnotationRect = { x: number; y: number; w: number; h: number };
+
 export type Annotation = {
 	id: string;
 	page: number;
 	type: "highlight" | "rect";
-	rect: { x: number; y: number; w: number; h: number };
+	rect: AnnotationRect;
+	/** Per-line boxes for a multi-line text selection (PDF); `rect` is the union. */
+	rects?: AnnotationRect[];
 	text?: string;
 	color: string;
 	/** EPUB only: the epub.js CFI range this highlight is anchored to. */
@@ -19,8 +23,12 @@ type Props = {
 	onUpdate: (id: string, patch: Partial<Annotation>) => void;
 	onDelete: (id: string) => void;
 	onRectSelect: (text: string, page: number, kind: Extract<SelectionKind, "rect" | "ocr">) => void;
+	/** Send the selected annotation's text to the AI chat composer. */
+	onQuote?: (a: Annotation) => void;
 	page: number;
 	ocrLang: string;
+	/** Only the page in the reading position shows the bottom hint strip. */
+	showHint?: boolean;
 };
 
 /** Pull the textLayer spans that intersect a normalized rectangle. */
@@ -55,8 +63,10 @@ export function AnnotationLayer({
 	onUpdate,
 	onDelete,
 	onRectSelect,
+	onQuote,
 	page,
 	ocrLang,
+	showHint = true,
 }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	const [drag, setDrag] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -217,29 +227,31 @@ export function AnnotationLayer({
 				}
 			}}
 		>
-			{pageAnns.map((a) => (
-				<div
-					key={a.id}
-					data-ann={a.id}
-					onClick={(e) => {
-						e.stopPropagation();
-						setSelectedId(a.id);
-					}}
-					title="点击查看操作"
-					style={{
-						position: "absolute",
-						left: `${a.rect.x * 100}%`,
-						top: `${a.rect.y * 100}%`,
-						width: `${a.rect.w * 100}%`,
-						height: `${a.rect.h * 100}%`,
-						background: a.color,
-						border: a.id === selectedId ? "2px solid #2196f3" : a.type === "rect" ? "2px solid #ff9800" : "none",
-						pointerEvents: "auto",
-						cursor: "pointer",
-						boxShadow: a.id === selectedId ? "0 0 0 2px #2196f355" : "none",
-					}}
-				/>
-			))}
+			{pageAnns.flatMap((a) =>
+				(a.rects?.length ? a.rects : [a.rect]).map((box, i) => (
+					<div
+						key={`${a.id}:${i}`}
+						data-ann={a.id}
+						onClick={(e) => {
+							e.stopPropagation();
+							setSelectedId(a.id);
+						}}
+						title="点击查看操作"
+						style={{
+							position: "absolute",
+							left: `${box.x * 100}%`,
+							top: `${box.y * 100}%`,
+							width: `${box.w * 100}%`,
+							height: `${box.h * 100}%`,
+							background: a.color,
+							border: a.id === selectedId ? "2px solid #2196f3" : a.type === "rect" ? "2px solid #ff9800" : "none",
+							pointerEvents: "auto",
+							cursor: "pointer",
+							boxShadow: a.id === selectedId ? "0 0 0 2px #2196f355" : "none",
+						}}
+					/>
+				)),
+			)}
 			{drag && (
 				<div
 					style={{
@@ -297,6 +309,17 @@ export function AnnotationLayer({
 					<span style={{ fontSize: 12, color: "#666", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
 						{selected.type === "rect" ? "框选" : "高亮"} {selected.text ? `· ${selected.text.slice(0, 20)}` : "· 无文本"}
 					</span>
+					{selected.text?.trim() && onQuote && (
+						<button
+							onClick={() => {
+								onQuote(selected);
+								setSelectedId(null);
+							}}
+							style={{ fontSize: 12, background: "#0e639c", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}
+						>
+							引用
+						</button>
+					)}
 					<button
 						onClick={() => {
 							onDelete(selected.id);
@@ -315,12 +338,12 @@ export function AnnotationLayer({
 					</button>
 				</div>
 			)}
-			{!selected && !drag && !ocrState && (
+			{showHint && !selected && !drag && !ocrState && (
 				<div style={{ position: "absolute", bottom: 4, right: 4, fontSize: 11, background: "#0008", color: "#fff", padding: "2px 6px", borderRadius: 4, pointerEvents: "none" }}>
-					{MODIFIER_LABEL} 拖拽框选 · 点击标注可删除 · Esc 取消
+					{MODIFIER_LABEL} 拖拽框选 · 双击选词 · 三击选段 · 点击标注可操作
 				</div>
 			)}
-			{drag && (
+			{showHint && drag && (
 				<div style={{ position: "absolute", bottom: 28, right: 4, fontSize: 11, background: "#000c", color: "#fff", padding: "4px 8px", borderRadius: 4, pointerEvents: "none" }}>
 					松开创建 · Esc/右键取消
 				</div>

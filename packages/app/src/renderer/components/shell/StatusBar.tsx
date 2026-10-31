@@ -70,7 +70,8 @@ export function StatusBar({
 						{/* EPUB is reflowable: no fixed page count, so report the chapter instead. */}
 						{doc.ext === "epub" ? `第 ${page || 1} 章` : `${page} / ${total || "–"} 页`}
 					</span>
-					<span className="status-item">{Math.round(zoom * 100)}%</span>
+					{/* EPUB is reflowable; its zoom is not controlled by the reader. */}
+					{doc.ext !== "epub" && <span className="status-item">{Math.round(zoom * 100)}%</span>}
 				</>
 			) : (
 				<span className="status-item status-accent">AgentReader</span>

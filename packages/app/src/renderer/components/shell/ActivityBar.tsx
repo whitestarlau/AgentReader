@@ -39,6 +39,7 @@ export function ActivityBar({
 			<div className="activitybar-top">
 				{item("library", `图书馆 (${MOD_KEY}B)`, sidebarOpen && view === "explorer", () => onSelectView("explorer"))}
 				{item("search", "搜索文档", sidebarOpen && view === "search", () => onSelectView("search"))}
+				{item("toc", "目录", sidebarOpen && view === "outline", () => onSelectView("outline"))}
 				{item("annotations", "标注", sidebarOpen && view === "annotations", () => onSelectView("annotations"), annotationCount)}
 			</div>
 			<div className="activitybar-bottom">

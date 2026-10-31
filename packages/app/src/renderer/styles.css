@@ -762,7 +762,7 @@ textarea::placeholder {
 	transition: width 0.15s ease;
 }
 
-/* document stage */
+/* document stage (EPUB error/loading surfaces; the PDF reader has its own) */
 .document-stage {
 	flex: 1;
 	min-height: 0;
@@ -772,35 +772,317 @@ textarea::placeholder {
 	align-items: flex-start;
 	justify-content: center;
 }
-.page-shell {
+
+/* ------------------------------------------------------------------- PDF */
+.pdf-toolbar {
+	gap: 4px;
+	padding: 4px 8px;
+	/* Lets the toolbar drop the first/last-page buttons before it wraps in a
+	   narrow editor (both sidebars open). */
+	container-type: inline-size;
+}
+@container (max-width: 600px) {
+	.pdf-toolbar .pdf-jump-edge {
+		display: none;
+	}
+}
+.pdf-toolbar .toolbar-group {
+	padding: 0 2px;
+}
+.pdf-ocr-wrap {
 	position: relative;
+	display: inline-flex;
+	align-items: center;
+}
+.pdf-ocr-dot {
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	margin-left: 5px;
+	border-radius: 50%;
+	background: #e0a458;
+	animation: pdf-dot-pulse 1.2s ease-in-out infinite;
+}
+@keyframes pdf-dot-pulse {
+	50% {
+		opacity: 0.35;
+	}
+}
+.pdf-ocr-menu {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	z-index: 60;
+	min-width: 156px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 5px;
+	background: var(--vscode-widget);
+	border: 1px solid var(--vscode-border);
+	border-radius: 6px;
+	box-shadow: var(--vscode-shadow);
+}
+.pdf-ocr-menu button {
+	width: 100%;
+	padding: 5px 8px;
+	text-align: left;
+	font-size: 12px;
+	color: var(--vscode-fg);
+	background: transparent;
+	border: none;
+	border-radius: 4px;
+}
+.pdf-ocr-menu button:hover:not(:disabled) {
+	background: var(--vscode-hover);
+}
+.pdf-ocr-menu-hint {
+	margin-top: 3px;
+	padding: 4px 8px 2px;
+	border-top: 1px solid var(--vscode-border-soft);
+	color: var(--vscode-fg-dim);
+	font-size: 10px;
+}
+.pdf-page-field {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0 2px;
+}
+.pdf-page-input {
+	width: 46px;
+	text-align: center;
+	padding: 1px 4px;
+	background: #1e1e1e;
+	border-color: transparent;
+	font-variant-numeric: tabular-nums;
+}
+.pdf-page-input:focus {
+	border-color: var(--vscode-focus);
+}
+.pdf-page-total {
+	font-size: 11px;
+	color: var(--vscode-fg-dim);
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+.pdf-zoom-label {
+	min-width: 40px;
+	text-align: center;
+	font-size: 11px;
+	color: var(--vscode-fg-dim);
+	font-variant-numeric: tabular-nums;
+}
+.pdf-reading-progress {
+	flex: 0 0 2px;
+	height: 2px;
+	background: #242424;
+	overflow: hidden;
+}
+.pdf-reading-progress > span {
+	display: block;
+	height: 100%;
+	background: var(--vscode-accent);
+	transition: width 0.12s linear;
+}
+.pdf-stage {
+	flex: 1;
+	min-height: 0;
+	position: relative;
+	overflow: auto;
+	background: #1a1a1a;
+	outline: none;
+	overscroll-behavior: contain;
+}
+.pdf-stage:focus-visible {
+	box-shadow: inset 0 0 0 1px var(--vscode-focus);
+}
+.pdf-stage.paged {
+	display: flex;
+}
+.pdf-pages {
+	position: relative;
+	width: max-content;
+	min-width: 100%;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 32px;
+	padding: 24px 24px 80px;
+}
+.pdf-paged-inner {
+	position: relative;
+	flex: 0 0 auto;
+	margin: auto;
+	padding: 24px;
+	display: flex;
+}
+/* Custom selection paint: the native per-span ::selection leaves uneven
+   alpha on CJK PDFs whose text-layer spans overlap. */
+.pdf-selection-layer {
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	pointer-events: none;
+}
+.pdf-selection-rect {
+	position: absolute;
+	border-radius: 3px;
+	background: #2d7fd3;
+	opacity: 0.24;
+	mix-blend-mode: multiply;
+	pointer-events: none;
+}
+.pdf-shell {
+	position: relative;
+	flex: 0 0 auto;
 	background: var(--page-bg);
-	width: fit-content;
 	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 10px 30px rgba(0, 0, 0, 0.55);
 	border-radius: 2px;
 }
-.page-nav {
-	width: 44px;
-	align-self: stretch;
-	min-height: 320px;
+.pdf-page {
+	position: absolute;
+	inset: 0;
+	background: var(--page-bg);
+}
+.pdf-page-surface {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+}
+.pdf-canvas {
+	display: block;
+}
+.pdf-page-label {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: -20px;
+	text-align: center;
+	font-size: 10px;
+	color: rgba(255, 255, 255, 0.28);
+	user-select: none;
+	pointer-events: none;
+	font-variant-numeric: tabular-nums;
+}
+.pdf-stage-message {
+	position: absolute;
+	inset: 0;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	border: none;
+	gap: 10px;
+	padding: 24px;
+	color: var(--vscode-fg-dim);
+	font-size: 13px;
+	text-align: center;
+}
+.pdf-stage-message.error {
+	color: #f48771;
+}
+.pdf-stage-error-detail {
+	margin-top: 6px;
+	max-width: 560px;
+	color: var(--vscode-fg-dim);
+	font-size: 12px;
+	white-space: pre-wrap;
+}
+.pdf-spinner {
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	border: 2px solid rgba(255, 255, 255, 0.2);
+	border-top-color: var(--vscode-accent);
+	border-radius: 50%;
+	animation: pdf-spin 0.7s linear infinite;
+}
+@keyframes pdf-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+.pdf-page-loading {
+	position: absolute;
+	top: 10px;
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 10px;
+	background: rgba(255, 255, 255, 0.92);
+	border: 1px solid #e2e2e2;
+	border-radius: 999px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+	color: #555;
+	font-size: 11px;
+	pointer-events: none;
+	white-space: nowrap;
+}
+.pdf-page-loading .pdf-spinner {
+	width: 10px;
+	height: 10px;
+	border-color: #ddd;
+	border-top-color: var(--vscode-accent);
+}
+.pdf-page-error {
+	position: absolute;
+	top: 8px;
+	left: 8px;
+	padding: 2px 8px;
+	border-radius: 4px;
+	background: #b3261e;
+	color: #fff;
+	font-size: 11px;
+}
+
+/* outline sidebar (PDF bookmarks / EPUB TOC) */
+.outline-list {
+	display: flex;
+	flex-direction: column;
+	padding: 4px 0 12px;
+}
+.outline-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 4px 10px;
 	background: transparent;
-	color: rgba(255, 255, 255, 0.25);
-	font-size: 26px;
-	cursor: pointer;
+	border: none;
 	border-radius: 0;
-	user-select: none;
+	color: var(--vscode-fg);
+	font-size: 12px;
+	line-height: 1.45;
+	text-align: left;
+	cursor: pointer;
 }
-.page-nav:hover:not(:disabled) {
-	background: rgba(255, 255, 255, 0.04);
-	color: rgba(255, 255, 255, 0.7);
+.outline-item:hover:not(:disabled) {
+	background: var(--vscode-hover);
 }
-.page-nav:disabled {
-	opacity: 1;
+.outline-item.active {
+	background: var(--vscode-active);
+	color: var(--vscode-fg-bright);
+}
+.outline-item:disabled {
+	opacity: 0.55;
 	cursor: default;
+}
+.outline-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.outline-page {
+	flex: 0 0 auto;
+	color: var(--vscode-fg-dim);
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+}
+.outline-item.active .outline-page {
+	color: rgba(255, 255, 255, 0.75);
 }
 
 /* welcome screen */
@@ -1608,9 +1890,10 @@ body.resizing iframe {
 	padding: 0 5px;
 }
 
-/* EPUB text-selection menu and highlight action bar */
+/* text-selection menu and highlight action bar (EPUB + PDF) */
 .epub-sel-menu,
-.epub-ann-bar {
+.epub-ann-bar,
+.pdf-sel-menu {
 	position: absolute;
 	z-index: 20;
 	display: flex;
@@ -1633,7 +1916,8 @@ body.resizing iframe {
 	max-width: 90%;
 }
 .epub-sel-menu button,
-.epub-ann-bar button {
+.epub-ann-bar button,
+.pdf-sel-menu button {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
@@ -1645,17 +1929,26 @@ body.resizing iframe {
 	color: #333;
 	cursor: pointer;
 }
-.epub-sel-menu button.primary {
+.epub-sel-menu button.primary,
+.pdf-sel-menu button.primary {
 	background: #0e639c;
 	border-color: #0e639c;
 	color: #fff;
 }
 .epub-sel-menu button:hover:not(:disabled),
-.epub-ann-bar button:hover {
+.epub-ann-bar button:hover,
+.pdf-sel-menu button:hover:not(:disabled) {
 	background: #ececec;
 }
-.epub-sel-menu button.primary:hover:not(:disabled) {
+.epub-sel-menu button.primary:hover:not(:disabled),
+.pdf-sel-menu button.primary:hover:not(:disabled) {
 	background: #1177bb;
+}
+.pdf-sel-menu {
+	transform: translate(-50%, calc(-100% - 6px));
+}
+.pdf-sel-menu.below {
+	transform: translate(-50%, 10px);
 }
 .epub-ann-bar button.danger {
 	background: #ff4444;
@@ -2231,7 +2524,9 @@ body.resizing iframe {
 	height: 0;
 }
 .textLayer ::selection {
-	background: rgba(38, 121, 209, 0.4);
+	/* The PDF viewer paints selection itself (see .pdf-selection-rect) so the
+	   highlight is one clean rect per line instead of per overlapping span. */
+	background: transparent;
 }
 
 /* Settings: per-model context window / max output overrides */

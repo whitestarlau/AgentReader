@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../Icons.tsx";
 import type { Annotation } from "../AnnotationLayer.tsx";
-import type { ActivityView, DocMeta, DocSearchResult } from "../../types.ts";
+import type { ActivityView, DocMeta, DocSearchResult, OutlineItem } from "../../types.ts";
 
 type Props = {
 	view: ActivityView;
@@ -9,6 +9,7 @@ type Props = {
 	docs: DocMeta[];
 	selectedId: string | null;
 	annotations: Annotation[];
+	outline?: OutlineItem[];
 	page: number;
 	isEpub?: boolean;
 	onImport: () => void;
@@ -23,6 +24,7 @@ const TITLES: Record<ActivityView, string> = {
 	explorer: "图书馆",
 	search: "搜索",
 	annotations: "标注",
+	outline: "目录",
 };
 
 /** Wrap the first case-insensitive match of `q` in a <mark>. */
@@ -44,6 +46,7 @@ export function SideBar({
 	docs,
 	selectedId,
 	annotations,
+	outline = [],
 	page,
 	isEpub,
 	onImport,
@@ -76,6 +79,10 @@ export function SideBar({
 		if (!q) return docs;
 		return docs.filter((d) => d.title.toLowerCase().includes(q));
 	}, [docs, query]);
+
+	// Several TOC entries often share one locator (front matter, EPUB sections);
+	// highlight only the first so the list doesn't look entirely selected.
+	const activeOutlineIndex = useMemo(() => outline.findIndex((item) => item.page === page), [outline, page]);
 
 	// Default to in-document search whenever a document is open.
 	useEffect(() => {
@@ -293,6 +300,39 @@ export function SideBar({
 								<div className="empty-hint">没有匹配「{query}」的文档</div>
 							)}
 						</>
+					)}
+				</div>
+			)}
+
+			{view === "outline" && (
+				<div className="sidebar-content">
+					<div className="sidebar-header" style={{ height: 28, flexBasis: 28 }}>
+						<span style={{ textTransform: "none", letterSpacing: 0 }}>{outline.length} 个条目</span>
+					</div>
+					{!selectedId ? (
+						<div className="empty-hint">先打开一个文档，再查看目录。</div>
+					) : outline.length === 0 ? (
+						<div className="empty-hint">
+							<div className="empty-hint-title">没有可用目录</div>
+							{isEpub ? "这本书的 EPUB 未提供目录信息。" : "这个 PDF 没有书签目录。可以用页码、全文检索或标注跳转。"}
+						</div>
+					) : (
+						<div className="sidebar-section outline-list">
+							{outline.map((item, i) => (
+								<button
+									key={`${i}:${item.title}`}
+									type="button"
+									className={`outline-item${i === activeOutlineIndex ? " active" : ""}`}
+									style={{ paddingLeft: 10 + Math.min(6, item.depth) * 12 }}
+									disabled={!item.page}
+									title={item.page ? `跳到${isEpub ? `第 ${item.page} 章` : `第 ${item.page} 页`}` : `${item.title}（无页码）`}
+									onClick={() => item.page && onJumpToPage(item.page)}
+								>
+									<span className="outline-title">{item.title}</span>
+									{item.page && <span className="outline-page">{isEpub ? `第${item.page}章` : `P${item.page}`}</span>}
+								</button>
+							))}
+						</div>
 					)}
 				</div>
 			)}

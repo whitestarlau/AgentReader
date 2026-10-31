@@ -8,11 +8,51 @@
 function pageKey(docId: string) {
 	return `reading.page.${docId}`;
 }
+function pdfKey(docId: string) {
+	return `reading.pdf.${docId}`;
+}
 function cfiKey(docId: string) {
 	return `reading.cfi.${docId}`;
 }
 function locKey(docId: string) {
 	return `reading.loc.${docId}`;
+}
+
+/**
+ * PDF reading position. `offset` is the fraction of the page that had been
+ * scrolled past (0 = page top, 1 = page bottom), so continuous mode can resume
+ * mid-page even when the window/zoom changed since the last session.
+ */
+export type PdfLocation = { page: number; offset: number };
+
+export function loadPdfLocation(docId: string): PdfLocation | null {
+	try {
+		const raw = localStorage.getItem(pdfKey(docId));
+		if (raw) {
+			const o = JSON.parse(raw) as { page?: unknown; offset?: unknown };
+			const page = typeof o.page === "number" && Number.isFinite(o.page) ? Math.floor(o.page) : 0;
+			const offset = typeof o.offset === "number" && Number.isFinite(o.offset) ? o.offset : 0;
+			if (page >= 1) return { page, offset: Math.min(1, Math.max(0, offset)) };
+		}
+	} catch {
+		// fall through to the legacy page-only location
+	}
+	const legacy = loadReadingPage(docId);
+	return legacy ? { page: legacy, offset: 0 } : null;
+}
+
+export function savePdfLocation(docId: string, loc: PdfLocation) {
+	try {
+		if (loc.page < 1) return;
+		localStorage.setItem(
+			pdfKey(docId),
+			JSON.stringify({
+				t: "pdf",
+				page: Math.floor(loc.page),
+				offset: Math.min(1, Math.max(0, loc.offset)),
+			}),
+		);
+	} catch {}
 }
 
 /**

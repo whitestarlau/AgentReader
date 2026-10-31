@@ -21,6 +21,7 @@ import type {
   CustomProvider,
   DocMeta,
   DocSearchResult,
+  OutlineItem,
   PermissionDecision,
   PermissionRequest,
   SkillImportResult,
@@ -109,6 +110,7 @@ function App() {
   const [ocrLang, setOcrLang] = useState("chi_sim+eng");
   const [ai, setAi] = useState<AiConfig | null>(null);
   const [anns, setAnns] = useState<Annotation[]>([]);
+  const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [page, setPage] = useState(1);
   const [gotoChapter, setGotoChapter] = useState<{ chapter: number; token: number } | null>(null);
   const [total, setTotal] = useState(0);
@@ -172,13 +174,19 @@ function App() {
   useEffect(() => {
     if (!selected) {
       setTotal(0);
+      setPage(1);
+      setOutline([]);
       return;
     }
     const ext = docsRef.current.find((d) => d.id === selected)?.ext;
     // EPUB pages come from epub.js location generation (reported by the viewer),
-    // so reset stale values from the previously opened document.
-    if (ext === "epub") setPage(1);
+    // so reset stale values from the previously opened document. PDFs resume
+    // their own persisted page instead of inheriting the previous document's.
     setTotal(0);
+    setOutline([]);
+    // A pending citation belongs to the document it was selected in.
+    setSelection(null);
+    setPage(ext === "epub" ? 1 : (loadReadingPage(selected) ?? 1));
   }, [selected]);
 
   useEffect(() => {
@@ -213,10 +221,7 @@ function App() {
     setSelected(id);
     // Reflect the stored reading position right away (the viewer restores it too).
     const ext = docs.find((d) => d.id === id)?.ext;
-    if (ext !== "epub") {
-      const saved = loadReadingPage(id);
-      if (saved) setPage(saved);
-    }
+    if (ext !== "epub") setPage(loadReadingPage(id) ?? 1);
   };
 
   // 菜单命令（主进程 app:menu 事件）。用 ref 保存最新处理函数，订阅只建立一次，
@@ -267,13 +272,9 @@ function App() {
     }
   };
 
-  const onTextSelected = (t: string, p: number, r?: Annotation["rect"]) => {
-    setSelection({ text: t, page: p, kind: "highlight" });
-    setPage(p);
-    if (t) {
-      addAnn({ id: crypto.randomUUID(), page: p, type: "highlight", rect: r ?? { x: 0, y: 0.2, w: 1, h: 0.05 }, text: t, color: "#ffeb3b88" });
-      setChatOpen(true);
-    }
+  const openOutline = () => {
+    setSidebarView("outline");
+    setSidebarOpen(true);
   };
 
   // Jump to a page (PDF) or chapter (EPUB) from annotations or search results.
@@ -316,6 +317,7 @@ function App() {
               docs={docs}
               selectedId={selected}
               annotations={anns}
+              outline={outline}
               page={page}
               isEpub={isEpub}
               onImport={importDoc}
@@ -353,6 +355,7 @@ function App() {
                 onAnnotationDelete={deleteAnn}
                 onPageChange={setPage}
                 onTotalChange={setTotal}
+                onOutlineChange={setOutline}
                 goto={gotoChapter}
                 layoutSignal={`${sidebarOpen}:${chatOpen}:${sidebarWidth}:${chatWidth}`}
                 onTextSelected={(t, p) => {
@@ -362,6 +365,7 @@ function App() {
               />
             ) : (
               <PdfViewer
+                key={selected}
                 docId={selected}
                 page={page}
                 onPageChange={setPage}
@@ -370,9 +374,11 @@ function App() {
                 onZoomChange={setZoom}
                 onOcrJob={setOcrJob}
                 onTotalChange={setTotal}
+                onOutlineChange={setOutline}
+                onOpenOutline={openOutline}
                 onAnnotationCreate={(a) => {
                   addAnn(a);
-                  if (a.text) setSelection({ text: a.text, page: a.page, kind: "rect" });
+                  if (a.text) setSelection({ text: a.text, page: a.page, kind: a.type === "highlight" ? "highlight" : "rect" });
                 }}
                 onAnnotationUpdate={updateAnn}
                 onAnnotationDelete={deleteAnn}
@@ -382,7 +388,10 @@ function App() {
                     setChatOpen(true);
                   }
                 }}
-                onTextSelected={onTextSelected}
+                onTextSelected={(t, p) => {
+                  setSelection({ text: t, page: p, kind: "highlight" });
+                  setChatOpen(true);
+                }}
               />
             )
           ) : (
