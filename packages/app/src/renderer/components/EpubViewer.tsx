@@ -166,6 +166,7 @@ export function EpubViewer({
 	// Pending text selection in the book, shown as a floating action menu so the
 	// user chooses between highlighting it and quoting it to the AI.
 	const [menu, setMenu] = useState<{ cfi: string; text: string; chapter: number; x: number; y: number } | null>(null);
+	const [copied, setCopied] = useState(false);
 	// A previously-created highlight the user clicked, for the delete/quote bar.
 	const [activeAnnId, setActiveAnnId] = useState<string | null>(null);
 	// Highlight CFIs currently drawn inside the rendition, so re-applying stays idempotent.
@@ -358,6 +359,7 @@ export function EpubViewer({
 					}
 				} catch {}
 				setActiveAnnId(null);
+				setCopied(false);
 				setMenu({ cfi: cfiRange, text, chapter, x, y });
 			});
 			// 单一 keydown 通道：只绑定 iframe 文档（非 passive，preventDefault 生效）。
@@ -501,7 +503,7 @@ export function EpubViewer({
 			type: "highlight",
 			rect: { x: 0, y: 0, w: 0, h: 0 },
 			text: menu.text,
-			color: "#ffeb3b88",
+			color: "#ffeb3b61",
 			cfi: menu.cfi,
 		};
 		onAnnotationCreate(a);
@@ -514,6 +516,22 @@ export function EpubViewer({
 		onTextSelected(menu.text, menu.chapter);
 		setMenu(null);
 		clearIframeSelection();
+	};
+
+	const copySelection = async () => {
+		if (!menu) return;
+		const target = menu;
+		try {
+			await navigator.clipboard.writeText(menu.text);
+			setCopied(true);
+		} catch (e) {
+			console.error("[epub] copy failed", e);
+		}
+		clearIframeSelection();
+		window.setTimeout(() => {
+			setCopied(false);
+			setMenu((m) => (m === target ? null : m));
+		}, 900);
 	};
 
 	const activeAnn = annotations.find((a) => a.id === activeAnnId) ?? null;
@@ -605,6 +623,9 @@ export function EpubViewer({
 					<button type="button" onClick={quoteSelection}>
 						<Icon name="chat" size={12} /> 引用提问
 					</button>
+					<button type="button" onClick={copySelection}>
+						{copied ? "已复制" : "复制"}
+					</button>
 					<button type="button" onClick={() => { setMenu(null); clearIframeSelection(); }} title="取消">
 						✕
 					</button>
@@ -612,8 +633,8 @@ export function EpubViewer({
 			)}
 
 			{activeAnn && !menu && (
-				<div className="epub-ann-bar" data-toolbar>
-					<span className="epub-ann-text">{activeAnn.text?.trim().slice(0, 40) || "（无文本）"}</span>
+				<div className="reader-ann-bar" data-toolbar>
+					<span className="reader-ann-text">{activeAnn.text?.trim().slice(0, 40) || "（无文本）"}</span>
 					<button type="button" onClick={() => { onTextSelected(activeAnn.text ?? "", activeAnn.page); setActiveAnnId(null); }}>
 						<Icon name="chat" size={12} /> 引用
 					</button>

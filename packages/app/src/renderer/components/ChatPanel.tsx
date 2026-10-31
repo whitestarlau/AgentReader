@@ -6,6 +6,7 @@ import type { Annotation } from "./AnnotationLayer.tsx";
 import { type Selection, MODIFIER_LABEL, SELECTION_LABEL } from "../selection.ts";
 import { buildHistory, type HistoryMessage } from "../history.ts";
 import { estimateTokens, formatTokens } from "../tokens.ts";
+import type { OutlineItem } from "../types.ts";
 
 type TimelineItem =
 	| { kind: "reasoning"; content: string }
@@ -24,7 +25,19 @@ type ChatRow = { id?: string; role?: string; content?: string; timeline?: Timeli
 type Conv = { id: string; title: string };
 /** A citation captured from the viewer, shown above the composer before send. */
 type Quote = { text: string; page: number; kind: Selection["kind"] };
-type Props = { selection: Selection | null; docId: string | null; page: number; isEpub?: boolean; annotations?: Annotation[]; contextWindow?: number; newChatToken?: number };
+type Props = {
+	selection: Selection | null;
+	docId: string | null;
+	page: number;
+	isEpub?: boolean;
+	annotations?: Annotation[];
+	/** Flattened TOC reported by the viewer (PDF bookmarks / EPUB TOC). */
+	outline?: OutlineItem[];
+	/** PDF page count, for the "@ 页码" picker. */
+	totalPages?: number;
+	contextWindow?: number;
+	newChatToken?: number;
+};
 /** Real or estimated context usage for the current conversation. */
 type ContextUsage = { used: number; max: number; estimated: boolean };
 
@@ -33,7 +46,7 @@ type Outline = { unit: "page" | "chapter"; numPages: number; chapterLabels: stri
 /** An item the user can reference with "@" in the composer. */
 type MentionItem = {
 	key: string;
-	kind: "annotation" | "chapter";
+	kind: "annotation" | "chapter" | "section" | "page";
 	page: number;
 	/** Shown in the picker list. */
 	label: string;
@@ -43,7 +56,27 @@ type MentionItem = {
 	ref: string;
 };
 
-type MentionCategory = "annotation" | "chapter";
+type MentionCategory = "annotation" | "chapter" | "section" | "page";
+
+const CATEGORY_LABEL: Record<MentionCategory, string> = {
+	chapter: "章节",
+	section: "目录",
+	page: "页码",
+	annotation: "标注",
+};
+
+function mentionKindLabel(kind: MentionItem["kind"]): string {
+	if (kind === "chapter") return "章节";
+	if (kind === "section") return "目录";
+	if (kind === "page") return "页码";
+	return "标注";
+}
+
+function mentionIcon(kind: MentionItem["kind"] | MentionCategory): "book" | "file" | "annotations" {
+	if (kind === "chapter" || kind === "section") return "book";
+	if (kind === "page") return "file";
+	return "annotations";
+}
 
 /** A row in the "@" picker: either a category ("章节"/"标注") or one item. */
 type MentionRow =
@@ -95,9 +128,10 @@ function parseUserPrompt(content: string): { refs: RefBlock[]; question: string 
 	return { refs, question };
 }
 
-function refIcon(header: string): "book" | "annotations" | "chat" {
-	if (header.includes("章节")) return "book";
+function refIcon(header: string): "book" | "file" | "annotations" | "chat" {
 	if (header.includes("标注")) return "annotations";
+	if (header.includes("页码")) return "file";
+	if (header.includes("章节") || header.includes("目录")) return "book";
 	return "chat";
 }
 
@@ -250,7 +284,17 @@ function TimelineGroup({ items, live }: { items: TimelineItem[]; live: boolean }
 	);
 }
 
-export function ChatPanel({ selection, docId, page, isEpub, annotations = [], contextWindow, newChatToken = 0 }: Props) {
+export function ChatPanel({
+	selection,
+	docId,
+	page,
+	isEpub,
+	annotations = [],
+	outline: documentOutline = [],
+	totalPages = 0,
+	contextWindow,
+	newChatToken = 0,
+}: Props) {
 	const [convs, setConvs] = useState<Conv[]>([]);
 	const [convId, setConvId] = useState<string | null>(null);
 	const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -385,7 +429,54 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 			};
 		});
 	}, [outline]);
-	const allMentions = useMemo(() => [...annotationMentions, ...chapterMentions], [annotationMentions, chapterMentions]);
+	// PDF bookmarks act like EPUB chapters. The viewer already resolved the
+	// bookmarks to real page numbers, so no extra PDF parsing is needed here.
+	const sectionMentions = useMemo<MentionItem[]>(() => {
+		if (isEpub) return [];
+		const items: MentionItem[] = [];
+		for (const [i, item] of documentOutline.entries()) {
+			const page = item.page;
+			if (typeof page !== "number" || page < 1) continue;
+			const title = (item.title ?? "").replace(/\s+/g, " ").trim();
+			const short = title.slice(0, 24);
+			items.push({
+				key: `section:${i}:${page}`,
+				kind: "section",
+				page,
+				label: `P${page}${short ? ` · ${short}` : ""}`,
+				token: `@目录(P${page}${short ? `·${short.slice(0, 12)}` : ""})`,
+				ref: `【引用目录 · P${page}${title ? ` · ${title}` : ""}】`,
+			});
+		}
+		return items;
+	}, [isEpub, documentOutline]);
+
+	// A PDF has no chapters; @-mention a page instead. Order the current page
+	// first (then its neighbours) so the category is useful without scrolling.
+	const pageMentions = useMemo<MentionItem[]>(() => {
+		if (isEpub || totalPages < 1) return [];
+		const current = Math.min(Math.max(page || 1, 1), totalPages);
+		const order: number[] = [current];
+		for (let d = 1; d <= 20; d++) {
+			if (current - d >= 1) order.push(current - d);
+			if (current + d <= totalPages) order.push(current + d);
+		}
+		const seen = new Set(order);
+		for (let n = 1; n <= totalPages; n++) if (!seen.has(n)) order.push(n);
+		return order.map((n) => ({
+			key: `page:${n}`,
+			kind: "page",
+			page: n,
+			label: `P${n}`,
+			token: `@P${n}`,
+			ref: `【引用页码 · P${n}】`,
+		}));
+	}, [isEpub, totalPages, page]);
+
+	const allMentions = useMemo(
+		() => [...annotationMentions, ...chapterMentions, ...sectionMentions, ...pageMentions],
+		[annotationMentions, chapterMentions, sectionMentions, pageMentions],
+	);
 
 	// Picker rows. With no input: first the categories, then (after choosing one)
 	// its items. While typing, search across every item directly.
@@ -400,13 +491,22 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 		}
 		if (!mention.category) {
 			const cats: MentionRow[] = [];
-			if (chapterMentions.length) cats.push({ kind: "category", category: "chapter", label: "章节", count: chapterMentions.length });
-			if (annotationMentions.length) cats.push({ kind: "category", category: "annotation", label: "标注", count: annotationMentions.length });
+			if (chapterMentions.length) cats.push({ kind: "category", category: "chapter", label: CATEGORY_LABEL.chapter, count: chapterMentions.length });
+			if (sectionMentions.length) cats.push({ kind: "category", category: "section", label: CATEGORY_LABEL.section, count: sectionMentions.length });
+			if (pageMentions.length) cats.push({ kind: "category", category: "page", label: CATEGORY_LABEL.page, count: pageMentions.length });
+			if (annotationMentions.length) cats.push({ kind: "category", category: "annotation", label: CATEGORY_LABEL.annotation, count: annotationMentions.length });
 			return cats;
 		}
-		const list = mention.category === "chapter" ? chapterMentions : annotationMentions;
+		const list =
+			mention.category === "chapter"
+				? chapterMentions
+				: mention.category === "section"
+					? sectionMentions
+					: mention.category === "page"
+						? pageMentions
+						: annotationMentions;
 		return list.slice(0, 200).map((item) => ({ kind: "item", item }) as MentionRow);
-	}, [mention, allMentions, annotationMentions, chapterMentions]);
+	}, [mention, allMentions, annotationMentions, chapterMentions, sectionMentions, pageMentions]);
 	const activeMentionIndex = mention ? Math.min(mention.index, Math.max(0, mentionRows.length - 1)) : 0;
 
 	const syncMention = useCallback(() => {
@@ -942,7 +1042,7 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 									onMouseDown={(e) => e.preventDefault()}
 									onClick={() => setMention((m) => (m ? { ...m, category: null, index: 0 } : m))}
 								>
-									<Icon name="chevronLeft" size={11} /> {mention.category === "chapter" ? "章节" : "标注"}
+									<Icon name="chevronLeft" size={11} /> {CATEGORY_LABEL[mention.category]}
 								</button>
 							) : mention.query ? (
 								"搜索结果"
@@ -959,7 +1059,7 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 									onMouseDown={(e) => e.preventDefault()}
 									onClick={() => activateMentionRow(row)}
 								>
-									<Icon name={row.category === "chapter" ? "book" : "annotations"} size={13} />
+									<Icon name={mentionIcon(row.category)} size={13} />
 									<span className="mention-label">{row.label}</span>
 									<span className="mention-kind">{row.count}</span>
 									<Icon name="chevronRight" size={12} />
@@ -972,9 +1072,9 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 									onMouseDown={(e) => e.preventDefault()}
 									onClick={() => applyMention(row.item)}
 								>
-									<Icon name={row.item.kind === "chapter" ? "book" : "annotations"} size={13} />
+									<Icon name={mentionIcon(row.item.kind)} size={13} />
 									<span className="mention-label">{row.item.label}</span>
-									<span className="mention-kind">{row.item.kind === "chapter" ? "章节" : "标注"}</span>
+									<span className="mention-kind">{mentionKindLabel(row.item.kind)}</span>
 								</button>
 							),
 						)}
@@ -1019,7 +1119,11 @@ export function ChatPanel({ selection, docId, page, isEpub, annotations = [], co
 							send();
 						}
 					}}
-					placeholder={docId ? "输入问题，@ 引用章节 / 标注… (Enter 发送)" : "请先选择文档"}
+					placeholder={
+						docId
+							? `输入问题，@ 引用${isEpub ? "章节 / 标注" : "目录 / 页码 / 标注"}… (Enter 发送)`
+							: "请先选择文档"
+					}
 					disabled={!docId || !convId || streaming}
 					rows={1}
 				/>

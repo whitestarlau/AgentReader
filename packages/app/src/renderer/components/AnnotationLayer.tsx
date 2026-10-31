@@ -21,10 +21,10 @@ type Props = {
 	annotations: Annotation[];
 	onCreate: (a: Annotation) => void;
 	onUpdate: (id: string, patch: Partial<Annotation>) => void;
-	onDelete: (id: string) => void;
 	onRectSelect: (text: string, page: number, kind: Extract<SelectionKind, "rect" | "ocr">) => void;
-	/** Send the selected annotation's text to the AI chat composer. */
-	onQuote?: (a: Annotation) => void;
+	/** The viewer owns the active highlight bar; this is the highlighted id. */
+	activeId?: string | null;
+	onSelect?: (a: Annotation) => void;
 	page: number;
 	ocrLang: string;
 	/** Only the page in the reading position shows the bottom hint strip. */
@@ -61,16 +61,15 @@ export function AnnotationLayer({
 	annotations,
 	onCreate,
 	onUpdate,
-	onDelete,
 	onRectSelect,
-	onQuote,
+	activeId,
+	onSelect,
 	page,
 	ocrLang,
 	showHint = true,
 }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	const [drag, setDrag] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [altDown, setAltDown] = useState(false);
 	const [ocrState, setOcrState] = useState<{ progress: number; status: string } | null>(null);
 	const start = useRef<{ x: number; y: number } | null>(null);
@@ -95,36 +94,21 @@ export function AnnotationLayer({
 		};
 	}, []);
 
-	// Clicking outside any annotation / toolbar dismisses the current selection.
-	useEffect(() => {
-		const onDown = (e: MouseEvent) => {
-			const t = e.target as HTMLElement | null;
-			if (!t) return;
-			if (t.dataset.ann || t.closest?.("[data-toolbar]")) return;
-			setSelectedId(null);
-		};
-		document.addEventListener("mousedown", onDown);
-		return () => document.removeEventListener("mousedown", onDown);
-	}, []);
-
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key !== "Escape") return;
 			if (drag) {
 				start.current = null;
 				setDrag(null);
-			} else if (selectedId) {
-				setSelectedId(null);
 			} else {
 				window.getSelection()?.removeAllRanges();
 			}
 		};
 		document.addEventListener("keydown", onKey);
 		return () => document.removeEventListener("keydown", onKey);
-	}, [drag, selectedId]);
+	}, [drag]);
 
 	const pageAnns = annotations.filter((a) => a.page === page);
-	const selected = pageAnns.find((a) => a.id === selectedId);
 
 	const toNorm = (e: React.MouseEvent) => {
 		const r = ref.current!.getBoundingClientRect();
@@ -164,7 +148,7 @@ export function AnnotationLayer({
 			style={{
 				position: "absolute",
 				inset: 0,
-				cursor: selectedId ? "default" : altDown ? "crosshair" : "default",
+				cursor: altDown ? "crosshair" : "default",
 				// Stay transparent while idle so PDF text underneath can still be selected natively.
 				pointerEvents: altDown || drag ? "auto" : "none",
 			}}
@@ -174,7 +158,6 @@ export function AnnotationLayer({
 					setDrag(null);
 					return;
 				}
-				if (selectedId) return;
 				if (e.altKey || e.metaKey) {
 					e.preventDefault();
 					start.current = toNorm(e);
@@ -210,10 +193,9 @@ export function AnnotationLayer({
 						type: "rect",
 						rect: drag,
 						text: text || undefined,
-						color: "#ffeb3b88",
+						color: "#ffeb3b61",
 					};
 					onCreate(ann);
-					setSelectedId(id);
 					if (text) onRectSelect(text, page, "rect");
 					else runOcr(ann);
 				}
@@ -234,7 +216,7 @@ export function AnnotationLayer({
 						data-ann={a.id}
 						onClick={(e) => {
 							e.stopPropagation();
-							setSelectedId(a.id);
+							onSelect?.(a);
 						}}
 						title="点击查看操作"
 						style={{
@@ -243,11 +225,11 @@ export function AnnotationLayer({
 							top: `${box.y * 100}%`,
 							width: `${box.w * 100}%`,
 							height: `${box.h * 100}%`,
-							background: a.color,
-							border: a.id === selectedId ? "2px solid #2196f3" : a.type === "rect" ? "2px solid #ff9800" : "none",
+							background: a.color === "#ffeb3b88" ? "#ffeb3b61" : a.color,
+							mixBlendMode: "multiply",
+							border: a.type === "rect" ? "2px solid #ff9800" : "none",
 							pointerEvents: "auto",
 							cursor: "pointer",
-							boxShadow: a.id === selectedId ? "0 0 0 2px #2196f355" : "none",
 						}}
 					/>
 				)),
@@ -285,60 +267,7 @@ export function AnnotationLayer({
 					框选 OCR {Math.round(ocrState.progress * 100)}% · {ocrState.status}
 				</div>
 			)}
-			{selected && (
-				<div
-					data-toolbar
-					onClick={(e) => e.stopPropagation()}
-					style={{
-						position: "absolute",
-						left: `${Math.min(94, selected.rect.x * 100)}%`,
-						top: `${Math.max(0, selected.rect.y * 100 - 8)}%`,
-						transform: "translateY(-100%)",
-						background: "#fff",
-						border: "1px solid #ddd",
-						borderRadius: 8,
-						boxShadow: "0 4px 16px #0002",
-						padding: "6px 8px",
-						display: "flex",
-						gap: 6,
-						alignItems: "center",
-						pointerEvents: "auto",
-						whiteSpace: "nowrap",
-					}}
-				>
-					<span style={{ fontSize: 12, color: "#666", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
-						{selected.type === "rect" ? "框选" : "高亮"} {selected.text ? `· ${selected.text.slice(0, 20)}` : "· 无文本"}
-					</span>
-					{selected.text?.trim() && onQuote && (
-						<button
-							onClick={() => {
-								onQuote(selected);
-								setSelectedId(null);
-							}}
-							style={{ fontSize: 12, background: "#0e639c", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}
-						>
-							引用
-						</button>
-					)}
-					<button
-						onClick={() => {
-							onDelete(selected.id);
-							setSelectedId(null);
-							window.getSelection()?.removeAllRanges();
-						}}
-						style={{ fontSize: 12, background: "#ff4444", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}
-					>
-						删除
-					</button>
-					<button onClick={() => setSelectedId(null)} style={{ fontSize: 12, background: "#eee", border: "1px solid #ddd", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>
-						取消
-					</button>
-					<button onClick={() => setSelectedId(null)} style={{ fontSize: 12, background: "transparent", border: "none", cursor: "pointer", color: "#999" }}>
-						✕ Esc
-					</button>
-				</div>
-			)}
-			{showHint && !selected && !drag && !ocrState && (
+			{showHint && !activeId && !drag && !ocrState && (
 				<div style={{ position: "absolute", bottom: 4, right: 4, fontSize: 11, background: "#0008", color: "#fff", padding: "2px 6px", borderRadius: 4, pointerEvents: "none" }}>
 					{MODIFIER_LABEL} 拖拽框选 · 双击选词 · 三击选段 · 点击标注可操作
 				</div>

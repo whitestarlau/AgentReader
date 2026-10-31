@@ -217,6 +217,7 @@ export function PdfViewer({
 	const [ocrJob, setOcrJob] = useState<{ running: boolean; page: number; total: number; progress: number; status: string } | null>(null);
 	const cancelOcr = useRef(false);
 	const [selectionMenu, setSelectionMenu] = useState<SelectionMenu | null>(null);
+	const [activeAnnId, setActiveAnnId] = useState<string | null>(null);
 	const [copied, setCopied] = useState(false);
 	const [ocrMenuOpen, setOcrMenuOpen] = useState(false);
 	const ocrMenuRef = useRef<HTMLSpanElement>(null);
@@ -924,6 +925,7 @@ export function PdfViewer({
 			if (ignoreReaderKey(e)) return;
 			if (e.key === "Escape") {
 				setSelectionMenu(null);
+				setActiveAnnId(null);
 				window.getSelection()?.removeAllRanges();
 				return;
 			}
@@ -1064,6 +1066,8 @@ export function PdfViewer({
 		const localTop = top - (area?.top ?? 0);
 		const localCenter = left + (right - left) / 2 - (area?.left ?? 0);
 		const areaWidth = area?.width ?? 600;
+		setActiveAnnId(null);
+		setCopied(false);
 		setSelectionMenu({
 			text,
 			page: pageNumber,
@@ -1152,6 +1156,7 @@ export function PdfViewer({
 
 	useEffect(() => {
 		setSelectionMenu(null);
+		setActiveAnnId(null);
 		setCopied(false);
 	}, [pageNum, viewMode]);
 
@@ -1170,7 +1175,7 @@ export function PdfViewer({
 			rect: selectionMenu.rect,
 			rects: selectionMenu.rects.length > 1 ? selectionMenu.rects : undefined,
 			text: selectionMenu.text,
-			color: "#ffeb3b88",
+			color: "#ffeb3b61",
 		});
 		window.getSelection()?.removeAllRanges();
 		setSelectionMenu(null);
@@ -1185,6 +1190,7 @@ export function PdfViewer({
 
 	const copySelection = async () => {
 		if (!selectionMenu) return;
+		const target = selectionMenu;
 		try {
 			await navigator.clipboard.writeText(selectionMenu.text);
 			setCopied(true);
@@ -1192,6 +1198,10 @@ export function PdfViewer({
 			console.error("[pdf] copy failed", e);
 		}
 		window.getSelection()?.removeAllRanges();
+		window.setTimeout(() => {
+			setCopied(false);
+			setSelectionMenu((m) => (m === target ? null : m));
+		}, 900);
 	};
 
 	// ------------------------------------------------------------- reporting
@@ -1209,6 +1219,25 @@ export function PdfViewer({
 	useEffect(() => () => { ocrCb.current?.(null); }, []);
 
 	// ---------------------------------------------------------------- render
+
+	const activeAnn = annotations.find((a) => a.id === activeAnnId) ?? null;
+
+	// Close the highlight bar when its annotation disappears or the user clicks
+	// elsewhere. The EPUB viewer uses the same interaction model.
+	useEffect(() => {
+		if (activeAnnId && !annotations.some((a) => a.id === activeAnnId)) setActiveAnnId(null);
+	}, [annotations, activeAnnId]);
+
+	useEffect(() => {
+		if (!activeAnnId) return;
+		const onDown = (e: MouseEvent) => {
+			const t = e.target as HTMLElement | null;
+			if (t?.closest?.("[data-ann], [data-toolbar], .reader-ann-bar, .pdf-sel-menu")) return;
+			setActiveAnnId(null);
+		};
+		document.addEventListener("mousedown", onDown);
+		return () => document.removeEventListener("mousedown", onDown);
+	}, [activeAnnId]);
 
 	const pageList = useMemo(() => Array.from({ length: total }, (_, i) => i + 1), [total]);
 	const zoomLabel = `${Math.round(scale * 100)}%`;
@@ -1232,9 +1261,9 @@ export function PdfViewer({
 				ocrLang={ocrLang}
 				onAnnotationCreate={onAnnotationCreate}
 				onAnnotationUpdate={onAnnotationUpdate}
-				onAnnotationDelete={onAnnotationDelete}
+				onAnnotationSelect={(a) => setActiveAnnId(a.id)}
+				activeAnnotationId={activeAnnId}
 				onRectSelect={onRectSelect}
-				onQuote={(a) => onTextSelected(a.text ?? "", a.page)}
 				onSelectionChanged={handleParagraphSelected}
 				onBaseSize={reportPageSize}
 			/>
@@ -1401,7 +1430,7 @@ export function PdfViewer({
 					onMouseDown={(e) => e.preventDefault()}
 				>
 					<button type="button" className="primary" onClick={createHighlight} disabled={!onAnnotationCreate}>
-						<Icon name="annotations" size={12} /> 高亮
+						<Icon name="annotations" size={12} /> 高亮标注
 					</button>
 					<button type="button" onClick={quoteSelection}>
 						<Icon name="chat" size={12} /> 引用提问
@@ -1410,6 +1439,34 @@ export function PdfViewer({
 						{copied ? "已复制" : "复制"}
 					</button>
 					<button type="button" onClick={() => { setSelectionMenu(null); window.getSelection()?.removeAllRanges(); }} title="取消">
+						✕
+					</button>
+				</div>
+			)}
+
+			{activeAnn && !selectionMenu && (
+				<div className="reader-ann-bar" data-toolbar>
+					<span className="reader-ann-text">{activeAnn.text?.trim().slice(0, 40) || "（无文本）"}</span>
+					<button
+						type="button"
+						onClick={() => {
+							onTextSelected(activeAnn.text ?? "", activeAnn.page);
+							setActiveAnnId(null);
+						}}
+					>
+						<Icon name="chat" size={12} /> 引用
+					</button>
+					<button
+						type="button"
+						className="danger"
+						onClick={() => {
+							onAnnotationDelete?.(activeAnn.id);
+							setActiveAnnId(null);
+						}}
+					>
+						删除
+					</button>
+					<button type="button" onClick={() => setActiveAnnId(null)} title="取消">
 						✕
 					</button>
 				</div>

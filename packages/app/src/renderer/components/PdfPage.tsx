@@ -21,9 +21,9 @@ type Props = {
 	ocrLang: string;
 	onAnnotationCreate?: (a: Annotation) => void;
 	onAnnotationUpdate?: (id: string, patch: Partial<Annotation>) => void;
-	onAnnotationDelete?: (id: string) => void;
+	onAnnotationSelect?: (a: Annotation) => void;
+	activeAnnotationId?: string | null;
 	onRectSelect?: (text: string, page: number, kind: RectSelectKind) => void;
-	onQuote?: (a: Annotation) => void;
 	/** Called after double-click selects a whole paragraph (to show the menu). */
 	onSelectionChanged?: () => void;
 	onBaseSize?: (pageNumber: number, size: PageSize) => void;
@@ -51,9 +51,9 @@ export const PdfPage = memo(function PdfPage({
 	ocrLang,
 	onAnnotationCreate,
 	onAnnotationUpdate,
-	onAnnotationDelete,
+	onAnnotationSelect,
+	activeAnnotationId,
 	onRectSelect,
-	onQuote,
 	onSelectionChanged,
 	onBaseSize,
 }: Props) {
@@ -155,7 +155,7 @@ export const PdfPage = memo(function PdfPage({
 		};
 	}, [pdf, pageNumber, scale, dpr, active]);
 
-	const overlaysEnabled = Boolean(onAnnotationCreate && onAnnotationDelete);
+	const overlaysEnabled = Boolean(onAnnotationCreate && onAnnotationSelect);
 
 	return (
 		<div className="pdf-page" data-page-content={pageNumber}>
@@ -170,9 +170,9 @@ export const PdfPage = memo(function PdfPage({
 					ocrLang={ocrLang}
 					onCreate={onAnnotationCreate!}
 					onUpdate={onAnnotationUpdate ?? (() => {})}
-					onDelete={onAnnotationDelete!}
 					onRectSelect={onRectSelect ?? (() => {})}
-					onQuote={onQuote}
+					activeId={activeAnnotationId}
+					onSelect={onAnnotationSelect}
 					showHint={isCurrent}
 				/>
 			)}

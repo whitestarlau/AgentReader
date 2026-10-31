@@ -411,7 +411,17 @@ function App() {
                   <Icon name="close" size={14} />
                 </button>
               </div>
-              <ChatPanel selection={selection} docId={selected} page={page} isEpub={isEpub} annotations={anns} contextWindow={ai?.models.find((m) => m.ref === ai.defaultModel)?.contextWindow} newChatToken={newChatToken} />
+              <ChatPanel
+                selection={selection}
+                docId={selected}
+                page={page}
+                isEpub={isEpub}
+                annotations={anns}
+                outline={outline}
+                totalPages={total}
+                contextWindow={ai?.models.find((m) => m.ref === ai.defaultModel)?.contextWindow}
+                newChatToken={newChatToken}
+              />
             </aside>
           </>
         )}
