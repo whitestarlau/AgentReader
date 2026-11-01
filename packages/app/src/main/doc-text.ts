@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { ipcMain } from "electron";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { app, ipcMain } from "electron";
 import { type DocSearchOptions, searchDocText } from "./doc-search.ts";
 import { getDocDir } from "./paths.ts";
 
@@ -40,14 +42,50 @@ const rawPageCache = new Map<string, Map<number, string>>();
 /** How many pages to extract up-front; the rest are lazily extracted by tools. */
 const EAGER_PAGES = 80;
 
+type PdfTextItem = {
+	str?: string;
+	transform?: number[];
+	width?: number;
+	height?: number;
+	hasEOL?: boolean;
+};
+
 type PdfDocLike = {
 	numPages: number;
-	getPage: (n: number) => Promise<{ getTextContent: () => Promise<{ items: { str?: string }[] }> }>;
+	getPage: (n: number) => Promise<{ getTextContent: () => Promise<{ items: PdfTextItem[] }> }>;
 	/** PDF Info dictionary (Title/Author/...); optional so stub docs still work. */
 	getMetadata?: () => Promise<{ info?: Record<string, unknown> }>;
 	destroy?: () => Promise<void>;
 };
 const pdfDocCache = new Map<string, Promise<PdfDocLike>>();
+
+const requireFromMain = createRequire(import.meta.url);
+const mainDir = dirname(fileURLToPath(import.meta.url));
+let pdfWorkerFile: string | null | undefined;
+
+/**
+ * pdf.js spawns its worker through a dynamic `import()`. When the main process
+ * is bundled, the default `pdf.worker.mjs` URL points at dist-electron — a file
+ * the build never emitted — so every PDF text extraction failed with
+ * "Setting up fake worker failed". Resolve a real file instead:
+ *   - packaged: electron-builder copies it to Contents/Resources (outside the
+ *     asar, because Node cannot `import()` a module from inside an asar);
+ *   - dev: fall back to the copy in node_modules.
+ */
+function resolvePdfWorker(): string | null {
+	if (pdfWorkerFile !== undefined) return pdfWorkerFile;
+	const candidates: string[] = [];
+	if (app.isPackaged && typeof process.resourcesPath === "string") {
+		candidates.push(join(process.resourcesPath, "pdf.worker.mjs"));
+	}
+	// Allows a build step to drop the worker next to main.js (dev-friendly).
+	candidates.push(join(mainDir, "pdf.worker.mjs"));
+	try {
+		candidates.push(requireFromMain.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs"));
+	} catch {}
+	pdfWorkerFile = candidates.find((p) => p && existsSync(p)) ?? null;
+	return pdfWorkerFile;
+}
 
 function getPdfDoc(docId: string): Promise<PdfDocLike> {
 	const cached = pdfDocCache.get(docId);
@@ -57,8 +95,15 @@ function getPdfDoc(docId: string): Promise<PdfDocLike> {
 		const meta = JSON.parse(readFileSync(join(dir, "doc.json"), "utf-8"));
 		const buf = readFileSync(join(dir, `original.${meta.ext}`));
 		const pdfjs = (await import("pdfjs-dist/legacy/build/pdf.mjs")) as unknown as {
+			GlobalWorkerOptions: { workerSrc: string };
 			getDocument: (opts: { data: Uint8Array }) => { promise: Promise<PdfDocLike> };
 		};
+		const worker = resolvePdfWorker();
+		if (worker) {
+			pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(worker).href;
+		} else {
+			console.error("[docText] pdf.worker.mjs not found; PDF text extraction will fail");
+		}
 		return pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
 	})().catch((e) => {
 		pdfDocCache.delete(docId);
@@ -66,6 +111,60 @@ function getPdfDoc(docId: string): Promise<PdfDocLike> {
 	});
 	pdfDocCache.set(docId, p);
 	return p;
+}
+
+/**
+ * Rebuild readable text from pdf.js items. Many PDFs emit one item per glyph,
+ * so a blind `.join(" ")` turns "巴菲特" into "巴 菲 特" and "Berkshire" into
+ * "B e r k s h i r e". Use item geometry to keep glyphs together and only add a
+ * space where there is a real horizontal gap (or where the PDF emits one).
+ */
+function textItemsToText(items: PdfTextItem[]): string {
+	let out = "";
+	let prevEnd: number | null = null;
+	let prevY: number | null = null;
+	let prevHeight = 0;
+	for (const item of items) {
+		const str = item.str ?? "";
+		if (!str) continue;
+		const x = typeof item.transform?.[4] === "number" ? item.transform[4] : null;
+		const y = typeof item.transform?.[5] === "number" ? item.transform[5] : null;
+		const height = typeof item.height === "number" && item.height > 0 ? item.height : prevHeight;
+		if (prevY !== null && y !== null && Math.abs(y - prevY) > Math.max(1, prevHeight * 0.5)) {
+			out += "\n";
+			prevEnd = null;
+		} else if (prevEnd !== null && x !== null) {
+			const gap = x - prevEnd;
+			if (gap > Math.max(0.8, height * 0.18) && !out.endsWith(" ") && !str.startsWith(" ")) {
+				out += " ";
+			}
+		}
+		out += str;
+		if (x !== null) prevEnd = x + (typeof item.width === "number" ? item.width : 0);
+		if (y !== null) prevY = y;
+		if (height) prevHeight = height;
+		if (item.hasEOL) {
+			out += "\n";
+			prevEnd = null;
+			prevY = null;
+		}
+	}
+	return out;
+}
+
+/**
+ * Even with geometry-aware reconstruction some PDFs emit explicit space items
+ * between every CJK glyph. Remove those (and separators inside numbers) while
+ * leaving normal Latin word spacing alone.
+ */
+function normalizePdfText(raw: string): string {
+	return raw
+		.replace(/\s+/g, " ")
+		.replace(/(?<=\d)\s+(?=\d)/g, "")
+		.replace(/(?<=\d)\s+([.,%])/g, "$1")
+		.replace(/([.,%])\s+(?=\d)/g, "$1")
+		.replace(/\s+(?=[\u3400-\u9fff])|(?<=[\u3400-\u9fff])\s+/g, "")
+		.trim();
 }
 
 /** Embedded (non-OCR) text of one page, cached per document. */
@@ -79,10 +178,7 @@ async function getRawPage(docId: string, pageNo: number): Promise<string> {
 		const doc = await getPdfDoc(docId);
 		const page = await doc.getPage(pageNo);
 		const content = await page.getTextContent();
-		text = content.items
-			.map((it) => it.str ?? "")
-			.join(" ")
-			.slice(0, 4000);
+		text = normalizePdfText(textItemsToText(content.items)).slice(0, 4000);
 	} catch (e) {
 		console.error("[docText] page error", pageNo, e);
 	}

@@ -1,5 +1,34 @@
 # 进度记录
 
+## 2026-11-01 修复 PDF 文本管线、切换文档后的会话串台、会话导航
+
+- [x] 体验排查发现三个高优先级问题：PDF 全文检索始终为空（AI 的
+  `read_page` / `search_document` 同样读不到 PDF）；切换文档后 AI 对话仍使用上一个
+  文档的 `convId`；会话只能新建、不能切换/重命名，空会话时“新建对话”看起来没反应
+- [x] PDF 文本管线：主进程打包后 pdf.js 的默认 worker 指向不存在的
+  `dist-electron/pdf.worker.mjs`，`getTextContent()` 全部失败；现在按顺序解析
+  `Resources/pdf.worker.mjs`（打包版，由 `extraResources` 复制）→ 主进程同目录 →
+  `node_modules`（dev），并用 `pathToFileURL()` 交给 pdf.js。注：Node 不能从 asar
+  内 `import()`，所以 worker 必须放在 asar 外
+- [x] 文本重建：pdf.js 对中文 PDF 逐字输出，旧的 `.join(" ")` 会得到“巴 菲 特”和
+  “B e r k s h i r e”；改为按 `transform`/`width` 几何拼接，只在真实水平间距处补空格，
+  再清除 CJK 之间的空格和数字内的空格（保留拉丁词间距）。这同时修正了 AI 看到的
+  PDF 文本质量
+- [x] 切换文档：`ChatPanel` 在 `docId` 变化时清空 `convId`、消息、引用、输入框与流式
+  状态；按文档从 `conversations.json` 重新载入，优先恢复上次选中的会话
+  （`localStorage: chat.last.{docId}`），否则选最近活跃的一条；没有会话时自动建一条。
+  `convId` 只在所属文档有效，发送/编辑/流式回调都带文档与代次守卫，避免写入新文档的
+  孤儿记录
+- [x] 会话导航：聊天头部标题变为可点击的下拉菜单，列出全部会话并标出当前项；支持
+  切换、内联重命名（Enter/失焦提交，Esc 取消）、删除（确认后回退到其他会话或新建）；
+  空会话直接显示输入区，不再出现“选择或新建对话”的拦截页；在空会话点“＋”不会
+  反复创建空会话
+- [x] 验证：`typecheck` / `build` 通过；dev + 打包版（离线 electronDist 打包）经 CDP：
+  《巴菲特致股东的信》检索“巴菲特 / 股票 / 11.50 / Berkshire Hathaway”均命中
+  （910 页，首条分别为 P5 / P683 / P114 / P105）；切到《资治通鉴》自动打开
+  “魏惠王薨…”会话（4 条消息），切到《三国志》显示“对话 5”空会话，切回仍恢复原会话；
+  新建空会话、重命名、删除、外部点击提交重命名均验证通过
+
 ## 2026-10-31 EPUB 连续滑动阅读（保留翻页）
 
 - [x] 反馈：EPUB 能否像 PDF 一样滑动查看，同时保留现有翻页

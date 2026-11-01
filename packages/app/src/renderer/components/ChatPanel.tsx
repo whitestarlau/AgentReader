@@ -22,7 +22,25 @@ type Msg = {
 	notice?: string;
 };
 type ChatRow = { id?: string; role?: string; content?: string; timeline?: TimelineItem[]; notice?: string };
-type Conv = { id: string; title: string };
+type Conv = { id: string; title: string; updatedAt?: number };
+
+const lastConvKey = (docId: string) => `chat.last.${docId}`;
+function readLastConv(docId: string): string | null {
+	try {
+		return localStorage.getItem(lastConvKey(docId));
+	} catch {
+		return null;
+	}
+}
+function writeLastConv(docId: string, convId: string) {
+	try {
+		localStorage.setItem(lastConvKey(docId), convId);
+	} catch {}
+}
+/** Most recently active conversation first. */
+function byRecent(list: Conv[]): Conv[] {
+	return [...list].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+}
 /** A citation captured from the viewer, shown above the composer before send. */
 type Quote = { text: string; page: number; kind: Selection["kind"] };
 type Props = {
@@ -297,6 +315,11 @@ export function ChatPanel({
 }: Props) {
 	const [convs, setConvs] = useState<Conv[]>([]);
 	const [convId, setConvId] = useState<string | null>(null);
+	const [convLoading, setConvLoading] = useState(false);
+	const [convMenuOpen, setConvMenuOpen] = useState(false);
+	const [renamingId, setRenamingId] = useState<string | null>(null);
+	const [renameText, setRenameText] = useState("");
+	const renameTextRef = useRef("");
 	const [msgs, setMsgs] = useState<Msg[]>([]);
 	const [input, setInput] = useState("");
 	const [outline, setOutline] = useState<Outline | null>(null);
@@ -321,6 +344,17 @@ export function ChatPanel({
 	const [quote, setQuote] = useState<Quote | null>(null);
 	const [quoteEditing, setQuoteEditing] = useState(false);
 	const lastSelRef = useRef<Selection | null>(null);
+	// The conversation id is only valid for the document it was loaded from.
+	// Guards async responses against being applied after a document switch.
+	const convDocRef = useRef<string | null>(null);
+	const docIdRef = useRef<string | null>(docId);
+	docIdRef.current = docId;
+	const convIdRef = useRef<string | null>(convId);
+	convIdRef.current = convId;
+	const activeStreamRef = useRef<{ docId: string; convId: string } | null>(null);
+	const convMenuRef = useRef<HTMLDivElement>(null);
+	const renameInputRef = useRef<HTMLInputElement>(null);
+	const renameCancelRef = useRef(false);
 	// Latest context usage for this conversation: exact when a provider reports
 	// token usage, otherwise estimated from the loaded messages.
 	const [usage, setUsage] = useState<ContextUsage | null>(null);
@@ -381,6 +415,39 @@ export function ChatPanel({
 		setQuoteEditing(false);
 		lastSelRef.current = null;
 	}, [docId]);
+
+	// Focus/select the inline rename field as soon as it appears.
+	useEffect(() => {
+		if (!renamingId) return;
+		const el = renameInputRef.current;
+		if (!el) return;
+		el.focus();
+		el.select();
+	}, [renamingId]);
+
+	// Conversation menu: close on outside click or Escape.
+	useEffect(() => {
+		if (!convMenuOpen) return;
+		const onDown = (e: MouseEvent) => {
+			if (convMenuRef.current && !convMenuRef.current.contains(e.target as Node)) {
+				if (renamingId) void commitRename(renamingId);
+				setConvMenuOpen(false);
+			}
+		};
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				// Closing the menu shouldn't also stop a running answer.
+				e.stopPropagation();
+				setConvMenuOpen(false);
+			}
+		};
+		document.addEventListener("mousedown", onDown);
+		document.addEventListener("keydown", onKey);
+		return () => {
+			document.removeEventListener("mousedown", onDown);
+			document.removeEventListener("keydown", onKey);
+		};
+	}, [convMenuOpen, renamingId]);
 
 	// Chapter labels for the "@" picker. Only EPUB has chapters, and calling
 	// getDocText on a PDF would eagerly extract pages, so skip it there.
@@ -555,34 +622,104 @@ export function ChatPanel({
 		else applyMention(row.item);
 	};
 
-	const refreshConvs = async (current?: string | null) => {
+	const refreshConvs = async () => {
 		if (!docId) return;
 		const list: Conv[] = await window.api.listConversations(docId);
+		if (docIdRef.current !== docId) return;
 		// Preserve a locally-generated title if the disk copy still has the
 		// generic placeholder (guards against read-after-write races).
-		setConvs((prev) =>
-			list.map((c) => {
+		setConvs((prev) => {
+			const merged = list.map((c) => {
 				const local = prev.find((p) => p.id === c.id);
 				const placeholder = !c.title || /^对话 \d+$/.test(c.title);
 				return local && placeholder && local.title && !/^对话 \d+$/.test(local.title)
 					? { ...c, title: local.title }
 					: c;
-			}),
-		);
-		const cid = current ?? convId;
-		if (list.length > 0 && !cid) setConvId(list[0].id);
-		if (list.length === 0) {
-			const c: Conv = await window.api.createConversation(docId);
-			setConvs([c]);
-			setConvId(c.id);
-		}
+			});
+			return byRecent(merged);
+		});
 	};
 
-	useEffect(() => { refreshConvs(); }, [docId]);
+	// Switching documents must reset every conversation-scoped piece of state.
+	// The old convId belonged to the previous document; reusing it used to leave
+	// the panel on "select a conversation" and, worse, write messages into an
+	// orphan transcript under the new document.
 	useEffect(() => {
-		if (!docId || !convId) { setMsgs([]); return; }
+		const active = activeStreamRef.current;
+		if (active && active.docId !== docId) {
+			activeStreamRef.current = null;
+			window.api.stopChat(active.docId, active.convId).catch(() => {});
+		}
+		setStreaming(false);
+		setStopped(false);
+		streamRef.current = "";
+		reasoningRef.current = "";
+		convDocRef.current = null;
+		setConvId(null);
+		setConvs([]);
+		setMsgs([]);
 		setUsage(null);
-		window.api.getChats(docId, convId).then((rows) => setMsgs(rows.map(toMsg)));
+		setInput("");
+		setMentions([]);
+		setMention(null);
+		setEditingId(null);
+		setEditText("");
+		setShowJump(false);
+		setConvMenuOpen(false);
+		setRenamingId(null);
+		if (!docId) {
+			setConvLoading(false);
+			return;
+		}
+		setConvLoading(true);
+		let cancelled = false;
+		(async () => {
+			try {
+				let list: Conv[] = byRecent(await window.api.listConversations(docId));
+				if (cancelled) return;
+				if (list.length === 0) {
+					const created: Conv = await window.api.createConversation(docId);
+					if (cancelled) return;
+					list = [created];
+				}
+				if (cancelled) return;
+				setConvs(list);
+				const remembered = readLastConv(docId);
+				const target = list.find((c) => c.id === remembered) ?? list[0];
+				setConvId(target.id);
+				convDocRef.current = docId;
+				writeLastConv(docId, target.id);
+			} catch (e) {
+				console.error("[chat] load conversations failed", e);
+			} finally {
+				if (!cancelled) setConvLoading(false);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [docId]);
+
+	useEffect(() => {
+		// While a document switch is still loading its conversations, convId is
+		// null; never fetch chats with a conversation from the previous document.
+		if (!docId || !convId || convDocRef.current !== docId) {
+			setMsgs([]);
+			setUsage(null);
+			return;
+		}
+		let cancelled = false;
+		setMsgs([]);
+		setUsage(null);
+		window.api
+			.getChats(docId, convId)
+			.then((rows) => {
+				if (!cancelled) setMsgs(rows.map(toMsg));
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
 	}, [docId, convId]);
 
 	// 流式期间原地更新最后一条 assistant 消息的某一个字段
@@ -601,11 +738,16 @@ export function ChatPanel({
 	}, [updateLast]);
 
 	useEffect(() => {
+		// Ignore late stream events once the turn was stopped or its document was
+		// switched away. They arrive without a doc/conv id, so the active-stream
+		// ref is the only thing that can keep them from mutating another chat.
 		const offDelta = window.api.onChatDelta((delta: string) => {
+			if (!activeStreamRef.current) return;
 			streamRef.current += delta;
 			updateLast((m) => ({ ...m, content: streamRef.current }));
 		});
 		const offReasoning = window.api.onChatReasoning((delta: string) => {
+			if (!activeStreamRef.current) return;
 			reasoningRef.current += delta;
 			updateLast((m) => {
 				const tl = [...(m.timeline ?? [])];
@@ -616,10 +758,12 @@ export function ChatPanel({
 			});
 		});
 		const offToolCall = window.api.onToolCall((data: unknown) => {
+			if (!activeStreamRef.current) return;
 			const d = data as { id?: string; name: string; args: string };
 			pushTimeline({ kind: "tool", id: d.id ?? `tool-${Date.now()}`, name: d.name, args: d.args, pending: true });
 		});
 		const offToolResult = window.api.onToolResult((data: unknown) => {
+			if (!activeStreamRef.current) return;
 			const d = data as { id: string; name?: string; result: string };
 			updateLast((m) => {
 				const tl = [...(m.timeline ?? [])];
@@ -631,13 +775,18 @@ export function ChatPanel({
 				return { ...m, timeline: tl };
 			});
 		});
-		const offDone = window.api.onChatDone(() => setStreaming(false));
-		const offNotice = window.api.onChatNotice((notice: string) =>
-			updateLast((m) => ({ ...m, notice })),
-		);
-		const offUsage = window.api.onChatUsage((u) =>
-			setUsage({ used: u.used, max: u.max, estimated: u.estimated }),
-		);
+		const offDone = window.api.onChatDone(() => {
+			activeStreamRef.current = null;
+			setStreaming(false);
+		});
+		const offNotice = window.api.onChatNotice((notice: string) => {
+			if (!activeStreamRef.current) return;
+			updateLast((m) => ({ ...m, notice }));
+		});
+		const offUsage = window.api.onChatUsage((u) => {
+			if (!activeStreamRef.current) return;
+			setUsage({ used: u.used, max: u.max, estimated: u.estimated });
+		});
 		return () => { offDelta(); offReasoning(); offToolCall(); offToolResult(); offDone(); offNotice(); offUsage(); };
 	}, [updateLast, pushTimeline]);
 
@@ -659,6 +808,7 @@ export function ChatPanel({
 	const stop = useCallback(() => {
 		if (!docId || !convId) return;
 		setStopped(true);
+		activeStreamRef.current = null;
 		window.api.stopChat(docId, convId).catch(() => {});
 	}, [docId, convId]);
 
@@ -675,12 +825,53 @@ export function ChatPanel({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [streaming, stop]);
 
+	const stopActiveStream = useCallback(() => {
+		const active = activeStreamRef.current;
+		if (!active) return;
+		activeStreamRef.current = null;
+		window.api.stopChat(active.docId, active.convId).catch(() => {});
+		setStreaming(false);
+	}, []);
+
+	const selectConv = useCallback(
+		(id: string) => {
+			if (!docId) return;
+			if (id === convId) {
+				setConvMenuOpen(false);
+				return;
+			}
+			stopActiveStream();
+			setConvId(id);
+			convDocRef.current = docId;
+			writeLastConv(docId, id);
+			setConvMenuOpen(false);
+			setRenamingId(null);
+		},
+		[docId, convId, stopActiveStream],
+	);
+
 	const createNew = async () => {
-		if (!docId) return;
+		if (!docId || convLoading) return;
+		// Clicking + on an empty, untouched conversation should just focus it
+		// instead of piling up empty "对话 N" entries.
+		if (convId && msgs.length === 0 && !input.trim() && !streaming) {
+			setConvMenuOpen(false);
+			inputRef.current?.focus();
+			return;
+		}
+		stopActiveStream();
 		const c: Conv = await window.api.createConversation(docId);
-		setConvs((prev) => [c, ...prev]);
+		if (docIdRef.current !== docId) return;
+		setConvs((prev) => [c, ...prev.filter((x) => x.id !== c.id)]);
 		setConvId(c.id);
+		convDocRef.current = docId;
+		writeLastConv(docId, c.id);
 		setMsgs([]);
+		setInput("");
+		setQuote(null);
+		setEditingId(null);
+		setConvMenuOpen(false);
+		requestAnimationFrame(() => inputRef.current?.focus());
 	};
 
 	// 菜单「新建对话」(⌘N / Ctrl+N) 信号。
@@ -688,18 +879,52 @@ export function ChatPanel({
 		if (newChatToken) void createNew();
 	}, [newChatToken]);
 
-	const del = async (id: string) => {
+	const del = async (c: Conv) => {
 		if (!docId) return;
-		const next = (await window.api.deleteConversation(docId, id)) as Conv[];
-		setConvs(next);
-		if (convId === id) {
-			if (next.length > 0) setConvId(next[0].id);
-			else {
-				const c: Conv = await window.api.createConversation(docId);
-				setConvs([c]);
-				setConvId(c.id);
+		if (!window.confirm(`删除对话「${c.title}」？此操作不可恢复。`)) return;
+		if (activeStreamRef.current?.docId === docId && activeStreamRef.current.convId === c.id) {
+			stopActiveStream();
+		}
+		const next = (await window.api.deleteConversation(docId, c.id)) as Conv[];
+		if (docIdRef.current !== docId) return;
+		const sorted = byRecent(next);
+		setConvs(sorted);
+		if (convId === c.id) {
+			if (sorted.length > 0) {
+				selectConv(sorted[0].id);
+			} else {
+				const created: Conv = await window.api.createConversation(docId);
+				if (docIdRef.current !== docId) return;
+				setConvs([created]);
+				selectConv(created.id);
 			}
 		}
+	};
+
+	const startRename = (c: Conv) => {
+		renameCancelRef.current = false;
+		renameTextRef.current = c.title;
+		setRenamingId(c.id);
+		setRenameText(c.title);
+	};
+
+	const commitRename = async (id: string) => {
+		if (!docId) return;
+		const title = renameTextRef.current.trim();
+		setRenamingId(null);
+		setRenameText("");
+		renameTextRef.current = "";
+		if (!title) return;
+		await window.api.renameConversation(docId, id, title);
+		if (docIdRef.current !== docId) return;
+		setConvs((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)));
+	};
+
+	const cancelRename = () => {
+		renameCancelRef.current = true;
+		renameTextRef.current = "";
+		setRenamingId(null);
+		setRenameText("");
 	};
 
 	/**
@@ -711,32 +936,49 @@ export function ChatPanel({
 		prompt: string,
 		persistUser = true,
 	) => {
-		if (!docId || !convId) return null;
+		if (!docId || !convId || convDocRef.current !== docId) return null;
+		const sessionDoc = docId;
+		const sessionConv = convId;
+		activeStreamRef.current = { docId: sessionDoc, convId: sessionConv };
 		setStopped(false);
 		setStreaming(true);
 		streamRef.current = "";
 		reasoningRef.current = "";
 		setMsgs((m) => [...m, { role: "assistant", content: "", timeline: [] }]);
 		const res: { ok?: boolean; error?: string; content?: string; title?: string; userId?: string } =
-			await window.api.chat(docId, convId, prompt, history, page, persistUser);
+			await window.api.chat(sessionDoc, sessionConv, prompt, history, page, persistUser);
+		// The user may have switched documents or conversations while the
+		// request was in flight. Nothing from this turn belongs to the new one.
+		if (
+			docIdRef.current !== sessionDoc ||
+			convDocRef.current !== sessionDoc ||
+			convIdRef.current !== sessionConv
+		) {
+			activeStreamRef.current = null;
+			return res;
+		}
 		if (res.error) {
+			activeStreamRef.current = null;
 			setMsgs((m) => { const c = [...m]; c[c.length - 1] = { role: "assistant", content: `❌ ${res.error}` }; return c; });
 			setStreaming(false);
 			return res;
 		}
 		if (res.title) {
-			setConvs((cs) => cs.map((c) => (c.id === convId ? { ...c, title: res.title! } : c)));
+			setConvs((cs) => cs.map((c) => (c.id === sessionConv ? { ...c, title: res.title! } : c)));
 		}
 		if (res.content !== undefined && streamRef.current === "") {
+			activeStreamRef.current = null;
 			setMsgs((m) => { const c = [...m]; c[c.length - 1] = { ...c[c.length - 1], content: res.content! }; return c; });
 			setStreaming(false);
 		}
-		refreshConvs(convId);
+		await refreshConvs();
 		return res;
 	};
 
 	const send = async () => {
-		if (!input.trim() || !docId || !convId || streaming) return;
+		if (!input.trim() || !docId || !convId || convDocRef.current !== docId || streaming) return;
+		const sessionDoc = docId;
+		const sessionConv = convId;
 		const q = quote;
 		const text = q?.text.trim();
 		// EPUB is reflowable and has no fixed page numbers — cite the chapter, not a page.
@@ -760,7 +1002,7 @@ export function ChatPanel({
 		setQuoteEditing(false);
 		const res = await runChat(history, prompt);
 		// Attach the persisted id to the user turn so it becomes editable.
-		if (res?.userId) {
+		if (res?.userId && docIdRef.current === sessionDoc && convIdRef.current === sessionConv) {
 			const uid = res.userId;
 			setMsgs((m) => {
 				const c = [...m];
@@ -796,12 +1038,19 @@ export function ChatPanel({
 	}, [usage, msgs, contextWindow]);
 
 	const saveEdit = async () => {
-		if (!docId || !convId || !editingId) return;
+		if (!docId || !convId || convDocRef.current !== docId || !editingId) return;
 		const target = editingId;
 		const content = editText.trim();
 		if (!content) return;
 		setEditingId(null);
 		const res = await window.api.editChat(docId, convId, target, content);
+		if (
+			docIdRef.current !== docId ||
+			convDocRef.current !== docId ||
+			convIdRef.current !== convId
+		) {
+			return;
+		}
 		if (!res.ok) {
 			alert(res.error || "编辑失败");
 			return;
@@ -817,61 +1066,137 @@ export function ChatPanel({
 
 	return (
 		<div className="chat">
-			{convId && msgs.length > 0 ? (
-				<div className="chat-conv-head">
-					<span className="chat-conv-title" title={convs.find((c) => c.id === convId)?.title}>
-						{convs.find((c) => c.id === convId)?.title || "对话"}
-					</span>
+			{docId && (
+				<div className="chat-conv-head" ref={convMenuRef}>
+					<button
+						type="button"
+						className="chat-conv-title-btn"
+						onClick={() => {
+							if (convMenuOpen && renamingId) void commitRename(renamingId);
+							setConvMenuOpen((v) => !v);
+						}}
+						disabled={convLoading}
+						title="切换、重命名或删除对话"
+						aria-haspopup="menu"
+						aria-expanded={convMenuOpen}
+					>
+						<Icon name="chat" size={12} />
+						<span className="chat-conv-title">
+							{convLoading ? "加载对话…" : convs.find((c) => c.id === convId)?.title || "新对话"}
+						</span>
+						<span className="chat-conv-caret">
+							<Icon name="chevronDown" size={12} />
+						</span>
+					</button>
 					<span className="spacer" />
-					<button type="button" className="icon-btn" onClick={createNew} disabled={!docId} title="新建对话">
+					<button
+						type="button"
+						className="icon-btn"
+						onClick={() => void createNew()}
+						disabled={!docId || convLoading}
+						title="新建对话"
+					>
 						<Icon name="plus" size={15} />
 					</button>
-				</div>
-			) : (
-				<div className="conv-picker">
-					<div className="conv-picker-head">选择或新建对话</div>
-					{convs.length > 0 && (
-						<div className="conv-list">
-							{convs.map((c) => (
-								<button
-									key={c.id}
-									type="button"
-									className="conv-item"
-									onClick={() => setConvId(c.id)}
-									title={c.title}
-								>
-									<Icon name="chat" size={13} />
-									<span className="conv-item-title">{c.title}</span>
-									<span
-										className="conv-item-del"
-										role="button"
-										tabIndex={0}
-										title="删除对话"
-										onClick={(e) => {
-											e.stopPropagation();
-											del(c.id);
-										}}
-										onKeyDown={(e) => {
-											if (e.key === "Enter" || e.key === " ") {
-												e.preventDefault();
-												e.stopPropagation();
-												del(c.id);
-											}
-										}}
-									>
-										<Icon name="close" size={11} />
-									</span>
-								</button>
-							))}
+
+					{convMenuOpen && (
+						<div className="conv-menu" role="menu">
+							<div className="conv-menu-head">
+								<span>对话</span>
+								<span className="spacer" />
+								<span>{convs.length}</span>
+							</div>
+							<div className="conv-menu-list">
+								{convs.length === 0 ? (
+									<div className="conv-menu-empty">暂无对话</div>
+								) : (
+									convs.map((c) => (
+										// biome-ignore lint/a11y/useSemanticElements: row contains its own action buttons
+										<div
+											key={c.id}
+											className={`conv-menu-item${c.id === convId ? " active" : ""}`}
+											role="menuitem"
+											tabIndex={0}
+											title={c.title}
+											onClick={() => selectConv(c.id)}
+											onKeyDown={(e) => {
+												if (e.key === "Enter" || e.key === " ") {
+													e.preventDefault();
+													selectConv(c.id);
+												}
+											}}
+										>
+											{renamingId === c.id ? (
+												// biome-ignore lint/a11y/noAutofocus: inline rename is explicitly requested
+												<input
+													ref={renameInputRef}
+													className="conv-rename-input"
+													value={renameText}
+													onChange={(e) => {
+														renameTextRef.current = e.target.value;
+														setRenameText(e.target.value);
+													}}
+													onClick={(e) => e.stopPropagation()}
+													onKeyDown={(e) => {
+														e.stopPropagation();
+														if (e.nativeEvent.isComposing) return;
+														if (e.key === "Enter") {
+															e.preventDefault();
+															e.currentTarget.blur();
+														} else if (e.key === "Escape") {
+															e.preventDefault();
+															cancelRename();
+														}
+													}}
+													onBlur={() => {
+														if (renameCancelRef.current) {
+															renameCancelRef.current = false;
+															return;
+														}
+														void commitRename(c.id);
+													}}
+													autoFocus
+												/>
+											) : (
+												<>
+													<span className="conv-menu-title">{c.title}</span>
+													<span className="conv-menu-actions">
+														<button
+															type="button"
+															title="重命名"
+															onClick={(e) => {
+																e.stopPropagation();
+																startRename(c);
+															}}
+														>
+															<Icon name="edit" size={12} />
+														</button>
+														<button
+															type="button"
+															title="删除对话"
+															onClick={(e) => {
+																e.stopPropagation();
+																void del(c);
+															}}
+														>
+															<Icon name="trash" size={12} />
+														</button>
+													</span>
+												</>
+											)}
+										</div>
+									))
+								)}
+							</div>
+							<button type="button" className="conv-menu-new" onClick={() => void createNew()} disabled={convLoading}>
+								<Icon name="plus" size={13} /> 新建对话
+							</button>
 						</div>
 					)}
-					<button type="button" className="conv-new-btn" onClick={createNew} disabled={!docId}>
-						<Icon name="plus" size={14} /> 新建对话
-					</button>
 				</div>
 			)}
 
-			{convId && msgs.length > 0 && (
+			{convId && (msgs.length > 0 || !!quote) && (
 				<div className="quick-actions">
 					{["解释", "总结", "翻译", "提问"].map((t) => (
 						<button key={t} type="button" onClick={() => setInput(t + (quote?.text ? "以上内容" : ""))}>
