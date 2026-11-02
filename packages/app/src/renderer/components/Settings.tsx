@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
 	AiConfig,
 	CustomProvider,
@@ -8,12 +8,14 @@ import type {
 	WebSearchTestResult,
 } from "../types.ts";
 import { formatTokens } from "../tokens.ts";
-import { Icon } from "./Icons.tsx";
+import { Icon, type IconName } from "./Icons.tsx";
 
 const EMPTY_FORM = { id: "", name: "", baseUrl: "", models: "", key: "" };
 
 /** Human label for where a model's context window came from. */
-function contextSourceLabel(source?: "override" | "catalog" | "metadata" | "inferred" | "default"): string {
+function contextSourceLabel(
+	source?: "override" | "catalog" | "metadata" | "inferred" | "default",
+): string {
 	switch (source) {
 		case "override":
 			return "手动";
@@ -28,17 +30,154 @@ function contextSourceLabel(source?: "override" | "catalog" | "metadata" | "infe
 	}
 }
 
-const SECTIONS = [
-	{ id: "models", label: "模型与提供商" },
-	{ id: "custom", label: "OpenAI 兼容" },
-	{ id: "websearch", label: "联网搜索" },
-	{ id: "skills", label: "技能" },
-	{ id: "agent", label: "对话" },
-	{ id: "reading", label: "阅读" },
-	{ id: "config", label: "配置文件" },
-] as const;
+type SectionId = "models" | "custom" | "websearch" | "skills" | "agent" | "reading" | "config";
 
-type SectionId = (typeof SECTIONS)[number]["id"];
+type SectionDef = { id: SectionId; label: string; icon: IconName; desc: string };
+
+/** Settings are grouped by intent so the nav reads as a short outline. */
+const SECTION_GROUPS: { title: string; items: SectionDef[] }[] = [
+	{
+		title: "模型与服务",
+		items: [
+			{
+				id: "models",
+				label: "模型与提供商",
+				icon: "sparkle",
+				desc: "选择提供商与全局默认模型。密钥加密保存在本机，也可以用环境变量提供。",
+			},
+			{
+				id: "custom",
+				label: "OpenAI 兼容",
+				icon: "plus",
+				desc: "接入自建或第三方的 OpenAI 兼容服务，配置独立保存，不改动 models.json。",
+			},
+			{
+				id: "websearch",
+				label: "联网搜索",
+				icon: "search",
+				desc: "让模型在书中内容不足时联网检索，补充上下文。",
+			},
+		],
+	},
+	{
+		title: "使用",
+		items: [
+			{
+				id: "skills",
+				label: "技能",
+				icon: "tool",
+				desc: "导入 SKILL.md 技能，并按书决定是否启用。",
+			},
+			{
+				id: "agent",
+				label: "对话",
+				icon: "chat",
+				desc: "控制单次回答最多经过多少轮检索与工具调用。",
+			},
+			{
+				id: "reading",
+				label: "阅读",
+				icon: "book",
+				desc: "文字识别（OCR）等版面解析选项。",
+			},
+		],
+	},
+	{
+		title: "高级",
+		items: [
+			{
+				id: "config",
+				label: "配置文件",
+				icon: "file",
+				desc: "直接编辑 models.json。文件允许注释，适合手动微调。",
+			},
+		],
+	},
+];
+
+const SECTIONS: SectionDef[] = SECTION_GROUPS.flatMap((g) => g.items);
+
+/** A bordered group of related settings. */
+function Card({
+	title,
+	desc,
+	actions,
+	children,
+	className,
+}: {
+	title?: ReactNode;
+	desc?: ReactNode;
+	actions?: ReactNode;
+	children: ReactNode;
+	className?: string;
+}) {
+	return (
+		<section className={className ? `settings-card ${className}` : "settings-card"}>
+			{title || actions ? (
+				<header className="settings-card-head">
+					<div className="settings-card-heading">
+						{title ? <h4>{title}</h4> : null}
+						{desc ? <div className="settings-card-desc">{desc}</div> : null}
+					</div>
+					{actions ? <div className="settings-card-actions">{actions}</div> : null}
+				</header>
+			) : null}
+			{children}
+		</section>
+	);
+}
+
+/** One labelled setting row: label on the left, control on the right. */
+function Field({
+	label,
+	hint,
+	controlHint,
+	children,
+	stack,
+}: {
+	label: ReactNode;
+	hint?: ReactNode;
+	controlHint?: ReactNode;
+	children: ReactNode;
+	stack?: boolean;
+}) {
+	return (
+		<div className={stack ? "settings-field stack" : "settings-field"}>
+			<div className="settings-label">
+				<span className="settings-label-text">{label}</span>
+				{hint ? <span className="settings-label-hint">{hint}</span> : null}
+			</div>
+			<div className="settings-control">
+				{children}
+				{controlHint ? <div className="settings-hint">{controlHint}</div> : null}
+			</div>
+		</div>
+	);
+}
+
+function Switch({
+	checked,
+	onChange,
+	disabled,
+	label,
+}: {
+	checked: boolean;
+	onChange: (next: boolean) => void;
+	disabled?: boolean;
+	label: string;
+}) {
+	return (
+		<input
+			type="checkbox"
+			role="switch"
+			className="settings-switch"
+			aria-label={label}
+			checked={checked}
+			disabled={disabled}
+			onChange={(e) => onChange(e.target.checked)}
+		/>
+	);
+}
 
 export function Settings({
 	docId,
@@ -72,7 +211,7 @@ export function Settings({
 	const [runtime, setRuntime] = useState<SkillRuntimeInfo | null>(null);
 	const [maxTurns, setMaxTurns] = useState(8);
 	const [section, setSection] = useState<SectionId>("models");
-	const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+	const contentRef = useRef<HTMLDivElement | null>(null);
 
 	const load = useCallback(async () => {
 		const [config, settings, customs, skillsData, docSkills, trust, rt] = await Promise.all([
@@ -117,6 +256,13 @@ export function Settings({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [onClose]);
 
+	// Transient feedback belongs in the footer: clear it instead of letting it linger.
+	useEffect(() => {
+		if (!note) return;
+		const timer = window.setTimeout(() => setNote(null), 6000);
+		return () => window.clearTimeout(timer);
+	}, [note]);
+
 	const provider = useMemo(() => ai?.providers.find((p) => p.id === providerId), [ai, providerId]);
 	const activeRef = ai?.defaultModel ?? "";
 	const providerModels = useMemo(
@@ -124,11 +270,22 @@ export function Settings({
 		[ai, providerId],
 	);
 	const currentInProvider = providerId && activeRef.startsWith(`${providerId}/`) ? activeRef : "";
+	const overrideCount = useMemo(() => {
+		const overrides = ai?.modelOverrides?.[providerId] ?? {};
+		return providerModels.filter((m) => overrides[m.id]).length;
+	}, [ai, providerId, providerModels]);
 	const notify = () => onSaved?.();
 
+	// Each section is its own panel, so start it at the top.
 	const goTo = (id: SectionId) => {
+		if (id !== section) contentRef.current?.scrollTo({ top: 0 });
 		setSection(id);
-		sectionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+	};
+
+	const chooseProvider = (id: string) => {
+		// The key field belongs to one provider only: never carry it across.
+		setKey("");
+		setProviderId(id);
 	};
 
 	const saveKey = async () => {
@@ -243,6 +400,12 @@ export function Settings({
 		await load();
 	};
 
+	const chooseWsBackend = (backend: string) => {
+		setWsBackend(backend);
+		setWsKey("");
+		saveWebSearch({ backend });
+	};
+
 	const saveWsKey = async () => {
 		if (!wsKey.trim()) return;
 		await window.api.setProviderKey(`websearch:${wsBackend}`, wsKey.trim());
@@ -312,6 +475,13 @@ export function Settings({
 		}
 	};
 
+	const reloadConfig = async () => {
+		const c = await window.api.getAiConfig();
+		setAi(c);
+		setConfigText(c.text);
+		setErrors(c.errors);
+	};
+
 	const saveConfig = async () => {
 		const result = await window.api.saveAiConfig(configText);
 		setErrors(result.errors);
@@ -321,21 +491,28 @@ export function Settings({
 		}
 	};
 
+	const saveOcrLang = async () => {
+		const value = ocrLang.trim();
+		if (value) await window.api.saveSettings({ ocrLang: value });
+	};
+
 	const done = async () => {
 		// Safety net: if the user typed a key but did not press "保存 Key", apply it now.
 		if (providerId && key.trim()) await window.api.setProviderKey(providerId, key.trim());
-		await window.api.saveSettings({ ocrLang });
+		await saveOcrLang();
 		onSaved?.();
 		onClose();
 	};
 
 	const providers = ai?.providers ?? [];
+	const sectionDef = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0];
+	const customEntries = Object.entries(custom);
 
 	return (
 		<div className="modal-backdrop">
 			{/* biome-ignore lint/a11y/useSemanticElements: custom modal surface */}
 			<div className="modal settings-modal" role="dialog" aria-modal="true" aria-label="设置">
-				<div className="modal-header">
+				<div className="modal-header settings-header">
 					<Icon name="settings" size={15} />
 					<span className="modal-title">设置</span>
 					<span className="spacer" />
@@ -345,625 +522,599 @@ export function Settings({
 				</div>
 
 				<div className="settings-body">
-					<nav className="settings-nav">
-						{SECTIONS.map((s) => (
-							<button
-								type="button"
-								key={s.id}
-								className={section === s.id ? "active" : ""}
-								onClick={() => goTo(s.id)}
-							>
-								{s.label}
-							</button>
+					<nav className="settings-nav" aria-label="设置分类">
+						{SECTION_GROUPS.map((group) => (
+							<div className="settings-nav-group" key={group.title}>
+								<div className="settings-nav-title">{group.title}</div>
+								{group.items.map((item) => (
+									<button
+										type="button"
+										key={item.id}
+										className={`settings-nav-item${section === item.id ? " active" : ""}`}
+										aria-current={section === item.id ? "page" : undefined}
+										onClick={() => goTo(item.id)}
+									>
+										<Icon name={item.icon} size={14} />
+										<span>{item.label}</span>
+									</button>
+								))}
+							</div>
 						))}
 					</nav>
 
-					<div className="settings-content">
-						<div
-							className="settings-section"
-							ref={(el) => {
-								sectionRefs.current.models = el;
-							}}
-						>
-							<h3>模型与提供商</h3>
-							<p className="section-desc">
-								选择提供商与全局默认模型。密钥加密保存在本机，可用环境变量替代。
-							</p>
+					<div
+						ref={contentRef}
+						className={`settings-content${section === "config" ? " settings-content-fixed" : ""}`}
+					>
+						<div className={`settings-panel${section === "config" ? " is-config" : ""}`}>
+							<header className="settings-panel-head">
+								<h3>{sectionDef.label}</h3>
+								<p>{sectionDef.desc}</p>
+							</header>
 
-							<div className="setting">
-								<div className="setting-label">
-									提供商
-									<span className="hint">
-										{provider
-											? `${provider.baseUrl || "未设置 Base URL"} · ${provider.api} · ${provider.modelCount} 个模型`
-											: "选择一个提供商"}
-									</span>
-								</div>
-								<div className="setting-control">
-									<select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
-										{providers.map((p) => (
-											<option key={p.id} value={p.id}>
-												{p.name}{" "}
-												{p.source === "gui" ? "(手动添加)" : p.source === "file" ? "(models.json)" : ""}
-												{p.configured ? " ✓" : ""}
-											</option>
-										))}
-									</select>
-								</div>
-							</div>
-
-							<div className="setting">
-								<div className="setting-label">
-									当前模型
-									<span className="hint">
-										{provider?.name ?? "—"} · 共 {providerModels.length} 个，选中即全局默认
-									</span>
-								</div>
-								<div className="setting-control">
-									<select value={currentInProvider} onChange={(e) => selectModel(e.target.value)}>
-										{currentInProvider === "" && <option value="">— 选择一个模型 —</option>}
-										{providerModels.length === 0 && <option value="">（该提供商无模型）</option>}
-										{providerModels.map((m) => (
-											<option key={m.ref} value={m.ref}>
-												{m.label}
-												{m.configured ? "" : "（未配置 Key）"}
-											</option>
-										))}
-									</select>
-								</div>
-							</div>
-
-							{providerModels.length > 0 && (
-								<details className="setting model-ctx-details">
-									<summary className="setting-label">
-										模型上下文
-										<span className="hint">
-											主流模型已自动识别（上下文窗口 / 最大输出）；如需覆盖可展开，留空即用自动值
-										</span>
-									</summary>
-									<div className="setting-control">
-										<div className="model-ctx-toolbar">
-											<span className="hint">
-												模型目录：
-												{ai?.metadataUpdatedAt
-													? new Date(ai.metadataUpdatedAt).toLocaleString()
-													: "未同步（启动时自动尝试）"}
-											</span>
-											<button type="button" onClick={syncMeta} disabled={metaSyncing}>
-												{metaSyncing ? "同步中…" : "同步 models.dev"}
-											</button>
-										</div>
-										<div className="model-ctx-list">
-											{providerModels.map((m) => {
-												const ov = ai?.modelOverrides?.[m.provider]?.[m.id];
-												return (
-													<div className="model-ctx-row" key={m.ref}>
-														<span className="model-ctx-name" title={m.ref}>
-															{m.label}
-														</span>
-														<span className={`model-ctx-source src-${m.contextSource ?? "default"}`}>
-															{contextSourceLabel(m.contextSource)}
-														</span>
-														<input
-															key={`${m.ref}:ctx:${ov?.contextWindow ?? ""}`}
-															type="number"
-															min={1}
-															className="model-ctx-input"
-															defaultValue={ov?.contextWindow ?? ""}
-															placeholder={formatTokens(m.contextWindow)}
-															title="覆盖上下文窗口（token），留空用自动值"
-															onBlur={(e) => {
-																const v = Number(e.target.value);
-																saveModelOverride(m.provider, m.id, {
-																	contextWindow:
-																		e.target.value.trim() && Number.isFinite(v) && v > 0
-																			? Math.floor(v)
-																			: undefined,
-																	maxTokens: ov?.maxTokens,
-																});
-															}}
-														/>
-														<input
-															key={`${m.ref}:max:${ov?.maxTokens ?? ""}`}
-															type="number"
-															min={1}
-															className="model-ctx-input"
-															defaultValue={ov?.maxTokens ?? ""}
-															placeholder={m.maxTokens ? formatTokens(m.maxTokens) : "输出"}
-															title="覆盖最大输出 token，留空用自动值"
-															onBlur={(e) => {
-																const v = Number(e.target.value);
-																saveModelOverride(m.provider, m.id, {
-																	contextWindow: ov?.contextWindow,
-																	maxTokens:
-																		e.target.value.trim() && Number.isFinite(v) && v > 0
-																			? Math.floor(v)
-																			: undefined,
-																});
-															}}
-														/>
-														{ov ? (
-															<button
-																type="button"
-																className="model-ctx-reset"
-																title="恢复自动"
-																onClick={() => resetModelOverride(m.provider, m.id)}
-															>
-																重置
-															</button>
-														) : (
-															<span className="model-ctx-reset placeholder" />
-														)}
-													</div>
-												);
-											})}
-										</div>
-										<div className="hint model-ctx-note">
-											参考公开模型卡片与 models.dev；自动值仅作默认，可在 models.json 或此处覆盖。
-										</div>
-									</div>
-								</details>
-							)}
-
-							<div className="setting">
-								<div className="setting-label">
-									API Key
-									<span className="hint">
-										{provider?.keySource === "stored"
-											? "已保存（留空保持不变）"
-											: provider?.keySource === "env"
-												? "来自环境变量"
-												: "尚未配置"}
-									</span>
-								</div>
-								<div className="setting-control">
-									<input
-										type="password"
-										value={key}
-										onChange={(e) => setKey(e.target.value)}
-										onKeyDown={(e) => {
-											if (e.key === "Enter") saveKey();
-										}}
-										placeholder={provider?.configured ? "留空则保持不变" : "sk-..."}
-									/>
-									<div className="button-row" style={{ marginTop: 6 }}>
-										<button type="button" onClick={saveKey} disabled={busy || !providerId}>
-											保存 Key
-										</button>
-										<button type="button" onClick={refresh} disabled={busy}>
-											刷新模型列表
-										</button>
-									</div>
-								</div>
-							</div>
-						</div>
-
-						<div
-							className="settings-section"
-							ref={(el) => {
-								sectionRefs.current.custom = el;
-							}}
-						>
-							<h3>OpenAI 兼容</h3>
-							<p className="section-desc">
-								手动添加自建/第三方 OpenAI 兼容服务，填写 Base URL 与模型 ID 即可。保存到
-								custom-providers.json，不改动 models.json。
-							</p>
-
-							<div className="setting">
-								<div className="setting-label">标识 ID</div>
-								<div className="setting-control">
-									<input
-										value={form.id}
-										onChange={(e) => setForm({ ...form, id: e.target.value })}
-										placeholder="my-llm"
-									/>
-								</div>
-							</div>
-							<div className="setting">
-								<div className="setting-label">显示名称</div>
-								<div className="setting-control">
-									<input
-										value={form.name}
-										onChange={(e) => setForm({ ...form, name: e.target.value })}
-										placeholder="本地 vLLM"
-									/>
-								</div>
-							</div>
-							<div className="setting">
-								<div className="setting-label">Base URL</div>
-								<div className="setting-control">
-									<input
-										value={form.baseUrl}
-										onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
-										placeholder="http://127.0.0.1:8000/v1"
-									/>
-								</div>
-							</div>
-							<div className="setting">
-								<div className="setting-label">
-									模型 ID
-									<span className="hint">逗号或换行分隔</span>
-								</div>
-								<div className="setting-control">
-									<input
-										value={form.models}
-										onChange={(e) => setForm({ ...form, models: e.target.value })}
-										placeholder="qwen3-32b, qwen3-8b"
-									/>
-								</div>
-							</div>
-							<div className="setting">
-								<div className="setting-label">API Key（可选）</div>
-								<div className="setting-control">
-									<input
-										type="password"
-										value={form.key}
-										onChange={(e) => setForm({ ...form, key: e.target.value })}
-										placeholder={form.id && custom[form.id] ? "留空则保持不变" : "sk-..."}
-									/>
-								</div>
-							</div>
-
-							<div className="button-row" style={{ marginTop: 10 }}>
-								<button type="button" className="primary" onClick={saveCustom} disabled={busy}>
-									{form.id && custom[form.id] ? "更新提供商" : "保存提供商"}
-								</button>
-								{form.id && (
-									<button type="button" onClick={() => setForm(EMPTY_FORM)}>
-										清空
-									</button>
-								)}
-							</div>
-
-							{Object.keys(custom).length > 0 && (
-								<div className="custom-list">
-									{Object.entries(custom).map(([id, c]) => (
-										<div key={id} className="custom-item">
-											<span className="custom-item-label" title={`${id} · ${c.baseUrl}`}>
-												<strong>{c.name ?? id}</strong>
-												<span className="hint">
-													{" "}
-													{id} · {c.baseUrl} · {c.models.length} 个模型
-												</span>
-											</span>
-											<span className="button-row">
-												<button type="button" onClick={() => editCustom(id)}>
-													编辑
-												</button>
-												<button type="button" onClick={() => removeCustom(id)}>
-													删除
-												</button>
-											</span>
-										</div>
-									))}
-								</div>
-							)}
-						</div>
-
-						<div
-							className="settings-section"
-							ref={(el) => {
-								sectionRefs.current.websearch = el;
-							}}
-						>
-							<h3>联网搜索</h3>
-							<p className="section-desc">
-								为对话提供 web_search 工具。默认「自动」走 Exa / Parallel 的公开 MCP（免 key，失败会互相切换）；
-								也可改用 Brave / Tavily / Exa API（需 key）；「服务商原生」由 Anthropic 协议模型在服务端执行。
-							</p>
-
-							<div className="setting">
-								<div className="setting-label">
-									启用
-									<span className="hint">允许模型在书中内容不足时联网</span>
-								</div>
-								<div className="setting-control">
-									<label className="checkbox-line">
-										<input
-											type="checkbox"
-											checked={wsEnabled}
-											onChange={(e) => saveWebSearch({ enabled: e.target.checked })}
-										/>
-										启用联网搜索
-									</label>
-								</div>
-							</div>
-
-							<div className="setting">
-								<div className="setting-label">后端</div>
-								<div className="setting-control">
-									<select
-										value={wsBackend}
-										onChange={(e) => saveWebSearch({ backend: e.target.value })}
-									>
-										<option value="auto">自动（Exa / Parallel 公开 MCP，免 key）</option>
-										<option value="exa-mcp">Exa（公开 MCP，免 key）</option>
-										<option value="parallel-mcp">Parallel（公开 MCP，免 key）</option>
-										<option value="brave">Brave Search（需 key）</option>
-										<option value="tavily">Tavily（需 key）</option>
-										<option value="exa">Exa API（需 key）</option>
-										<option value="duckduckgo">DuckDuckGo（免 key，兜底）</option>
-										<option value="native">服务商原生（仅 Anthropic 协议）</option>
-									</select>
-								</div>
-							</div>
-
-							<div className="setting">
-								<div className="setting-label">
-									API Key
-									<span className="hint">
-										{ai?.webSearch.keySource === "stored"
-											? "已保存（留空保持不变）"
-											: ai?.webSearch.keySource === "env"
-												? "来自环境变量"
-												: ai?.webSearch.keySource === "config"
-													? "来自 models.json"
-													: "DuckDuckGo / 原生无需"}
-									</span>
-								</div>
-								<div className="setting-control">
-									<input
-										type="password"
-										value={wsKey}
-										onChange={(e) => setWsKey(e.target.value)}
-										onKeyDown={(e) => {
-											if (e.key === "Enter") saveWsKey();
-										}}
-										placeholder="搜索服务 API Key"
-									/>
-									<div className="button-row" style={{ marginTop: 6 }}>
-										<button type="button" onClick={saveWsKey} disabled={busy || !wsKey.trim()}>
-											保存 Key
-										</button>
-										<button type="button" onClick={runWsTest} disabled={busy}>
-											测试搜索
-										</button>
-									</div>
-								</div>
-							</div>
-
-							<div className="setting">
-								<div className="setting-label">
-									返回条数
-									<span className="hint">1–10</span>
-								</div>
-								<div className="setting-control">
-									<input
-										type="number"
-										min={1}
-										max={10}
-										value={wsMax}
-										onChange={(e) => setWsMax(Number(e.target.value) || 5)}
-										onBlur={() => saveWebSearch({ maxResults: wsMax })}
-									/>
-								</div>
-							</div>
-
-							{wsTest && (
-								<div className="ws-test">
-									{wsTest.ok ? (
-										<>
-											<div className="hint">
-												后端 {wsTest.backend}
-												{wsTest.results?.length
-													? ` 返回 ${wsTest.results.length} 条：`
-													: " 返回文本："}
-											</div>
-											{wsTest.results?.length ? (
-												<ul className="ws-test-list">
-													{wsTest.results.slice(0, 3).map((r) => (
-														<li key={r.url}>
-															<span>{r.title}</span>
-															<span className="hint"> {r.url}</span>
-														</li>
-													))}
-												</ul>
-											) : (
-												<pre className="ws-test-text">{(wsTest.text ?? "（无内容）").slice(0, 1200)}</pre>
-											)}
-										</>
-									) : (
-										<div className="config-errors">测试失败：{wsTest.error}</div>
-									)}
-								</div>
-							)}
-						</div>
-
-						<div
-							className="settings-section"
-							ref={(el) => {
-								sectionRefs.current.skills = el;
-							}}
-						>
-							<h3>技能</h3>
-							<p className="section-desc">
-								导入 SKILL.md 技能并按书启用。技能说明由模型按需用 read_skill 读取；脚本执行默认每次都会弹窗确认具体命令。
-							</p>
-
-							<div className="setting">
-								<div className="setting-label">
-									允许执行技能脚本
-									<span className="hint">关闭时模型看不到 run_skill_script</span>
-								</div>
-								<div className="setting-control">
-									<label className="checkbox-line">
-										<input
-											type="checkbox"
-											checked={executionEnabled}
-											onChange={(e) => toggleExecution(e.target.checked)}
-										/>
-										允许执行（每次弹窗确认）
-									</label>
-									{runtime && (
-										<span className="hint">
-											Python：{runtime.python ?? "未检测到"} · Node：{runtime.node}
-										</span>
-									)}
-								</div>
-							</div>
-
-							<div className="button-row" style={{ margin: "12px 0" }}>
-								<button type="button" className="primary" onClick={importSkill} disabled={busy}>
-									导入技能（文件夹 / .md / .zip）
-								</button>
-							</div>
-
-							{skills.diagnostics.length > 0 && (
-								<div className="config-errors">已跳过：{skills.diagnostics.join("；")}</div>
-							)}
-
-							{skills.skills.length === 0 ? (
-								<div className="hint">还没有导入任何技能。</div>
-							) : (
+							{section === "models" && (
 								<>
-									<div className="skill-list-head">
-										已安装技能（左侧勾选 = 本书启用
-										{executionEnabled ? "；右侧「免确认」= 执行时不再询问" : ""}）
-									</div>
-									<div className="skill-list">
-										{skills.skills.map((s) => (
-											<div key={s.name} className="skill-item">
-												<label className="skill-item-main">
-													<input
-														type="checkbox"
-														checked={enabledSkills.includes(s.name)}
-														disabled={!docId}
-														onChange={(e) => toggleSkill(s.name, e.target.checked)}
-													/>
-													<span className="skill-item-text">
-														<span className="skill-name">{s.name}</span>
-														<span className="skill-desc">{s.description}</span>
-													</span>
-												</label>
-												<span className="skill-item-actions">
-													<label className="checkbox-line" title="此后该技能执行脚本不再弹窗确认">
-														<input
-															type="checkbox"
-															checked={trustedSkills.includes(s.name)}
-															disabled={!executionEnabled}
-															onChange={(e) => toggleTrust(s.name, e.target.checked)}
-														/>
-														免确认
-													</label>
-													<button type="button" onClick={() => removeSkill(s.name)}>
-														删除
-													</button>
-												</span>
+									<Card>
+										<Field
+											label="提供商"
+											controlHint={
+												provider
+													? `${provider.baseUrl || "未设置 Base URL"} · ${provider.api} · ${provider.modelCount} 个模型`
+													: "请选择一个提供商"
+											}
+										>
+											<select value={providerId} onChange={(e) => chooseProvider(e.target.value)}>
+												{providers.map((p) => (
+													<option key={p.id} value={p.id}>
+														{p.name}
+														{p.source === "gui"
+															? "（手动添加）"
+															: p.source === "file"
+																? "（models.json）"
+																: ""}
+														{p.configured ? " ✓" : ""}
+													</option>
+												))}
+											</select>
+										</Field>
+
+										<Field
+											label="当前模型"
+											controlHint={
+												providerModels.length > 0
+													? "选中后即作为全局默认模型，对所有对话生效"
+													: "该提供商暂无可用模型"
+											}
+										>
+											<select value={currentInProvider} onChange={(e) => selectModel(e.target.value)}>
+												{currentInProvider === "" && <option value="">— 选择一个模型 —</option>}
+												{providerModels.length === 0 && <option value="">（该提供商无模型）</option>}
+												{providerModels.map((m) => (
+													<option key={m.ref} value={m.ref}>
+														{m.label}
+														{m.configured ? "" : "（未配置 Key）"}
+													</option>
+												))}
+											</select>
+										</Field>
+
+										<Field
+											label="API Key"
+											hint="仅保存在本机"
+											controlHint={
+												provider?.keySource === "stored"
+													? "已保存，留空保持不变"
+													: provider?.keySource === "env"
+														? "来自环境变量"
+														: "尚未配置密钥"
+											}
+										>
+											<input
+												type="password"
+												value={key}
+												onChange={(e) => setKey(e.target.value)}
+												onKeyDown={(e) => {
+													if (e.key === "Enter") saveKey();
+												}}
+												placeholder={provider?.configured ? "留空则保持不变" : "sk-..."}
+											/>
+											<div className="button-row">
+												<button type="button" onClick={saveKey} disabled={busy || !providerId}>
+													保存 Key
+												</button>
+												<button type="button" onClick={refresh} disabled={busy}>
+													刷新模型列表
+												</button>
 											</div>
-										))}
-									</div>
+										</Field>
+									</Card>
+
+									{providerModels.length > 0 && (
+										<details className="settings-card settings-card-collapsible">
+											<summary className="settings-card-summary">
+												<Icon name="chevronRight" size={12} className="settings-chevron" />
+												<span className="settings-card-title">模型上下文</span>
+												<span className="settings-card-sub">窗口大小已自动识别，可手动覆盖</span>
+												<span className="spacer" />
+												{overrideCount > 0 ? (
+													<span className="settings-pill accent">{overrideCount} 项覆盖</span>
+												) : null}
+											</summary>
+
+											<div className="settings-toolbar">
+												<span className="settings-hint">
+													模型目录：
+													{ai?.metadataUpdatedAt
+														? new Date(ai.metadataUpdatedAt).toLocaleString()
+														: "未同步（启动时自动尝试）"}
+												</span>
+												<button type="button" onClick={syncMeta} disabled={metaSyncing}>
+													{metaSyncing ? "同步中…" : "同步 models.dev"}
+												</button>
+											</div>
+
+											<div className="settings-table">
+												<div className="settings-table-head ctx">
+													<span>模型</span>
+													<span>来源</span>
+													<span>上下文窗口</span>
+													<span>最大输出</span>
+													<span />
+												</div>
+												{providerModels.map((m) => {
+													const ov = ai?.modelOverrides?.[m.provider]?.[m.id];
+													return (
+														<div className="settings-table-row ctx" key={m.ref}>
+															<span className="settings-model-name" title={m.ref}>
+																{m.label}
+															</span>
+															<span
+																className={`settings-pill src-${m.contextSource ?? "default"}`}
+																title="上下文窗口来源"
+															>
+																{contextSourceLabel(m.contextSource)}
+															</span>
+															<input
+																key={`${m.ref}:ctx:${ov?.contextWindow ?? ""}`}
+																type="number"
+																min={1}
+																aria-label={`${m.label} 上下文窗口`}
+																className="settings-number"
+																defaultValue={ov?.contextWindow ?? ""}
+																placeholder={formatTokens(m.contextWindow)}
+																title="覆盖上下文窗口（token），留空用自动值"
+																onBlur={(e) => {
+																	const v = Number(e.target.value);
+																	saveModelOverride(m.provider, m.id, {
+																		contextWindow:
+																			e.target.value.trim() && Number.isFinite(v) && v > 0
+																				? Math.floor(v)
+																				: undefined,
+																		maxTokens: ov?.maxTokens,
+																	});
+																}}
+															/>
+															<input
+																key={`${m.ref}:max:${ov?.maxTokens ?? ""}`}
+																type="number"
+																min={1}
+																aria-label={`${m.label} 最大输出`}
+																className="settings-number"
+																defaultValue={ov?.maxTokens ?? ""}
+																placeholder={m.maxTokens ? formatTokens(m.maxTokens) : "默认"}
+																title="覆盖最大输出 token，留空用自动值"
+																onBlur={(e) => {
+																	const v = Number(e.target.value);
+																	saveModelOverride(m.provider, m.id, {
+																		contextWindow: ov?.contextWindow,
+																		maxTokens:
+																			e.target.value.trim() && Number.isFinite(v) && v > 0
+																				? Math.floor(v)
+																				: undefined,
+																	});
+																}}
+															/>
+															{ov ? (
+																<button
+																	type="button"
+																	className="settings-link"
+																	onClick={() => resetModelOverride(m.provider, m.id)}
+																>
+																	重置
+																</button>
+															) : null}
+														</div>
+													);
+												})}
+											</div>
+
+											<p className="settings-card-note">
+												留空即使用自动识别值。数据参考 models.dev 与公开模型卡片，仅作默认。
+											</p>
+										</details>
+									)}
 								</>
 							)}
-							{!docId && <div className="hint">打开一本书后，即可针对该书勾选启用的技能。</div>}
-						</div>
 
-						<div
-							className="settings-section"
-							ref={(el) => {
-								sectionRefs.current.agent = el;
-							}}
-						>
-							<h3>对话</h3>
-							<p className="section-desc">
-								控制每条消息最多经过多少轮工具调用（读页、检索、联网、技能等）。
-							</p>
-							<div className="setting">
-								<div className="setting-label">
-									最大工具回合数
-									<span className="hint">1–20，默认 8</span>
-								</div>
-								<div className="setting-control">
-									<input
-										type="number"
-										min={1}
-										max={20}
-										value={maxTurns}
-										onChange={(e) => setMaxTurns(Number(e.target.value) || 8)}
-										onBlur={() =>
-											window.api.saveSettings({
-												agentMaxTurns: String(Math.max(1, Math.min(20, maxTurns))),
-											})
-										}
-									/>
-								</div>
-							</div>
-						</div>
+							{section === "custom" && (
+								<>
+									<Card
+										title={form.id && custom[form.id] ? "编辑提供商" : "添加提供商"}
+										desc="填写 Base URL 与模型 ID 即可开始使用。"
+									>
+										<Field label="标识 ID" hint="小写字母、数字与连字符">
+											<input
+												value={form.id}
+												onChange={(e) => setForm({ ...form, id: e.target.value })}
+												placeholder="my-llm"
+											/>
+										</Field>
+										<Field label="显示名称">
+											<input
+												value={form.name}
+												onChange={(e) => setForm({ ...form, name: e.target.value })}
+												placeholder="本地 vLLM"
+											/>
+										</Field>
+										<Field label="Base URL">
+											<input
+												value={form.baseUrl}
+												onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+												placeholder="http://127.0.0.1:8000/v1"
+											/>
+										</Field>
+										<Field label="模型 ID" hint="逗号或换行分隔">
+											<input
+												value={form.models}
+												onChange={(e) => setForm({ ...form, models: e.target.value })}
+												placeholder="qwen3-32b, qwen3-8b"
+											/>
+										</Field>
+										<Field label="API Key" hint="可选">
+											<input
+												type="password"
+												value={form.key}
+												onChange={(e) => setForm({ ...form, key: e.target.value })}
+												placeholder={form.id && custom[form.id] ? "留空则保持不变" : "sk-..."}
+											/>
+										</Field>
 
-						<div
-							className="settings-section"
-							ref={(el) => {
-								sectionRefs.current.reading = el;
-							}}
-						>
-							<h3>阅读</h3>
-							<div className="setting">
-								<div className="setting-label">
-									OCR 语言
-									<span className="hint">Tesseract 语言包，如 chi_sim+eng / eng / jpn</span>
-								</div>
-								<div className="setting-control">
-									<input
-										value={ocrLang}
-										onChange={(e) => setOcrLang(e.target.value)}
-										placeholder="chi_sim+eng"
-									/>
-								</div>
-							</div>
-						</div>
+										<div className="settings-actions">
+											{form.id && (
+												<button type="button" onClick={() => setForm(EMPTY_FORM)}>
+													清空
+												</button>
+											)}
+											<button type="button" className="primary" onClick={saveCustom} disabled={busy}>
+												{form.id && custom[form.id] ? "更新提供商" : "保存提供商"}
+											</button>
+										</div>
+									</Card>
 
-						<div
-							className="settings-section"
-							ref={(el) => {
-								sectionRefs.current.config = el;
-							}}
-						>
-							<h3>配置文件</h3>
-							<p className="section-desc">
-								models.json 是 AI 友好配置，允许注释。手动添加的提供商在 custom-providers.json。
-							</p>
-							<div className="button-row" style={{ marginBottom: 8 }}>
-								<button
-									type="button"
-									onClick={async () => {
-										const c = await window.api.getAiConfig();
-										setAi(c);
-										setConfigText(c.text);
-										setErrors(c.errors);
-									}}
-								>
-									重新载入
-								</button>
-								<button type="button" onClick={() => window.api.openAiConfig()}>
-									用系统编辑器打开
-								</button>
-								<button type="button" className="primary" onClick={saveConfig}>
-									保存配置
-								</button>
-							</div>
-							<div className="hint" style={{ marginBottom: 8 }}>
-								{ai?.path}
-							</div>
-							{errors.length > 0 && (
-								<ul className="config-errors">
-									{errors.map((err) => (
-										<li key={err}>{err}</li>
-									))}
-								</ul>
+									<Card
+										title="已添加的提供商"
+										desc={`共 ${customEntries.length} 个 · 保存在 custom-providers.json`}
+									>
+										{customEntries.length === 0 ? (
+											<div className="settings-empty">
+												还没有手动添加的提供商。填写上方表单即可添加。
+											</div>
+										) : (
+											<div className="settings-list">
+												{customEntries.map(([id, c]) => (
+													<div key={id} className="settings-list-item">
+														<div className="settings-list-main">
+															<span className="settings-list-title">{c.name ?? id}</span>
+															<span className="settings-list-meta" title={`${id} · ${c.baseUrl}`}>
+																{id} · {c.baseUrl} · {c.models.length} 个模型
+															</span>
+														</div>
+														<div className="settings-list-actions">
+															<button type="button" onClick={() => editCustom(id)}>
+																编辑
+															</button>
+															<button type="button" onClick={() => removeCustom(id)}>
+																删除
+															</button>
+														</div>
+													</div>
+												))}
+											</div>
+										)}
+									</Card>
+								</>
 							)}
-							<textarea
-								className="config-text"
-								value={configText}
-								onChange={(e) => setConfigText(e.target.value)}
-								spellCheck={false}
-							/>
-						</div>
 
-						{note && <div className="settings-note">{note}</div>}
+							{section === "websearch" && (
+								<>
+									<Card>
+										<Field label="启用联网搜索" hint="关闭后模型无法调用 web_search">
+											<Switch
+												label="启用联网搜索"
+												checked={wsEnabled}
+												onChange={(enabled) => saveWebSearch({ enabled })}
+											/>
+										</Field>
+
+										<Field label="搜索后端" controlHint="「自动」优先使用免密钥的公开 MCP，失败时自动切换">
+											<select value={wsBackend} onChange={(e) => chooseWsBackend(e.target.value)}>
+												<option value="auto">自动（Exa / Parallel 公开 MCP，免 key）</option>
+												<option value="exa-mcp">Exa（公开 MCP，免 key）</option>
+												<option value="parallel-mcp">Parallel（公开 MCP，免 key）</option>
+												<option value="brave">Brave Search（需 key）</option>
+												<option value="tavily">Tavily（需 key）</option>
+												<option value="exa">Exa API（需 key）</option>
+												<option value="duckduckgo">DuckDuckGo（免 key，兜底）</option>
+												<option value="native">服务商原生（仅 Anthropic 协议）</option>
+											</select>
+										</Field>
+
+										<Field
+											label="API Key"
+											hint="仅在使用需 key 的后端时填写"
+											controlHint={
+												ai?.webSearch.keySource === "stored"
+													? "已保存，留空保持不变"
+													: ai?.webSearch.keySource === "env"
+														? "来自环境变量"
+														: ai?.webSearch.keySource === "config"
+															? "来自 models.json"
+															: "当前后端无需 Key"
+											}
+										>
+											<input
+												type="password"
+												value={wsKey}
+												onChange={(e) => setWsKey(e.target.value)}
+												onKeyDown={(e) => {
+													if (e.key === "Enter") saveWsKey();
+												}}
+												placeholder="搜索服务 API Key"
+											/>
+											<div className="button-row">
+												<button type="button" onClick={saveWsKey} disabled={busy || !wsKey.trim()}>
+													保存 Key
+												</button>
+												<button type="button" onClick={runWsTest} disabled={busy}>
+													测试搜索
+												</button>
+											</div>
+										</Field>
+
+										<Field label="返回条数" hint="1–10 条">
+											<input
+												type="number"
+												min={1}
+												max={10}
+												className="settings-number"
+												value={wsMax}
+												onChange={(e) => setWsMax(Number(e.target.value) || 5)}
+												onBlur={() => saveWebSearch({ maxResults: wsMax })}
+											/>
+										</Field>
+									</Card>
+
+									{wsTest && (
+										<Card
+											title="测试结果"
+											actions={
+												<span className={`settings-pill ${wsTest.ok ? "ok" : "bad"}`}>
+													{wsTest.ok ? "连接正常" : "调用失败"}
+												</span>
+											}
+										>
+											<div className="settings-card-body">
+												{wsTest.ok ? (
+													<>
+														<div className="settings-hint">
+															后端 {wsTest.backend}
+															{wsTest.results?.length
+																? ` 返回 ${wsTest.results.length} 条：`
+																: " 返回文本："}
+														</div>
+														{wsTest.results?.length ? (
+															<ul className="ws-test-list">
+																{wsTest.results.slice(0, 3).map((r) => (
+																	<li key={r.url}>
+																		<span>{r.title}</span>
+																		<span className="settings-hint"> {r.url}</span>
+																	</li>
+																))}
+															</ul>
+														) : (
+															<pre className="ws-test-text">
+																{(wsTest.text ?? "（无内容）").slice(0, 1200)}
+															</pre>
+														)}
+													</>
+												) : (
+													<div className="settings-error">测试失败：{wsTest.error}</div>
+												)}
+											</div>
+										</Card>
+									)}
+								</>
+							)}
+
+							{section === "skills" && (
+								<>
+									<Card>
+										<Field
+											label="允许执行技能脚本"
+											hint="关闭时模型看不到 run_skill_script"
+											controlHint={
+												runtime
+													? `运行环境：Python ${runtime.python ?? "未检测到"} · Node ${runtime.node}`
+													: undefined
+											}
+										>
+											<Switch
+												label="允许执行技能脚本"
+												checked={executionEnabled}
+												onChange={toggleExecution}
+											/>
+										</Field>
+									</Card>
+
+									<Card
+										title="已安装技能"
+										desc={
+											skills.skills.length > 0
+												? `${skills.skills.length} 个 · 勾选后在当前书中启用`
+												: "导入 SKILL.md 或包含 SKILL.md 的文件夹 / .zip"
+										}
+										actions={
+											<button type="button" className="primary" onClick={importSkill} disabled={busy}>
+												导入技能
+											</button>
+										}
+									>
+										{skills.diagnostics.length > 0 && (
+											<div className="settings-error">已跳过：{skills.diagnostics.join("；")}</div>
+										)}
+
+										{skills.skills.length === 0 ? (
+											<div className="settings-empty">还没有导入任何技能。</div>
+										) : (
+											<div className="settings-table">
+												<div className="settings-table-head skill">
+													<span>本书启用</span>
+													<span>技能</span>
+													<span>免确认</span>
+													<span />
+												</div>
+												{skills.skills.map((s) => (
+													<div key={s.name} className="settings-table-row skill">
+														<input
+															type="checkbox"
+															aria-label={`${s.name} 在本书启用`}
+															checked={enabledSkills.includes(s.name)}
+															disabled={!docId}
+															onChange={(e) => toggleSkill(s.name, e.target.checked)}
+														/>
+														<div className="settings-skill-main">
+															<span className="settings-skill-name">{s.name}</span>
+															<span className="settings-skill-desc">{s.description}</span>
+														</div>
+														<input
+															type="checkbox"
+															aria-label={`${s.name} 执行时不再确认`}
+															checked={trustedSkills.includes(s.name)}
+															disabled={!executionEnabled}
+															title={
+																executionEnabled
+																	? "勾选后，该技能执行脚本不再弹窗确认"
+																	: "需先允许执行技能脚本"
+															}
+															onChange={(e) => toggleTrust(s.name, e.target.checked)}
+														/>
+														<button
+															type="button"
+															className="settings-link danger"
+															onClick={() => removeSkill(s.name)}
+														>
+															删除
+														</button>
+													</div>
+												))}
+											</div>
+										)}
+										{!docId && skills.skills.length > 0 && (
+											<div className="settings-card-note">打开一本书后，即可针对该书勾选技能。</div>
+										)}
+									</Card>
+								</>
+							)}
+
+							{section === "agent" && (
+								<Card>
+									<Field
+										label="最大工具回合数"
+										hint="每条消息最多可进行的工具调用轮数"
+										controlHint="1–20 轮，默认 8 轮。数值越大回答越深入，耗时也越长。"
+									>
+										<input
+											type="number"
+											min={1}
+											max={20}
+											className="settings-number"
+											value={maxTurns}
+											onChange={(e) => setMaxTurns(Number(e.target.value) || 8)}
+											onBlur={() =>
+												window.api.saveSettings({
+													agentMaxTurns: String(Math.max(1, Math.min(20, maxTurns))),
+												})
+											}
+										/>
+									</Field>
+								</Card>
+							)}
+
+							{section === "reading" && (
+								<Card title="文字识别（OCR）">
+									<Field
+										label="OCR 语言"
+										hint="Tesseract 语言包名"
+										controlHint="多个语言用 + 连接，例如 chi_sim+eng / eng / jpn。改动后对新发起的识别生效。"
+									>
+										<input
+											value={ocrLang}
+											onChange={(e) => setOcrLang(e.target.value)}
+											onBlur={saveOcrLang}
+											placeholder="chi_sim+eng"
+										/>
+									</Field>
+								</Card>
+							)}
+
+							{section === "config" && (
+								<Card
+									className="settings-code-card"
+									title="models.json"
+									desc="编辑后点击「保存配置」生效，语法错误会显示在编辑器上方。"
+									actions={
+										<>
+											<button type="button" onClick={reloadConfig}>
+												重新载入
+											</button>
+											<button type="button" onClick={() => window.api.openAiConfig()}>
+												系统编辑器打开
+											</button>
+											<button type="button" className="primary" onClick={saveConfig}>
+												保存配置
+											</button>
+										</>
+									}
+								>
+									<div className="settings-filebar" title={ai?.path}>
+										<Icon name="file" size={12} />
+										<code>{ai?.path}</code>
+									</div>
+									<div className="settings-card-body settings-code-body">
+										{errors.length > 0 && (
+											<ul className="settings-errors">
+												{errors.map((err) => (
+													<li key={err}>{err}</li>
+												))}
+											</ul>
+										)}
+										<textarea
+											className="settings-code"
+											value={configText}
+											onChange={(e) => setConfigText(e.target.value)}
+											spellCheck={false}
+										/>
+									</div>
+								</Card>
+							)}
+						</div>
 					</div>
 				</div>
 
-				<div className="modal-footer">
+				<div className="modal-footer settings-footer">
+					<span className="settings-status" title={note ?? ""}>
+						{note ?? ""}
+					</span>
 					<button type="button" onClick={onClose}>
 						取消
 					</button>
