@@ -34,6 +34,9 @@
 - [x] 修复「标题和正文连读、听起来很急」：构建文本时按块级祖先（EPUB）或几何间距（PDF）插入硬断句，切句器在新断点处切句
 - [x] 接入 Kokoro 多语言（82M / 103 音色 / Apache-2.0，147MB）：适配器新增 kokoro 配置分支（model + voices.bin + 中英双 lexicon），中文 8 个音色按名字排在列表最前，其余标注「其他语言」；`isInstalled` 要求 voices.bin 存在
 - [x] Kokoro 实测（M1 / int8 / 4 线程）：加载 1.3s，RTF 0.71–0.89，25 字约 6.1s 音频；已设为未指定时的首选模型
+- [x] 修复 Kokoro 音色映射错误：v1.1（103 音色）与 v1.0（53 音色）sid 布局不同，之前把 v1.1 的中文男声（58–102）标成了「其他语言」、把 45–52 标成了 v1.0 的名字；现按说话人总数分流，中文 100 个（55 女 + 45 男）排在最前
+- [x] 新增 Kokoro fp32 高保真版（365MB）作为对比项，用于判断杂音是否来自 int8 量化
+- [x] 实测 CoreML/Metal：Kokoro 在 coreml provider 下 RTF 0.88、CPU 0.82（加载更慢），动态 shape 导致节点回退 → 82M ONNX 模型上 Metal 无收益
 - [ ] 待做：真机点击验收（朗读按钮、高亮跟随、自动翻页音画衔接）、EPUB 分页模式下的跨屏高亮、Edge 适配器（手写 WS 客户端 + 移植 v2 token）、Azure/Qwen 适配器
 
 ## 2026-11-03 对话导出（Markdown / HTML / JSON）

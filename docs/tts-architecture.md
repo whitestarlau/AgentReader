@@ -262,7 +262,7 @@ export class MyTts implements TtsEngine {
 - 模型管理器：应用内下载（流式进度、可取消）、完整性校验、`tar` 解包、安装后校验、删除；实测真实下载 129MB（Matcha + vocoder）15.3 秒完成并验证通过。
 - 设置页「朗读」分区：模型卡片（大小 / 许可证 / 占用）、下载进度条、取消 / 删除 / 切换使用，以及当前可用引擎与能力。
 - `sherpa-onnx` 本地适配器：模型目录即配置，自动识别 **VITS / Matcha / Kokoro** 三族、自动收集 rule fsts、按 `numSpeakers` 生成音色列表；合成走 `generateAsync`（不阻塞主进程）；输出 16-bit WAV。
-- Kokoro 多语言（82M / 103 音色 / Apache-2.0）：中文 8 个音色（sid 45–52）在列表里排在最前并带名字，其余标注「其他语言」；M1 实测 RTF 0.71–0.89（int8，4 线程）。
+- Kokoro 中文（82M / Apache-2.0）：v1.1 是中文特化版，103 个音色 = 中文 100（55 女声 + 45 男声）+ 3 个英语；**v1.0 与 v1.1 的 sid 布局完全不同**（v1.0 的中文在 45–52 且带名字，v1.1 是 3–57 女 / 58–102 男），适配器按说话人总数分流映射。M1 实测 RTF 0.71–0.89（int8，4 线程）；另提供 fp32 高保真版（365MB）用于排查量化杂音。
 - `openai-compatible` 适配器（零依赖 `fetch`）：可直接接 Kokoro-FastAPI、Speaches 或任何 `/v1/audio/speech` 服务；自动嗅探返回格式（mp3/wav/opus），不信任 `response_format`。
 - `mock` 静音引擎：无网络也能把播放器 UI 做出来。
 - 切句器（中英混排、引号/小数/缩写、超长句二次切分、不切断代理对）。
@@ -282,7 +282,8 @@ export class MyTts implements TtsEngine {
 
 1. **`numThreads` 必须在 `model` 里**。放顶层会被静默忽略，退化成单线程 —— 同一模型 RTF 从 0.25 掉到 0.74（3 倍差距），而且线程数 1/2/4/8 全部一样，很容易误判为「机器不行」。
 2. **`model.int8.onnx` 可能是 133 字节的 Git-LFS 指针**（MeloTTS/release 包就是这样）。选模型文件时必须校验大小 > 1MB，否则加载会失败或拿到空权重。
-3. **Electron 禁止 external ArrayBuffer**。sherpa 默认把音频放在外部缓冲区里返回，纯 Node 允许、Electron 直接拒绝：同步接口报 `External buffers are not allowed`，异步接口被包装成完全看不出原因的 **`TTS settlement failed`**。调用时必须传 `enableExternalBuffer: false`。这个坑只有在 Electron 里才暴露，纯 Node 单测全绿也发现不了 —— 所以补了 `npm run test:electron`（见下）。
+3. **Metal / CoreML 对这类模型没有收益**。实测 Kokoro 在 `provider=coreml` 下 RTF 0.88、CPU 0.82，加载还更慢：这些图是动态 shape，绝大多数节点回退到 CPU。Metal 真正有用的场景是重模型（如 llama.cpp-omni 跑 VoxCPM），不是 82M 的 ONNX TTS。
+4. **Electron 禁止 external ArrayBuffer**。sherpa 默认把音频放在外部缓冲区里返回，纯 Node 允许、Electron 直接拒绝：同步接口报 `External buffers are not allowed`，异步接口被包装成完全看不出原因的 **`TTS settlement failed`**。调用时必须传 `enableExternalBuffer: false`。这个坑只有在 Electron 里才暴露，纯 Node 单测全绿也发现不了 —— 所以补了 `npm run test:electron`（见下）。
 
 **待做（按建议顺序）**
 1. **Edge 适配器**：免费默认层。微软已把鉴权升级到 `Sec-MS-GEC v2`（自定义 CS64 校验 + 服务器时钟校正，`Sec-MS-GEC-Version=2-143.0.3650.96`），手写 v1 token 会被 403；`msedge-tts` 依赖 axios + ws + buffer/stream polyfill，而主进程是**全打包**的，硬塞风险高。两条路：手写 ~120 行 WS 客户端 + 移植 v2 token，或调整打包策略（`files` 加 node_modules + external）。

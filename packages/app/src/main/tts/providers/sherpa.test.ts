@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { TtsError } from "../types.ts";
-import { buildConfig, detectModelKind, pickModelFile, SherpaTts } from "./sherpa.ts";
+import {
+	buildConfig,
+	detectModelKind,
+	kokoroVoiceName,
+	pickModelFile,
+	SherpaTts,
+} from "./sherpa.ts";
 
 /** Create a sparse file of `size` bytes without writing them. */
 function touch(dir: string, name: string, size = 2_000_000) {
@@ -87,6 +93,21 @@ test("builds a kokoro config with the speaker bank and both lexicons", (t) => {
 	assert.equal(config.model.kokoro.model, join(dir, "model.int8.onnx"));
 	assert.match(config.model.kokoro.lexicon, /lexicon-us-en\.txt,.*lexicon-zh\.txt$/);
 	assert.equal(typeof config.model.numThreads, "number");
+});
+
+test("kokoro speaker ids map differently in v1.0 and v1.1", () => {
+	// v1.1 (103 speakers): 0-2 English, 3-57 Chinese female, 58-102 Chinese male.
+	assert.match(kokoroVoiceName(0, 103).name, /英语/);
+	assert.equal(kokoroVoiceName(3, 103).name, "中文女声 1");
+	assert.equal(kokoroVoiceName(57, 103).name, "中文女声 55");
+	assert.equal(kokoroVoiceName(58, 103).name, "中文男声 1");
+	assert.equal(kokoroVoiceName(102, 103).name, "中文男声 45");
+	assert.equal(kokoroVoiceName(80, 103).lang, "zh-CN");
+
+	// v1.0 (53 speakers) names its Chinese cast at 45-52.
+	assert.equal(kokoroVoiceName(45, 53).name, "晓北 zf_xiaobei");
+	assert.equal(kokoroVoiceName(52, 53).name, "云扬 zm_yunyang");
+	assert.match(kokoroVoiceName(0, 53).name, /英语/);
 });
 
 test("kokoro without voices.bin is refused", (t) => {

@@ -85,11 +85,10 @@ export type SherpaTtsConfig = {
 const MODEL_RUNTIME = { provider: "cpu", debug: false } as const;
 
 /**
- * Kokoro's Chinese speakers (the zf_ and zm_ prefixed voices). The sid
- * assignment is shared by the 53-speaker v1.0 and the 103-speaker v1.1
- * bundles; everything else speaks English or another language.
+ * Kokoro v1.0 (53 speakers) named Chinese voices. The 103-speaker v1.1 bundle
+ * uses a completely different sid layout, so it gets its own ranges below.
  */
-const KOKORO_ZH_VOICES: Record<number, string> = {
+const KOKORO_V10_ZH: Record<number, string> = {
 	45: "晓北 zf_xiaobei",
 	46: "晓妮 zf_xiaoni",
 	47: "晓晓 zf_xiaoxiao",
@@ -99,6 +98,26 @@ const KOKORO_ZH_VOICES: Record<number, string> = {
 	51: "云夏 zm_yunxia",
 	52: "云扬 zm_yunyang",
 };
+
+/**
+ * Human name + language for a Kokoro speaker id.
+ *
+ * v1.1 (103 speakers) is the Chinese-focused build: 0–2 are English, 3–57 are
+ * Chinese female (zf_*), 58–102 are Chinese male (zm_*). v1.0 (53 speakers) has
+ * English 0–44 and the named Chinese voices at 45–52.
+ */
+export function kokoroVoiceName(sid: number, total: number): { name: string; lang: string } {
+	if (total > 60) {
+		if (sid === 0) return { name: "af_maple（英语女声）", lang: "en-US" };
+		if (sid === 1) return { name: "af_sol（英语女声）", lang: "en-US" };
+		if (sid === 2) return { name: "bf_vale（英语女声）", lang: "en-GB" };
+		if (sid <= 57) return { name: `中文女声 ${sid - 2}`, lang: "zh-CN" };
+		return { name: `中文男声 ${sid - 57}`, lang: "zh-CN" };
+	}
+	const named = KOKORO_V10_ZH[sid];
+	if (named) return { name: named, lang: "zh-CN" };
+	return { name: `音色 ${sid}（英语）`, lang: "en-US" };
+}
 
 const MODEL_CACHE_LIMIT = 2;
 const handles = new Map<string, Promise<SherpaHandle>>();
@@ -212,19 +231,16 @@ export class SherpaTts implements TtsEngine {
 		if (count === 1) return [{ id: "0", name, lang, offline: true }];
 		const isKokoro = (this.cfg.kind ?? "auto") === "kokoro" || /kokoro/i.test(this.cfg.modelDir);
 		if (isKokoro) {
-			// Chinese names first, then the rest of the multilingual cast.
-			const zh = Object.entries(KOKORO_ZH_VOICES)
-				.map(([sid, name]) => ({ id: sid, name, lang, offline: true }))
-				.filter((voice) => Number(voice.id) < count);
-			const others = Array.from({ length: count }, (_, i) =>
-				KOKORO_ZH_VOICES[i]
-					? null
-					: { id: String(i), name: `音色 ${i}（其他语言）`, lang: "en", offline: true },
-			).filter(
-				(voice): voice is { id: string; name: string; lang: string; offline: true } =>
-					voice !== null,
-			);
-			return [...zh, ...others];
+			// Chinese voices first: the English ones are useless for a Chinese book.
+			const voices: TtsVoice[] = Array.from({ length: count }, (_, i) => ({
+				id: String(i),
+				...kokoroVoiceName(i, count),
+				offline: true,
+			}));
+			return voices.sort((a, b) => {
+				const zh = (voice: TtsVoice) => (voice.lang.startsWith("zh") ? 0 : 1);
+				return zh(a) - zh(b) || Number(a.id) - Number(b.id);
+			});
 		}
 		// A 100+ entry picker is more usable with short names; the model name is
 		// already visible in the engine group.
