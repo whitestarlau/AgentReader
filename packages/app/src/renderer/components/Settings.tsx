@@ -11,6 +11,28 @@ import type { TtsInfo, TtsModelInfo, TtsModelProgress } from "../../shared/tts.t
 import { formatTokens } from "../tokens.ts";
 import { Icon, type IconName } from "./Icons.tsx";
 
+function errorText(e: unknown): string {
+	if (e instanceof Error) return e.message;
+	return String(e);
+}
+
+/** IPC calls must never leave the panel spinning forever. */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = window.setTimeout(() => reject(new Error(message)), ms);
+		promise.then(
+			(value) => {
+				window.clearTimeout(timer);
+				resolve(value);
+			},
+			(error: unknown) => {
+				window.clearTimeout(timer);
+				reject(error);
+			},
+		);
+	});
+}
+
 /** Bytes → "167 MB" for model sizes (not tokens, so a separate helper). */
 function formatBytes(n: number): string {
 	if (!n) return "0 B";
@@ -229,6 +251,8 @@ export function Settings({
 	const [ttsModelDir, setTtsModelDir] = useState("");
 	const [ttsInfo, setTtsInfo] = useState<TtsInfo | null>(null);
 	const [ttsProgress, setTtsProgress] = useState<Record<string, TtsModelProgress>>({});
+	const [ttsError, setTtsError] = useState<string | null>(null);
+	const [ttsLoading, setTtsLoading] = useState(false);
 	const [section, setSection] = useState<SectionId>("models");
 	const contentRef = useRef<HTMLDivElement | null>(null);
 
@@ -268,28 +292,49 @@ export function Settings({
 	}, [load]);
 
 	const loadTts = useCallback(async () => {
-		const [payload, info] = await Promise.all([window.api.ttsModelsList(), window.api.ttsInfo()]);
-		setTtsModels(payload.models);
-		setTtsModelDir(payload.modelDir);
-		setTtsInfo(info);
+		setTtsLoading(true);
+		setTtsError(null);
+		const errors: string[] = [];
+		try {
+			// A stale preload (older app build) simply has no such methods; say so
+			// instead of leaving the panel on a spinner forever.
+			if (typeof window.api.ttsModelsList !== "function" || typeof window.api.ttsInfo !== "function") {
+				setTtsError("当前版本缺少朗读接口，请重新构建或更新应用");
+				return;
+			}
+			const [modelsResult, infoResult] = await Promise.allSettled([
+				withTimeout(window.api.ttsModelsList(), 8000, "读取模型列表超时"),
+				withTimeout(window.api.ttsInfo(), 8000, "读取朗读引擎超时"),
+			]);
+			if (modelsResult.status === "fulfilled" && modelsResult.value) {
+				setTtsModels(modelsResult.value.models ?? []);
+				setTtsModelDir(modelsResult.value.modelDir ?? "");
+			} else if (modelsResult.status === "rejected") {
+				errors.push(`模型列表：${errorText(modelsResult.reason)}`);
+			}
+			if (infoResult.status === "fulfilled") setTtsInfo(infoResult.value);
+			else errors.push(`引擎信息：${errorText(infoResult.reason)}`);
+		} finally {
+			if (errors.length > 0) setTtsError(errors.join("；"));
+			setTtsLoading(false);
+		}
 	}, []);
 
 	useEffect(() => {
 		if (section !== "tts") return;
-		loadTts().catch(() => {});
+		void loadTts();
 	}, [section, loadTts]);
 
 	// Progress arrives as events so the panel keeps rendering during a 167 MB download.
-	useEffect(
-		() =>
-			window.api.onTtsModelProgress((p) => {
+	useEffect(() => {
+		if (typeof window.api.onTtsModelProgress !== "function") return;
+		return window.api.onTtsModelProgress((p) => {
 				setTtsProgress((prev) => ({ ...prev, [p.id]: p }));
-				if (p.phase === "done" || p.phase === "error" || p.phase === "cancel") {
-					loadTts().catch(() => {});
-				}
-			}),
-		[loadTts],
-	);
+			if (p.phase === "done" || p.phase === "error" || p.phase === "cancel") {
+				void loadTts();
+			}
+		});
+	}, [loadTts]);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -1115,9 +1160,26 @@ export function Settings({
 									<Card
 										title="本地朗读模型"
 										desc="下载与解包由应用完成；装好后本地引擎自动可用，不需要填写任何路径。"
+										actions={
+											<button type="button" onClick={() => void loadTts()} disabled={ttsLoading}>
+												重新读取
+											</button>
+										}
 									>
 										<div className="tts-models">
-											{ttsModels.length === 0 && <div className="settings-hint">正在读取模型列表…</div>}
+											{ttsError && (
+												<div className="tts-model-error tts-load-error">
+													{ttsError}
+													<button type="button" onClick={() => void loadTts()}>
+														重试
+													</button>
+												</div>
+											)}
+											{ttsModels.length === 0 && !ttsError && (
+												<div className="settings-hint">
+													{ttsLoading ? "正在读取模型列表…" : "没有可用的模型条目"}
+												</div>
+											)}
 											{ttsModels.map((m) => {
 												const p = ttsProgress[m.id];
 												const running = m.downloading || p?.phase === "download" || p?.phase === "extract";
@@ -1200,6 +1262,14 @@ export function Settings({
 										<div className="settings-hint">
 											模型保存在 {ttsModelDir || "…"}。解包需要系统 tar 命令（macOS / Linux / Windows 10+ 自带）。
 										</div>
+										{ttsInfo?.diagnostics && (
+											<div className="settings-hint tts-diag">
+												诊断：v{ttsInfo.diagnostics.appVersion} · {ttsInfo.diagnostics.platform} · 本地引擎
+												{ttsInfo.diagnostics.sherpaAvailable ? "可用" : "不可用（未安装 sherpa-onnx-node）"}
+												{" · "}
+												目录 {ttsInfo.diagnostics.modelsRoot}
+											</div>
+										)}
 									</Card>
 
 									<Card title="朗读引擎" desc="播放器会使用列表里第一个可用引擎；本地引擎离线可用。">

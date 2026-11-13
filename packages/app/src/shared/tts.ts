@@ -55,6 +55,14 @@ export type TtsVoiceGroup = {
 	voices: TtsVoice[];
 };
 
+export type TtsDiagnostics = {
+	appVersion: string;
+	platform: string;
+	modelsRoot: string;
+	/** Whether the native sherpa addon can actually be resolved on this machine. */
+	sherpaAvailable: boolean;
+};
+
 export type TtsInfo = {
 	engines: TtsEngineInfo[];
 	/** Engine that would be used right now, or null when none is configured. */
@@ -63,6 +71,7 @@ export type TtsInfo = {
 	rate: number;
 	cacheBytes: number;
 	endpointConfigured: boolean;
+	diagnostics: TtsDiagnostics;
 };
 
 export type TtsSynthesizeRequest = {

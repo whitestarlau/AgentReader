@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { app, ipcMain } from "electron";
 import type {
@@ -38,6 +39,16 @@ import { toTtsError } from "./types.ts";
  * endpoint/voice in settings takes effect without an app restart. The audio
  * cache is process-wide and shared across documents.
  */
+
+/** Can the native addon be resolved here? (It is a runtime dependency, not bundled.) */
+function sherpaAvailable(): boolean {
+	try {
+		createRequire(import.meta.url).resolve("sherpa-onnx-node");
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 /** Where downloaded models live. */
 function modelsRoot(): string {
@@ -251,6 +262,12 @@ export function registerTtsIpc() {
 			rate: currentRate(),
 			cacheBytes: ttsCache().size(),
 			endpointConfigured: Boolean(settings.ttsEndpoint),
+			diagnostics: {
+				appVersion: app.getVersion(),
+				platform: process.platform,
+				modelsRoot: modelsRoot(),
+				sherpaAvailable: sherpaAvailable(),
+			},
 		};
 	});
 
