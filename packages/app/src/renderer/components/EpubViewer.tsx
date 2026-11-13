@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icons.tsx";
-import { ReadAloud, type ReadState } from "../read-aloud.ts";
+import { READ_MAX_CHARS, ReadAloud, type ReadState } from "../read-aloud.ts";
+import { splitSentences } from "../../shared/segment.ts";
 import {
 	buildMultiText,
 	ensureHighlightStyle,
 	highlightRange,
+	offsetAtPoint,
 	rangeForMulti,
 	revealRange,
 	type MultiText,
+	type VisibleArea,
 } from "../readable.ts";
 import { ReadBar } from "./ReadBar.tsx";
 import type { Annotation } from "./AnnotationLayer.tsx";
@@ -236,6 +239,8 @@ export function EpubViewer({
 	const readRateRef = useRef(1);
 	const [readState, setReadState] = useState<ReadState | null>(null);
 	const [readRate, setReadRate] = useState(1);
+	const readActiveRef = useRef(false);
+	const readActive = readState !== null && readState.status !== "idle" && readState.status !== "error";
 	const bookRef = useRef<EpubBook | null>(null);
 	// Reflow entry point installed by the load effect; lets the layout-signal
 	// effect (and ResizeObserver) share one implementation.
@@ -474,6 +479,14 @@ export function EpubViewer({
 				if (!doc || (doc as unknown as { __arKeys?: boolean }).__arKeys) return;
 				(doc as unknown as { __arKeys?: boolean }).__arKeys = true;
 				doc.addEventListener("keydown", (e: KeyboardEvent) => {
+					// Read-aloud owns paging while it runs; Escape ends the session.
+					if (readActiveRef.current) {
+						if (e.key === "Escape") {
+							e.preventDefault();
+							readerRef.current?.stop();
+						}
+						return;
+					}
 					if (scrolled) {
 						const height = getManager(rendition)?.container?.clientHeight || 700;
 						if (e.key === "ArrowDown") { e.preventDefault(); scrollReader(80); }
@@ -536,11 +549,45 @@ export function EpubViewer({
 			// 旧代码同时用 rendition.on("keydown")（epubjs 内部已在文档上监听）和这里的
 			// 文档监听，一次按键会触发两次 next()/prev()，双栏下一次翻两屏（4 页），
 			// 回翻也同样翻两屏——即用户看到的「跳内容 / 回翻翻两页」。
-			rendition.on("rendered", (_: unknown, view: { document?: Document }) => { bindKeys(view.document); bindSelectionWatch(view.document); });
+			// Read-aloud: block manual scrolling and let a click move the voice.
+			const bindReadAloud = (doc: Document | undefined) => {
+				if (!doc || (doc as unknown as { __arRead?: boolean }).__arRead) return;
+				(doc as unknown as { __arRead?: boolean }).__arRead = true;
+				doc.addEventListener(
+					"wheel",
+					(e: WheelEvent) => {
+						if (!readActiveRef.current) return;
+						e.preventDefault();
+						e.stopPropagation();
+					},
+					{ passive: false },
+				);
+				doc.addEventListener("click", (e: MouseEvent) => {
+					if (!readActiveRef.current) return;
+					const target = e.target as HTMLElement | null;
+					if (target?.closest("a")) return;
+					const reader = readerRef.current;
+					const multi = readMultiRef.current;
+					if (!reader || !multi) return;
+					const slice = multi.slices.find((entry) => entry.doc === doc);
+					if (!slice) return;
+					const offset = offsetAtPoint(doc, slice.map, e.clientX, e.clientY);
+					if (offset === null) return;
+					const absolute = slice.base + offset;
+					const index = reader.getSegments().findIndex((s) => absolute >= s.start && absolute < s.end);
+					if (index >= 0) reader.playFrom(index);
+				});
+			};
+			rendition.on("rendered", (_: unknown, view: { document?: Document }) => {
+				bindKeys(view.document);
+				bindSelectionWatch(view.document);
+				bindReadAloud(view.document);
+			});
 			// 初始 view 的 rendered 事件在本监听注册前已触发，补绑一次。
 			for (const c of (rendition.getContents?.() ?? []) as unknown as { document?: Document }[]) {
 				bindKeys(c.document);
 				bindSelectionWatch(c.document);
+				bindReadAloud(c.document);
 			}
 			// epubjs 只监听 window.resize；收起侧栏 / 拖动分隔条只会改变容器宽度，
 			// 不会触发 window.resize，必须自己观察容器并主动重排，否则会露出半截下一栏。
@@ -723,6 +770,13 @@ export function EpubViewer({
 		const onKey = (e: KeyboardEvent) => {
 			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 			if ((e.target as HTMLElement)?.closest?.("iframe")) return;
+			if (readActiveRef.current) {
+				if (e.key === "Escape") {
+					e.preventDefault();
+					readerRef.current?.stop();
+				}
+				return;
+			}
 			if (flowModeRef.current === "scrolled") {
 				const container = getManager(renditionRef.current)?.container;
 				if (!container) return;
@@ -767,7 +821,8 @@ export function EpubViewer({
 		const docs = currentReadDocs();
 		if (docs.length === 0) return null;
 		for (const doc of docs) ensureHighlightStyle(doc);
-		const multi = buildMultiText(docs);
+		// HTML gives real block boundaries, so titles and paragraphs break here.
+		const multi = buildMultiText(docs, { mode: "block" });
 		if (!multi.text.trim()) return null;
 		readMultiRef.current = multi;
 		readDocsRef.current = docs;
@@ -852,13 +907,65 @@ export function EpubViewer({
 		return reader;
 	}, [advanceSection]);
 
+	/**
+	 * Visible slice of an iframe, in that iframe's own coordinate space.
+	 *
+	 * Returns null when the document is not on screen at all — a paged spread
+	 * keeps the next view mounted off to the side, and reading must follow what is
+	 * visible, not what merely exists in the DOM.
+	 */
+	const visibleAreaFor = useCallback((win: Window): VisibleArea | null => {
+		const inner: VisibleArea = { top: 0, bottom: win.innerHeight, left: 0, right: win.innerWidth };
+		const frame = win.frameElement as HTMLElement | null;
+		// The viewport, not the whole editor area: the toolbar sits above it.
+		const host = ref.current?.parentElement ?? null;
+		if (!frame || !host) return inner;
+		const frameRect = frame.getBoundingClientRect();
+		const hostRect = host.getBoundingClientRect();
+		const top = Math.max(frameRect.top, hostRect.top) - frameRect.top;
+		const bottom = Math.min(frameRect.bottom, hostRect.bottom) - frameRect.top;
+		const left = Math.max(frameRect.left, hostRect.left) - frameRect.left;
+		const right = Math.min(frameRect.right, hostRect.right) - frameRect.left;
+		if (bottom <= top + 2 || right <= left + 2) return null;
+		return { top, bottom, left, right };
+	}, []);
+
 	const startReading = useCallback(() => {
 		const multi = loadReadText();
 		if (!multi) return;
 		const reader = ensureReader();
-		reader.load(multi.text, 0);
+		const segments = splitSentences(multi.text, { maxChars: READ_MAX_CHARS });
+		// Start from what is on screen: a spread is two documents, each with its
+		// own visible area, so resolve the area per document.
+		const areas = new Map<Document, VisibleArea>();
+		for (const slice of multi.slices) {
+			const win = slice.doc.defaultView;
+			if (!win) continue;
+			const area = visibleAreaFor(win);
+			if (area) areas.set(slice.doc, area);
+		}
+		let start = 0;
+		for (let i = 0; i < segments.length; i++) {
+			const segment = segments[i];
+			if (!segment) continue;
+			const range = rangeForMulti(multi, segment.start, segment.end);
+			const owner = range?.startContainer.ownerDocument ?? null;
+			const area = owner ? areas.get(owner) : undefined;
+			if (!range || !area) continue;
+			const rect = range.getBoundingClientRect();
+			if (
+				rect.bottom > area.top + 2 &&
+				rect.top < area.bottom - 2 &&
+				rect.right > area.left + 2 &&
+				rect.left < area.right - 2
+			) {
+				start = i;
+				break;
+			}
+		}
+		reader.load(multi.text, start);
 		reader.play();
-	}, [ensureReader, loadReadText]);
+	}, [ensureReader, loadReadText, visibleAreaFor]);
 
 	const toggleReading = useCallback(() => {
 		const reader = readerRef.current;
@@ -878,6 +985,24 @@ export function EpubViewer({
 		readRateRef.current = readRate;
 	}, [readRate]);
 
+	useEffect(() => {
+		readActiveRef.current = readActive;
+	}, [readActive]);
+
+	// Wheel events over the margins never reach the iframe listener, and the
+	// scroller is epub.js's own container — block them at the viewport as well.
+	useEffect(() => {
+		if (!readActive) return;
+		const viewport = ref.current?.parentElement;
+		if (!viewport) return;
+		const block = (e: WheelEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+		};
+		viewport.addEventListener("wheel", block, { passive: false });
+		return () => viewport.removeEventListener("wheel", block);
+	}, [readActive]);
+
 	useEffect(
 		() => () => {
 			readerRef.current?.stop();
@@ -892,7 +1017,7 @@ export function EpubViewer({
 					type="button"
 					className="icon-btn"
 					onClick={() => (flowMode === "scrolled" ? stepChapter(-1) : renditionRef.current?.prev())}
-					disabled={atStart}
+					disabled={atStart || readActive}
 					title="上一章"
 					style={{ width: "auto", padding: "0 8px" }}
 				>
@@ -902,7 +1027,7 @@ export function EpubViewer({
 					type="button"
 					className="icon-btn"
 					onClick={() => (flowMode === "scrolled" ? stepChapter(1) : renditionRef.current?.next())}
-					disabled={atEnd}
+					disabled={atEnd || readActive}
 					title="下一章"
 					style={{ width: "auto", padding: "0 8px" }}
 				>

@@ -41,7 +41,8 @@ const MIME: Record<string, string> = {
 };
 
 const PREFETCH_AHEAD = 2;
-const MAX_CHARS = 220;
+/** Sentence cap; the reader splits with the same value so offsets line up. */
+export const READ_MAX_CHARS = 220;
 
 export class ReadAloud {
 	private readonly opts: ReadAloudOptions;
@@ -62,10 +63,21 @@ export class ReadAloud {
 		return this.state;
 	}
 
+	/** The segments currently loaded; offsets address the text passed to `load()`. */
+	getSegments(): readonly Segment[] {
+		return this.segments;
+	}
+
+	/** Jump to a sentence (used by click-to-read in the document). */
+	playFrom(index: number): void {
+		const clamped = Math.min(Math.max(0, index), Math.max(0, this.segments.length - 1));
+		void this.startAt(clamped);
+	}
+
 	/** Replace the text to read. Returns false when there is nothing speakable. */
 	load(text: string, startAt = 0): boolean {
 		this.stopAudio();
-		this.segments = splitSentences(text, { maxChars: MAX_CHARS }).filter((s) => s.text.trim());
+		this.segments = splitSentences(text, { maxChars: READ_MAX_CHARS });
 		this.index = Math.min(Math.max(0, startAt), Math.max(0, this.segments.length - 1));
 		this.emit("idle");
 		return this.segments.length > 0;

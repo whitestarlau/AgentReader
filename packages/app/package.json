@@ -15,7 +15,7 @@
 		"package": "npm run build && electron-builder --config electron-builder.json",
 		"package:dir": "npm run build && electron-builder --config electron-builder.json --dir",
 		"typecheck": "tsc --noEmit",
-		"test": "node --experimental-strip-types --test src/shared/chat-export.test.ts src/main/export/render.test.ts src/main/tts/segment.test.ts src/main/tts/pipeline.test.ts src/main/tts/registry.test.ts src/main/tts/cache.test.ts src/main/tts/providers/mock.test.ts src/main/tts/providers/openai-compatible.test.ts src/main/tts/wav.test.ts src/main/tts/providers/sherpa.test.ts src/main/tts/models.test.ts src/main/tts/voices.test.ts src/renderer/read-aloud.test.ts",
+		"test": "node --experimental-strip-types --test src/shared/chat-export.test.ts src/main/export/render.test.ts src/main/tts/segment.test.ts src/main/tts/pipeline.test.ts src/main/tts/registry.test.ts src/main/tts/cache.test.ts src/main/tts/providers/mock.test.ts src/main/tts/providers/openai-compatible.test.ts src/main/tts/wav.test.ts src/main/tts/providers/sherpa.test.ts src/main/tts/models.test.ts src/main/tts/voices.test.ts src/renderer/read-aloud.test.ts src/renderer/readable.test.ts",
 		"check": "biome check --write --error-on-warnings .",
 		"test:electron": "electron scripts/electron-tts-smoke.cjs --no-sandbox --disable-gpu"
 	},

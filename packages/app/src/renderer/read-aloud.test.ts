@@ -133,6 +133,35 @@ test("stop clears the highlight and the queue", async () => {
 	assert.equal(spoken.at(-1), null, "the highlight is cleared on stop");
 });
 
+test("exposes the loaded segments", () => {
+	const { reader } = makeReader(async () => okReply());
+	reader.load("一。二。三。");
+	assert.deepEqual(
+		reader.getSegments().map((s) => s.text),
+		["一。", "二。", "三。"],
+	);
+});
+
+test("can start reading from the middle", async () => {
+	const { reader } = makeReader(async () => okReply());
+	reader.load("一。二。三。", 1);
+	reader.play();
+	await flush();
+	assert.equal(reader.getState().index, 1);
+
+	reader.playFrom(2);
+	await flush();
+	assert.equal(reader.getState().index, 2);
+});
+
+test("playFrom clamps out-of-range indexes", async () => {
+	const { reader } = makeReader(async () => okReply());
+	reader.load("一。二。");
+	reader.playFrom(99);
+	await flush();
+	assert.equal(reader.getState().index, 1);
+});
+
 test("empty text is not readable", () => {
 	const { reader } = makeReader(async () => okReply());
 	assert.equal(reader.load("   \n  "), false);

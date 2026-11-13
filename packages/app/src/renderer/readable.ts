@@ -12,6 +12,51 @@ export type TextMap = {
 	nodes: { node: Text; start: number; end: number }[];
 };
 
+export type TextMapMode = "block" | "geometry";
+export type TextMapOptions = {
+	/**
+	 * `block` (EPUB HTML) breaks between block-level elements; `geometry` (PDF
+	 * text layer, which is a flat list of spans) breaks on visual gaps. Without
+	 * one of these, a heading and the paragraph under it are glued into a single
+	 * sentence — which is exactly what makes read-aloud sound rushed.
+	 */
+	mode?: TextMapMode;
+};
+
+export type RectLike = { top: number; bottom: number; left: number; right: number; height: number };
+export type VisibleArea = { top: number; bottom: number; left: number; right: number };
+
+const BLOCK_TAGS = new Set([
+	"P",
+	"DIV",
+	"H1",
+	"H2",
+	"H3",
+	"H4",
+	"H5",
+	"H6",
+	"LI",
+	"UL",
+	"OL",
+	"DL",
+	"DT",
+	"DD",
+	"BLOCKQUOTE",
+	"PRE",
+	"TABLE",
+	"TR",
+	"TD",
+	"TH",
+	"FIGCAPTION",
+	"FIGURE",
+	"SECTION",
+	"ARTICLE",
+	"ASIDE",
+	"HEADER",
+	"FOOTER",
+	"HR",
+]);
+
 const LATIN = /[A-Za-z0-9]/;
 
 /**
@@ -27,8 +72,34 @@ export function joinSeparator(prev: string, next: string): string {
 	return LATIN.test(prev) && LATIN.test(next) ? " " : "";
 }
 
+/**
+ * Separator between two text chunks based on their boxes (PDF text layers).
+ *
+ * A vertical gap larger than half a line is a paragraph/heading break; a
+ * horizontal gap wider than a quarter of the line height is a word gap; glyphs
+ * that sit next to each other are one run and must not be separated.
+ */
+export function geometrySeparator(
+	prev: RectLike | null,
+	current: RectLike | null,
+	prevText: string,
+	nextText: string,
+): string {
+	if (!prev || !current) return joinSeparator(prevText, nextText);
+	if (current.top - prev.bottom > Math.max(2, current.height * 0.45)) return "\n";
+	if (current.left - prev.right > Math.max(2, current.height * 0.25)) return " ";
+	return "";
+}
+
+function blockAncestor(node: Node): Element | null {
+	let el = node.parentElement;
+	while (el && !BLOCK_TAGS.has(el.tagName)) el = el.parentElement;
+	return el;
+}
+
 /** Flatten a DOM subtree into text + a per-node offset table. */
-export function buildTextMap(root: Node): TextMap {
+export function buildTextMap(root: Node, opts: TextMapOptions = {}): TextMap {
+	const mode = opts.mode ?? "block";
 	const doc = root.ownerDocument ?? (root as Document);
 	const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
 		acceptNode(node) {
@@ -38,13 +109,32 @@ export function buildTextMap(root: Node): TextMap {
 	let text = "";
 	const nodes: TextMap["nodes"] = [];
 	let prev = "";
+	let prevRect: RectLike | null = null;
+	let prevBlock: Element | null = null;
 	for (let node = walker.nextNode(); node; node = walker.nextNode()) {
 		const t = node as Text;
-		text += joinSeparator(prev, t.data);
+		if (text) {
+			if (mode === "geometry") {
+				const el = t.parentElement;
+				const rect = el ? el.getBoundingClientRect() : null;
+				text += geometrySeparator(prevRect, rect, prev, t.data);
+				prevRect = rect;
+			} else {
+				const block = blockAncestor(t);
+				text += block && block !== prevBlock ? "\n" : joinSeparator(prev, t.data);
+				prevBlock = block;
+			}
+		} else if (mode === "block") {
+			prevBlock = blockAncestor(t);
+		}
 		const start = text.length;
 		text += t.data;
 		nodes.push({ node: t, start, end: text.length });
 		prev = t.data;
+		if (mode === "geometry") {
+			const el = t.parentElement;
+			prevRect = el ? el.getBoundingClientRect() : prevRect;
+		}
 	}
 	return { text, nodes };
 }
@@ -61,11 +151,11 @@ export type MultiText = {
 	slices: { doc: Document; map: TextMap; base: number }[];
 };
 
-export function buildMultiText(docs: Document[]): MultiText {
+export function buildMultiText(docs: Document[], opts: TextMapOptions = {}): MultiText {
 	let text = "";
 	const slices: MultiText["slices"] = [];
 	for (const doc of docs) {
-		const map = buildTextMap(doc.body);
+		const map = buildTextMap(doc.body, opts);
 		if (!map.text.trim()) continue;
 		if (text) text += "\n";
 		const base = text.length;
@@ -144,6 +234,65 @@ export function ensureHighlightStyle(doc: Document): void {
 	style.id = "read-aloud-style";
 	style.textContent = "::highlight(read-aloud){background:rgba(108,182,255,0.38);color:inherit;}";
 	(doc.head ?? doc.documentElement).append(style);
+}
+
+/**
+ * Index of the first sentence that intersects `area`.
+ *
+ * Read-aloud starts here instead of at the top of the page/chapter, so pressing
+ * play continues from what the reader is actually looking at.
+ */
+export function firstVisibleIndex(
+	map: TextMap,
+	segments: readonly { start: number; end: number }[],
+	area: VisibleArea,
+): number {
+	for (let i = 0; i < segments.length; i++) {
+		const segment = segments[i];
+		if (!segment) continue;
+		const range = rangeFor(map, segment.start, segment.end);
+		if (!range) continue;
+		const rect = range.getBoundingClientRect();
+		if (
+			rect.bottom > area.top + 2 &&
+			rect.top < area.bottom - 2 &&
+			rect.right > area.left + 2 &&
+			rect.left < area.right - 2
+		) {
+			return i;
+		}
+	}
+	return 0;
+}
+
+/** Flattened-text offset under a viewport point (`caretRangeFromPoint`). */
+export function offsetAtPoint(doc: Document, map: TextMap, x: number, y: number): number | null {
+	type WithCaret = Document & {
+		caretRangeFromPoint?: (x: number, y: number) => Range | null;
+		caretPositionFromPoint?: (
+			x: number,
+			y: number,
+		) => { offsetNode?: Node; offset?: number } | null;
+	};
+	const target = doc as WithCaret;
+	let node: Node | null = null;
+	let offset = 0;
+
+	const range = target.caretRangeFromPoint?.(x, y);
+	if (range?.startContainer?.nodeType === Node.TEXT_NODE) {
+		node = range.startContainer;
+		offset = range.startOffset;
+	} else {
+		const pos = target.caretPositionFromPoint?.(x, y);
+		if (pos?.offsetNode?.nodeType === Node.TEXT_NODE) {
+			node = pos.offsetNode;
+			offset = pos.offset ?? 0;
+		}
+	}
+	if (!node) return null;
+	const entry = map.nodes.find((n) => n.node === node);
+	if (!entry) return null;
+	return entry.start + Math.min(offset, entry.node.data.length);
 }
 
 /** Bring the sentence into view without stealing the user's selection. */

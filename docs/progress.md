@@ -29,6 +29,9 @@
 - [x] 设置页加固：IPC 失败不再无限转圈（8s 超时 + `Promise.allSettled` + 错误直显 + 重试），缺 preload 接口时明确提示；`tts:info` 增加版本/平台/原生 addon 可用性诊断
 - [x] 音色选择：设置页新增「音色」分区，按引擎分组（本地模型按 numSpeakers 展开：AISHELL-3 174 个、MeloTTS/Matcha 各 1 个），选择按引擎分别存 `ttsVoice:<engineId>`；「试听」走 `tts:speak` 绕过缓存
 - [x] 模型目录新增 `AISHELL-3 多音色`（32MB / 174 说话人 / 非商用）：换音色最划算的选项；多说话人音色名简化为「音色 N」
+- [x] 朗读起点改为「视口内第一句」（`firstVisibleIndex`，同时判断水平/垂直可见，双栏分页不会选中屏幕外那一页）
+- [x] 朗读期间锁定导航：滚轮、翻页键、工具栏翻页/上下章禁用，Esc 结束会话；点正文可跳读（`caretRangeFromPoint` → 句子下标 → `playFrom`）
+- [x] 修复「标题和正文连读、听起来很急」：构建文本时按块级祖先（EPUB）或几何间距（PDF）插入硬断句，切句器在新断点处切句
 - [ ] 待做：真机点击验收（朗读按钮、高亮跟随、自动翻页音画衔接）、EPUB 分页模式下的跨屏高亮、Edge 适配器（手写 WS 客户端 + 移植 v2 token）、Azure/Qwen 适配器
 
 ## 2026-11-03 对话导出（Markdown / HTML / JSON）

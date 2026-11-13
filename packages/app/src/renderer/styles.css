@@ -885,6 +885,10 @@ textarea::placeholder {
 	background: var(--vscode-accent);
 	transition: width 0.12s linear;
 }
+/* Read-aloud owns scrolling: no wheel, no scrollbar until the session ends. */
+.pdf-stage.reading-locked {
+	overflow: hidden;
+}
 .pdf-stage {
 	flex: 1;
 	min-height: 0;

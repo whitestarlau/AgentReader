@@ -5,11 +5,14 @@ import { PdfPage, type RectSelectKind } from "./PdfPage.tsx";
 import { Icon } from "./Icons.tsx";
 import { ocrCanvas } from "../ocr.ts";
 import { loadPdfLocation, savePdfLocation, saveReadingPage } from "../reading.ts";
-import { ReadAloud, type ReadState } from "../read-aloud.ts";
+import { READ_MAX_CHARS, ReadAloud, type ReadState } from "../read-aloud.ts";
+import { splitSentences } from "../../shared/segment.ts";
 import {
 	buildTextMap,
 	ensureHighlightStyle,
+	firstVisibleIndex,
 	highlightRange,
+	offsetAtPoint,
 	rangeFor,
 	revealRange,
 	type TextMap,
@@ -207,6 +210,10 @@ export function PdfViewer({
 	const readRateRef = useRef(1);
 	const [readState, setReadState] = useState<ReadState | null>(null);
 	const [readRate, setReadRate] = useState(1);
+	// While a session is active the reader owns navigation; the ref keeps the
+	// (once-installed) key and click handlers honest.
+	const readActiveRef = useRef(false);
+	const readActive = readState !== null && readState.status !== "idle" && readState.status !== "error";
 	const pagesContentRef = useRef<HTMLDivElement>(null);
 	const selectionOverlayRef = useRef<SelectionOverlayHandle>(null);
 	const [pdf, setPdf] = useState<pdfjs.PDFDocumentProxy | null>(null);
@@ -942,6 +949,14 @@ export function PdfViewer({
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			if (ignoreReaderKey(e)) return;
+			// Read-aloud owns paging while it runs; Escape ends the session.
+			if (readActiveRef.current) {
+				if (e.key === "Escape") {
+					e.preventDefault();
+					readerRef.current?.stop();
+				}
+				return;
+			}
 			if (e.key === "Escape") {
 				setSelectionMenu(null);
 				setActiveAnnId(null);
@@ -1301,7 +1316,9 @@ export function PdfViewer({
 		(n: number): TextMap | null => {
 			const root = readRootFor(n);
 			if (!root) return null;
-			const map = buildTextMap(root);
+			// The text layer is a flat list of spans: only geometry tells a heading
+			// or paragraph break from a line wrap.
+			const map = buildTextMap(root, { mode: "geometry" });
 			if (!map.text.trim()) return null;
 			ensureHighlightStyle(root.ownerDocument);
 			readMapRef.current = map;
@@ -1370,7 +1387,11 @@ export function PdfViewer({
 			// A page that was just scrolled into view may still be extracting text.
 			const map = loadReadMap(pageNum) ?? (await waitForReadMap(pageNum, 2500));
 			if (!map) return;
-			reader.load(map.text, 0);
+			// Start where the reader is looking, not at the top of the page.
+			const stage = stageRef.current;
+			const segments = splitSentences(map.text, { maxChars: READ_MAX_CHARS });
+			const start = stage ? firstVisibleIndex(map, segments, stage.getBoundingClientRect()) : 0;
+			reader.load(map.text, start);
 			reader.play();
 		})();
 	}, [ensureReader, loadReadMap, pageNum, waitForReadMap]);
@@ -1393,6 +1414,24 @@ export function PdfViewer({
 		readRateRef.current = readRate;
 	}, [readRate]);
 
+	useEffect(() => {
+		readActiveRef.current = readActive;
+	}, [readActive]);
+
+	// Manual scrolling would desync the highlight from the voice; the controls
+	// (stop / prev / next) remain the way to move around.
+	useEffect(() => {
+		if (!readActive) return;
+		const stage = stageRef.current;
+		if (!stage) return;
+		const block = (e: WheelEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+		};
+		stage.addEventListener("wheel", block, { passive: false });
+		return () => stage.removeEventListener("wheel", block);
+	}, [readActive]);
+
 	// Stop audio when the viewer goes away (document switch / close).
 	useEffect(
 		() => () => {
@@ -1406,20 +1445,20 @@ export function PdfViewer({
 		<div ref={areaRef} className="editor-area">
 			<div className="editor-toolbar pdf-toolbar">
 				<div className="toolbar-group">
-					<button type="button" className="icon-btn pdf-jump-edge" onClick={() => jumpToPage(1)} disabled={!pdf || pageNum <= 1} title="首页 (Home)">
+					<button type="button" className="icon-btn pdf-jump-edge" onClick={() => jumpToPage(1)} disabled={!pdf || pageNum <= 1 || readActive} title="首页 (Home)">
 						⇤
 					</button>
-					<button type="button" className="icon-btn" onClick={() => jumpToPage(pageNum - 1)} disabled={!pdf || pageNum <= 1} title="上一页">
+					<button type="button" className="icon-btn" onClick={() => jumpToPage(pageNum - 1)} disabled={!pdf || pageNum <= 1 || readActive} title="上一页">
 						<Icon name="chevronLeft" size={14} />
 					</button>
 					<span className="pdf-page-field">
 						<PageNumberInput page={pageNum} total={total} disabled={!pdf} onCommit={(n) => jumpToPage(n)} />
 						<span className="pdf-page-total">/ {total || "–"}</span>
 					</span>
-					<button type="button" className="icon-btn" onClick={() => jumpToPage(pageNum + 1)} disabled={!pdf || pageNum >= total} title="下一页">
+					<button type="button" className="icon-btn" onClick={() => jumpToPage(pageNum + 1)} disabled={!pdf || pageNum >= total || readActive} title="下一页">
 						<Icon name="chevronRight" size={14} />
 					</button>
-					<button type="button" className="icon-btn pdf-jump-edge" onClick={() => jumpToPage(total)} disabled={!pdf || pageNum >= total} title="末页 (End)">
+					<button type="button" className="icon-btn pdf-jump-edge" onClick={() => jumpToPage(total)} disabled={!pdf || pageNum >= total || readActive} title="末页 (End)">
 						⇥
 					</button>
 				</div>
@@ -1541,11 +1580,26 @@ export function PdfViewer({
 
 			<div
 				ref={stageRef}
-				className={`pdf-stage ${viewMode}`}
+				className={`pdf-stage ${viewMode}${readActive ? " reading-locked" : ""}`}
 				tabIndex={0}
 				role="region"
 				aria-label="PDF 阅读区"
 				onScroll={handleScroll}
+				onClick={(e) => {
+					if (!readActiveRef.current) return;
+					const target = e.target as HTMLElement;
+					if (target.closest("[data-toolbar], button, a, .pdf-sel-menu, .reader-ann-bar, [data-ann]")) return;
+					const reader = readerRef.current;
+					if (!reader) return;
+					const shell = target.closest<HTMLElement>(".pdf-shell");
+					const page = Number(shell?.dataset.page ?? readPageRef.current);
+					const map = page && page !== readPageRef.current ? (loadReadMap(page) ?? readMapRef.current) : readMapRef.current;
+					if (!map) return;
+					const offset = offsetAtPoint(document, map, e.clientX, e.clientY);
+					if (offset === null) return;
+					const index = reader.getSegments().findIndex((s) => offset >= s.start && offset < s.end);
+					if (index >= 0) reader.playFrom(index);
+				}}
 			>
 				{loading && !pdf ? (
 					<div className="pdf-stage-message">
