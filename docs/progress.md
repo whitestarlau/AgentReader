@@ -27,6 +27,8 @@
 - [x] 修复本地合成在真实 Electron 中失败：sherpa 默认返回 external ArrayBuffer，Electron 拒绝（同步报 `External buffers are not allowed`，异步报 `TTS settlement failed`）；改为 `enableExternalBuffer: false`。纯 Node 单测发现不了这类宿主差异
 - [x] 新增 `npm run test:electron`（`scripts/electron-tts-smoke.cjs`）：在真实 Electron 主进程里完成一次合成，覆盖宿主相关的回归
 - [x] 设置页加固：IPC 失败不再无限转圈（8s 超时 + `Promise.allSettled` + 错误直显 + 重试），缺 preload 接口时明确提示；`tts:info` 增加版本/平台/原生 addon 可用性诊断
+- [x] 音色选择：设置页新增「音色」分区，按引擎分组（本地模型按 numSpeakers 展开：AISHELL-3 174 个、MeloTTS/Matcha 各 1 个），选择按引擎分别存 `ttsVoice:<engineId>`；「试听」走 `tts:speak` 绕过缓存
+- [x] 模型目录新增 `AISHELL-3 多音色`（32MB / 174 说话人 / 非商用）：换音色最划算的选项；多说话人音色名简化为「音色 N」
 - [ ] 待做：真机点击验收（朗读按钮、高亮跟随、自动翻页音画衔接）、EPUB 分页模式下的跨屏高亮、Edge 适配器（手写 WS 客户端 + 移植 v2 token）、Azure/Qwen 适配器
 
 ## 2026-11-03 对话导出（Markdown / HTML / JSON）

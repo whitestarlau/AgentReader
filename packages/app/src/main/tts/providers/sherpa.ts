@@ -194,9 +194,11 @@ export class SherpaTts implements TtsEngine {
 		const name = basename(this.cfg.modelDir) || "本地模型";
 		const count = Math.max(1, handle.numSpeakers);
 		if (count === 1) return [{ id: "0", name, lang, offline: true }];
+		// A 100+ entry picker is more usable with short names; the model name is
+		// already visible in the engine group.
 		return Array.from({ length: count }, (_, i) => ({
 			id: String(i),
-			name: `${name} · 音色 ${i + 1}`,
+			name: `音色 ${i + 1}`,
 			lang,
 			offline: true,
 		}));

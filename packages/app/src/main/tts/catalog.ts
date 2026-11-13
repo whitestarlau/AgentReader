@@ -79,6 +79,24 @@ export const TTS_MODELS: ModelEntry[] = [
 			},
 		],
 	},
+	{
+		id: "aishell3-multi",
+		name: "AISHELL-3 多音色",
+		family: "vits",
+		lang: "zh-CN",
+		desc: "174 个普通话说话人，体积只有 32MB：想换音色、比较男女声时最划算，语音偏朗读/新闻风格。",
+		license: "AISHELL-3 语料（仅限非商用）",
+		commercial: false,
+		sizeLabel: "32 MB",
+		assets: [
+			{
+				kind: "bundle",
+				url: `${RELEASE}/tts-models/vits-icefall-zh-aishell3.tar.bz2`,
+				name: "vits-icefall-zh-aishell3.tar.bz2",
+				bytes: 31_559_701,
+			},
+		],
+	},
 ];
 
 export function getModel(id: string): ModelEntry | undefined {

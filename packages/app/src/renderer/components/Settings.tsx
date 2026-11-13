@@ -7,7 +7,12 @@ import type {
 	SkillTrustPayload,
 	WebSearchTestResult,
 } from "../types.ts";
-import type { TtsInfo, TtsModelInfo, TtsModelProgress } from "../../shared/tts.ts";
+import type {
+	TtsInfo,
+	TtsModelInfo,
+	TtsModelProgress,
+	TtsVoiceGroup,
+} from "../../shared/tts.ts";
 import { formatTokens } from "../tokens.ts";
 import { Icon, type IconName } from "./Icons.tsx";
 
@@ -258,6 +263,9 @@ export function Settings({
 	const [ttsProgress, setTtsProgress] = useState<Record<string, TtsModelProgress>>({});
 	const [ttsError, setTtsError] = useState<string | null>(null);
 	const [ttsLoading, setTtsLoading] = useState(false);
+	const [voiceGroups, setVoiceGroups] = useState<TtsVoiceGroup[]>([]);
+	const [voiceChoice, setVoiceChoice] = useState<Record<string, string>>({});
+	const [ttsPreviewing, setTtsPreviewing] = useState<string | null>(null);
 	const [section, setSection] = useState<SectionId>("models");
 	const contentRef = useRef<HTMLDivElement | null>(null);
 
@@ -307,9 +315,12 @@ export function Settings({
 				setTtsError("当前版本缺少朗读接口，请重新构建或更新应用");
 				return;
 			}
-			const [modelsResult, infoResult] = await Promise.allSettled([
+			const [modelsResult, infoResult, voicesResult, settingsResult] = await Promise.allSettled([
 				withTimeout(window.api.ttsModelsList(), 8000, "读取模型列表超时"),
 				withTimeout(window.api.ttsInfo(), 8000, "读取朗读引擎超时"),
+				// Listing voices loads the model bundle, so give it more room.
+				withTimeout(window.api.ttsVoices(), 15_000, "读取音色列表超时"),
+				window.api.getSettings(),
 			]);
 			if (modelsResult.status === "fulfilled" && modelsResult.value) {
 				setTtsModels(modelsResult.value.models ?? []);
@@ -319,6 +330,19 @@ export function Settings({
 			}
 			if (infoResult.status === "fulfilled") setTtsInfo(infoResult.value);
 			else errors.push(`引擎信息：${errorText(infoResult.reason)}`);
+
+			if (voicesResult.status === "fulfilled" && voicesResult.value) {
+				const groups = voicesResult.value.groups ?? [];
+				setVoiceGroups(groups);
+				const settings = settingsResult.status === "fulfilled" ? settingsResult.value : {};
+				const choice: Record<string, string> = {};
+				for (const group of groups) {
+					choice[group.engineId] = settings[`ttsVoice:${group.engineId}`] || group.voices[0]?.id || "";
+				}
+				setVoiceChoice(choice);
+			} else if (voicesResult.status === "rejected") {
+				errors.push(`音色列表：${errorText(voicesResult.reason)}`);
+			}
 		} finally {
 			if (errors.length > 0) setTtsError(errors.join("；"));
 			setTtsLoading(false);
@@ -329,6 +353,44 @@ export function Settings({
 		if (section !== "tts") return;
 		void loadTts();
 	}, [section, loadTts]);
+
+	const chooseVoice = useCallback(async (engineId: string, voiceId: string) => {
+		setVoiceChoice((prev) => ({ ...prev, [engineId]: voiceId }));
+		await window.api.saveSettings({ [`ttsVoice:${engineId}`]: voiceId });
+	}, []);
+
+	// Bypasses the audio cache on purpose: switching a voice must be audible now.
+	const previewVoice = useCallback(
+		async (engineId: string) => {
+			const voiceId = voiceChoice[engineId];
+			if (!voiceId) return;
+			setTtsPreviewing(engineId);
+			setTtsError(null);
+			try {
+				const reply = await window.api.ttsSpeak({
+					text: "你好，这是当前音色的试听。",
+					engineId,
+					voiceId,
+				});
+				if (!reply.ok) {
+					setTtsError(`试听失败：${reply.message}`);
+					return;
+				}
+				const mime =
+					reply.format === "wav" ? "audio/wav" : reply.format === "opus" ? "audio/ogg" : "audio/mpeg";
+				const url = URL.createObjectURL(new Blob([reply.data as unknown as BlobPart], { type: mime }));
+				const audio = new Audio(url);
+				audio.onended = () => URL.revokeObjectURL(url);
+				audio.onerror = () => URL.revokeObjectURL(url);
+				await audio.play();
+			} catch (e) {
+				setTtsError(`试听失败：${errorText(e)}`);
+			} finally {
+				setTtsPreviewing(null);
+			}
+		},
+		[voiceChoice],
+	);
 
 	// Progress arrives as events so the panel keeps rendering during a 167 MB download.
 	useEffect(() => {
@@ -1275,6 +1337,41 @@ export function Settings({
 												目录 {ttsInfo.diagnostics.modelsRoot}
 											</div>
 										)}
+									</Card>
+
+									<Card title="音色" desc="每个引擎单独记住选择；换模型后点「试听」确认效果。">
+										{voiceGroups.length === 0 && (
+											<div className="settings-hint">
+												还没有可用音色：先下载一个本地模型，或配置 OpenAI 兼容端点。
+											</div>
+										)}
+										{voiceGroups.map((group) => (
+											<div key={group.engineId} className="tts-voice-row">
+												<span className="tts-voice-label">
+													{group.label}
+													<span className="tts-voice-count">{group.voices.length} 个音色</span>
+												</span>
+												<select
+													value={voiceChoice[group.engineId] ?? ""}
+													onChange={(e) => void chooseVoice(group.engineId, e.target.value)}
+													aria-label={`${group.label} 音色`}
+												>
+													{group.voices.map((v) => (
+														<option key={v.id} value={v.id}>
+															{v.name}
+															{v.lang ? ` · ${v.lang}` : ""}
+														</option>
+													))}
+												</select>
+												<button
+													type="button"
+													onClick={() => void previewVoice(group.engineId)}
+													disabled={ttsPreviewing === group.engineId}
+												>
+													{ttsPreviewing === group.engineId ? "试听中…" : "试听"}
+												</button>
+											</div>
+										))}
 									</Card>
 
 									<Card title="朗读引擎" desc="播放器会使用列表里第一个可用引擎；本地引擎离线可用。">

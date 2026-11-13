@@ -2696,6 +2696,39 @@ body.resizing iframe {
 	color: var(--vscode-fg-dim);
 	white-space: nowrap;
 }
+.tts-voice-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 16px;
+	border-top: 1px solid #2f2f31;
+}
+.tts-voice-row:first-child {
+	border-top: none;
+}
+.tts-voice-label {
+	display: flex;
+	flex: 0 0 150px;
+	flex-direction: column;
+	gap: 2px;
+	font-size: 12px;
+	font-weight: 600;
+}
+.tts-voice-count {
+	font-size: 10px;
+	font-weight: 400;
+	color: var(--vscode-fg-dim);
+}
+.tts-voice-row select {
+	flex: 1;
+	min-width: 0;
+}
+.tts-voice-row button {
+	flex: 0 0 auto;
+	width: auto;
+	padding: 2px 10px;
+	font-size: 11px;
+}
 .tts-engines {
 	display: flex;
 	flex-direction: column;

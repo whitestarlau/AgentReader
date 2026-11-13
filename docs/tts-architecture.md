@@ -134,7 +134,7 @@ interface TtsEngine {
 |---|---|---|
 | `ttsEndpoint` | OpenAI 兼容端点，如 `http://127.0.0.1:8880/v1` | 空（未配置） |
 | `ttsModel` | 服务端模型名 | `kokoro` |
-| `ttsVoice` | 默认音色 id | `zf_xiaobei` |
+| `ttsVoice:<engineId>` | 每个引擎各自记住的音色 id（引擎间 id 不通用） | sherpa `0` / 端点 `zf_xiaobei` |
 | `ttsVoices` | 音色列表（逗号分隔，服务端无法枚举时用） | — |
 | `ttsLang` | 语言标签 | `zh-CN` |
 | `ttsRate` | 语速，clamp 到 0.5–2 | `1` |
@@ -247,6 +247,7 @@ export class MyTts implements TtsEngine {
 
 **已完成**
 - 播放器：两个阅读器的工具栏入口、底部播放条、句子高亮跟随、PDF 自动翻页 / EPUB 自动翻章、语速与暂停。
+- 音色：设置页「音色」分区按引擎分组列出可选音色（本地模型按 `numSpeakers` 展开，如 AISHELL-3 的 174 个），选择写入 `ttsVoice:<engineId>`；「试听」走 `tts:speak` 绕过缓存，换音色立刻能听出区别。
 - 模型管理器：应用内下载（流式进度、可取消）、完整性校验、`tar` 解包、安装后校验、删除；实测真实下载 129MB（Matcha + vocoder）15.3 秒完成并验证通过。
 - 设置页「朗读」分区：模型卡片（大小 / 许可证 / 占用）、下载进度条、取消 / 删除 / 切换使用，以及当前可用引擎与能力。
 - `sherpa-onnx` 本地适配器：模型目录即配置，自动识别 VITS / Matcha 家族、自动收集 `date/number/phone.fst`、按 `numSpeakers` 生成音色列表；合成走 `generateAsync`（不阻塞主进程）；输出 16-bit WAV。

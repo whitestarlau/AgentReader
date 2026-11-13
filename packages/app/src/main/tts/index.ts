@@ -30,6 +30,7 @@ import { OpenAiCompatibleTts } from "./providers/openai-compatible.ts";
 import { type SherpaModelKind, SherpaTts } from "./providers/sherpa.ts";
 import { TtsRegistry } from "./registry.ts";
 import { toTtsError } from "./types.ts";
+import { resolveVoiceId } from "./voices.ts";
 
 /**
  * Electron wiring for read-aloud: builds the engine registry from settings and
@@ -185,11 +186,7 @@ function currentRate(override?: number): number {
 }
 
 function defaultVoice(engineId: string, requested?: string): string {
-	const voice = requested ?? readSettings().ttsVoice;
-	if (voice) return voice;
-	if (engineId === "mock") return "mock-zh";
-	if (engineId === "sherpa") return "0";
-	return "zf_xiaobei";
+	return resolveVoiceId(engineId, requested, readSettings());
 }
 
 type SynthesizePayload = TtsSynthesizeRequest & {
@@ -266,7 +263,7 @@ export function registerTtsIpc() {
 		return {
 			engines: registry.list(),
 			engineId: chain[0] ?? null,
-			voiceId: settings.ttsVoice ?? null,
+			voiceId: chain[0] ? resolveVoiceId(chain[0], undefined, settings) : null,
 			rate: currentRate(),
 			cacheBytes: ttsCache().size(),
 			endpointConfigured: Boolean(settings.ttsEndpoint),
