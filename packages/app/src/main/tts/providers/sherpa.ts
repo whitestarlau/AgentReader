@@ -37,6 +37,8 @@ type SherpaHandle = {
 		sid?: number;
 		speed?: number;
 		generationConfig?: unknown;
+		/** When true the addon hands back an external ArrayBuffer. Electron forbids those. */
+		enableExternalBuffer?: boolean;
 		onProgress?: (info: {
 			samples: Float32Array;
 			progress: number;
@@ -84,6 +86,34 @@ const MODEL_RUNTIME = { provider: "cpu", debug: false } as const;
 
 const MODEL_CACHE_LIMIT = 2;
 const handles = new Map<string, Promise<SherpaHandle>>();
+
+/**
+ * One generation at a time per model handle.
+ *
+ * Not because overlapping calls are broken (they are not), but because each call
+ * already uses `numThreads` threads: the player prefetches the next sentences, and
+ * parallel generations would fight over the same P-cores. Serializing keeps
+ * throughput steady and makes cancellation ordering deterministic.
+ */
+const gates = new WeakMap<SherpaHandle, Promise<void>>();
+
+async function withGate<T>(handle: SherpaHandle, fn: () => Promise<T>): Promise<T> {
+	const previous = gates.get(handle) ?? Promise.resolve();
+	let release: () => void = () => {};
+	const current = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	gates.set(
+		handle,
+		previous.then(() => current),
+	);
+	await previous;
+	try {
+		return await fn();
+	} finally {
+		release();
+	}
+}
 
 /** A cheap, readable identity for a bundle + its load options. */
 function signatureOf(cfg: SherpaTtsConfig): string {
@@ -185,20 +215,31 @@ export class SherpaTts implements TtsEngine {
 			? new mod.GenerationConfig({ sid, speed })
 			: undefined;
 		try {
-			audio = await handle.generateAsync({
-				text: req.text,
-				// Legacy path keeps working when the addon has no GenerationConfig.
-				...(generationConfig ? { generationConfig } : { sid, speed }),
-				// Returning 0 stops the C++ generator early; we use it as the
-				// cancellation hook because the addon has no AbortSignal support.
-				onProgress: () => {
-					if (req.signal?.aborted) {
-						aborted = true;
-						return 0;
-					}
-					return 1;
-				},
-			});
+			// Queue behind any in-flight generation (one call already uses every
+			// configured thread) and give up early if the request was cancelled.
+			await waitForTurn(req.signal);
+			audio = await withGate(handle, () =>
+				handle.generateAsync({
+					text: req.text,
+					// Electron (V8 embedder) rejects external ArrayBuffers, so the
+					// addon must copy the samples: without this it fails with the
+					// opaque "TTS settlement failed" (async) / "External buffers are
+					// not allowed" (sync). Plain Node accepts them, which is why
+					// unit tests pass while the app does not.
+					enableExternalBuffer: false,
+					// Legacy path keeps working when the addon has no GenerationConfig.
+					...(generationConfig ? { generationConfig } : { sid, speed }),
+					// Returning 0 stops the C++ generator early; we use it as the
+					// cancellation hook because the addon has no AbortSignal support.
+					onProgress: () => {
+						if (req.signal?.aborted) {
+							aborted = true;
+							return 0;
+						}
+						return 1;
+					},
+				}),
+			);
 		} catch (e) {
 			if (req.signal?.aborted || aborted) {
 				throw new TtsError("aborted", "已取消", { engineId: this.id });
@@ -271,6 +312,21 @@ export class SherpaTts implements TtsEngine {
 		}
 		return pending;
 	}
+}
+
+/** Give up while still queued, instead of waiting for a long generation. */
+function waitForTurn(signal?: AbortSignal): Promise<void> {
+	if (!signal) return Promise.resolve();
+	if (signal.aborted) {
+		return Promise.reject(new TtsError("aborted", "已取消", { engineId: "sherpa" }));
+	}
+	return new Promise<void>((resolve) => {
+		const done = () => {
+			signal.removeEventListener("abort", done);
+			resolve();
+		};
+		signal.addEventListener("abort", done, { once: true });
+	});
 }
 
 /** Build the `OfflineTts` config object for a bundle. */

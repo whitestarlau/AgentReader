@@ -263,10 +263,11 @@ export class MyTts implements TtsEngine {
 | MeloTTS zh_en（VITS，196MB，MIT） | **0.25** | 中英混排；4 线程用满 3.9 核 |
 | Matcha icefall zh-baker（73MB + vocoder 51MB） | **0.04** | 快 6 倍，但训练数据注明**非商用** |
 
-两个坑，都已写进代码：
+三个坑，都已写进代码：
 
 1. **`numThreads` 必须在 `model` 里**。放顶层会被静默忽略，退化成单线程 —— 同一模型 RTF 从 0.25 掉到 0.74（3 倍差距），而且线程数 1/2/4/8 全部一样，很容易误判为「机器不行」。
 2. **`model.int8.onnx` 可能是 133 字节的 Git-LFS 指针**（MeloTTS/release 包就是这样）。选模型文件时必须校验大小 > 1MB，否则加载会失败或拿到空权重。
+3. **Electron 禁止 external ArrayBuffer**。sherpa 默认把音频放在外部缓冲区里返回，纯 Node 允许、Electron 直接拒绝：同步接口报 `External buffers are not allowed`，异步接口被包装成完全看不出原因的 **`TTS settlement failed`**。调用时必须传 `enableExternalBuffer: false`。这个坑只有在 Electron 里才暴露，纯 Node 单测全绿也发现不了 —— 所以补了 `npm run test:electron`（见下）。
 
 **待做（按建议顺序）**
 1. **Edge 适配器**：免费默认层。微软已把鉴权升级到 `Sec-MS-GEC v2`（自定义 CS64 校验 + 服务器时钟校正，`Sec-MS-GEC-Version=2-143.0.3650.96`），手写 v1 token 会被 403；`msedge-tts` 依赖 axios + ws + buffer/stream polyfill，而主进程是**全打包**的，硬塞风险高。两条路：手写 ~120 行 WS 客户端 + 移植 v2 token，或调整打包策略（`files` 加 node_modules + external）。
@@ -279,4 +280,5 @@ export class MyTts implements TtsEngine {
 
 - 单测 54 项：切句 9、管线 4、注册表 6、缓存 4、mock 2、OpenAI 兼容适配器 5、WAV 2、sherpa 9、模型管理 7（含真实 tar.bz2 的下载/解包/校验与取消、截断失败）、播放器状态机 6（按句推进、预取、失败转错误态、暂停恢复、停止清高亮）；其中 1 项 sherpa 集成测试需 `SHERPA_TTS_MODEL_DIR`，默认跳过；全量 66 项通过 65、跳过 1；
 - `npm run typecheck --workspace=@agentreader/app` 通过；
-- `npm run build --workspace=@agentreader/app` 通过，主进程 bundle 151KB（新增约 19KB）。
+- `npm run build --workspace=@agentreader/app` 通过（主进程 bundle ≈168KB）。
+- `npm run test:electron --workspace=@agentreader/app`（需 `SHERPA_TTS_MODEL_DIR` 指向解包模型）在真实 Electron 里跑一次合成：3.34s 音频 / 1.36s 合成，通过。这是唯一能覆盖「外部缓冲区」这类宿主差异的测试。
