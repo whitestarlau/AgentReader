@@ -24,7 +24,9 @@ export type IconName =
 	| "check"
 	| "edit"
 	| "download"
-	| "stop";
+	| "stop"
+	| "play"
+	| "pause";
 
 const PATHS: Record<IconName, ReactNode> = {
 	library: (
@@ -110,6 +112,13 @@ const PATHS: Record<IconName, ReactNode> = {
 		</>
 	),
 	stop: <rect x="3.6" y="3.6" width="8.8" height="8.8" rx="1.2" />,
+	play: <path d="M5 3.2 12.4 8 5 12.8z" />,
+	pause: (
+		<>
+			<rect x="4.2" y="3.4" width="2.6" height="9.2" rx="0.8" />
+			<rect x="9.2" y="3.4" width="2.6" height="9.2" rx="0.8" />
+		</>
+	),
 	tool: (
 		<>
 			<path d="M10.6 1.6a3.6 3.6 0 0 0-3 5.5L1.8 12.9l1.3 1.3 5.8-5.8a3.6 3.6 0 0 0 4.9-4.6l-2.1 2.1-1.7-1.7 2.1-2.1a3.6 3.6 0 0 0-1.5-.5z" />

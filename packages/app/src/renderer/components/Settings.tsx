@@ -7,8 +7,17 @@ import type {
 	SkillTrustPayload,
 	WebSearchTestResult,
 } from "../types.ts";
+import type { TtsInfo, TtsModelInfo, TtsModelProgress } from "../../shared/tts.ts";
 import { formatTokens } from "../tokens.ts";
 import { Icon, type IconName } from "./Icons.tsx";
+
+/** Bytes → "167 MB" for model sizes (not tokens, so a separate helper). */
+function formatBytes(n: number): string {
+	if (!n) return "0 B";
+	if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
+	if (n >= 1024 ** 2) return `${Math.round(n / 1024 ** 2)} MB`;
+	return `${Math.round(n / 1024)} KB`;
+}
 
 const EMPTY_FORM = { id: "", name: "", baseUrl: "", models: "", key: "" };
 
@@ -30,7 +39,7 @@ function contextSourceLabel(
 	}
 }
 
-type SectionId = "models" | "custom" | "websearch" | "skills" | "agent" | "reading" | "config";
+type SectionId = "models" | "custom" | "websearch" | "skills" | "agent" | "reading" | "tts" | "config";
 
 type SectionDef = { id: SectionId; label: string; icon: IconName; desc: string };
 
@@ -79,6 +88,12 @@ const SECTION_GROUPS: { title: string; items: SectionDef[] }[] = [
 				label: "阅读",
 				icon: "book",
 				desc: "文字识别（OCR）等版面解析选项。",
+			},
+			{
+				id: "tts",
+				label: "朗读",
+				icon: "download",
+				desc: "下载本地朗读模型、查看可用引擎。模型由应用自动解包和管理。",
 			},
 		],
 	},
@@ -210,6 +225,10 @@ export function Settings({
 	const [executionEnabled, setExecutionEnabled] = useState(false);
 	const [runtime, setRuntime] = useState<SkillRuntimeInfo | null>(null);
 	const [maxTurns, setMaxTurns] = useState(8);
+	const [ttsModels, setTtsModels] = useState<TtsModelInfo[]>([]);
+	const [ttsModelDir, setTtsModelDir] = useState("");
+	const [ttsInfo, setTtsInfo] = useState<TtsInfo | null>(null);
+	const [ttsProgress, setTtsProgress] = useState<Record<string, TtsModelProgress>>({});
 	const [section, setSection] = useState<SectionId>("models");
 	const contentRef = useRef<HTMLDivElement | null>(null);
 
@@ -247,6 +266,30 @@ export function Settings({
 	useEffect(() => {
 		load().catch(() => {});
 	}, [load]);
+
+	const loadTts = useCallback(async () => {
+		const [payload, info] = await Promise.all([window.api.ttsModelsList(), window.api.ttsInfo()]);
+		setTtsModels(payload.models);
+		setTtsModelDir(payload.modelDir);
+		setTtsInfo(info);
+	}, []);
+
+	useEffect(() => {
+		if (section !== "tts") return;
+		loadTts().catch(() => {});
+	}, [section, loadTts]);
+
+	// Progress arrives as events so the panel keeps rendering during a 167 MB download.
+	useEffect(
+		() =>
+			window.api.onTtsModelProgress((p) => {
+				setTtsProgress((prev) => ({ ...prev, [p.id]: p }));
+				if (p.phase === "done" || p.phase === "error" || p.phase === "cancel") {
+					loadTts().catch(() => {});
+				}
+			}),
+		[loadTts],
+	);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -1065,6 +1108,124 @@ export function Settings({
 										/>
 									</Field>
 								</Card>
+							)}
+
+							{section === "tts" && (
+								<>
+									<Card
+										title="本地朗读模型"
+										desc="下载与解包由应用完成；装好后本地引擎自动可用，不需要填写任何路径。"
+									>
+										<div className="tts-models">
+											{ttsModels.length === 0 && <div className="settings-hint">正在读取模型列表…</div>}
+											{ttsModels.map((m) => {
+												const p = ttsProgress[m.id];
+												const running = m.downloading || p?.phase === "download" || p?.phase === "extract";
+												const pct =
+													p && p.total > 0 ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0;
+												return (
+													<div key={m.id} className={m.active ? "tts-model active" : "tts-model"}>
+														<div className="tts-model-head">
+															<span className="tts-model-name">{m.name}</span>
+															{m.active && <span className="settings-pill accent">使用中</span>}
+															{!m.commercial && <span className="settings-pill bad">仅非商用</span>}
+															{m.installed && (
+																<span className="settings-pill ok">{formatBytes(m.bytesOnDisk)}</span>
+															)}
+														</div>
+														<div className="tts-model-desc">{m.desc}</div>
+														<div className="tts-model-meta">
+															{m.sizeLabel} · {m.license}
+														</div>
+														{running && (
+															<div className="tts-progress">
+																<div className="tts-progress-bar">
+																	<span style={{ width: `${pct}%` }} />
+																</div>
+																<span className="tts-progress-label">
+																	{p?.phase === "extract"
+																		? "正在解包…"
+																		: `${pct}% · ${formatBytes(p?.received ?? 0)} / ${formatBytes(p?.total ?? 0)}`}
+																</span>
+															</div>
+														)}
+														{p?.phase === "error" && <div className="tts-model-error">{p.message}</div>}
+														<div className="button-row">
+															{running ? (
+																<button
+																	type="button"
+																	onClick={() => void window.api.ttsModelCancel(m.id)}
+																>
+																	取消
+																</button>
+															) : m.installed ? (
+																<>
+																	<button
+																		type="button"
+																		disabled={m.active}
+																		onClick={async () => {
+																			await window.api.ttsModelActivate(m.id);
+																			await loadTts();
+																		}}
+																	>
+																		{m.active ? "使用中" : "使用"}
+																	</button>
+																	<button
+																		type="button"
+																		onClick={async () => {
+																			await window.api.ttsModelRemove(m.id);
+																			await loadTts();
+																		}}
+																	>
+																		删除
+																	</button>
+																</>
+															) : (
+																<button
+																	type="button"
+																	className="primary"
+																	onClick={async () => {
+																		await window.api.ttsModelDownload(m.id);
+																		await loadTts();
+																	}}
+																>
+																	下载
+																</button>
+															)}
+														</div>
+													</div>
+												);
+											})}
+										</div>
+										<div className="settings-hint">
+											模型保存在 {ttsModelDir || "…"}。解包需要系统 tar 命令（macOS / Linux / Windows 10+ 自带）。
+										</div>
+									</Card>
+
+									<Card title="朗读引擎" desc="播放器会使用列表里第一个可用引擎；本地引擎离线可用。">
+										<div className="tts-engines">
+											{(ttsInfo?.engines ?? []).map((e) => (
+												<div key={e.id} className="tts-engine">
+													<span className="tts-engine-name">{e.label}</span>
+													<span className="tts-engine-meta">
+														{e.capabilities.offline ? "离线" : "联网"} · 高亮精度：
+														{e.capabilities.boundaries === "word"
+															? "字级"
+															: e.capabilities.boundaries === "sentence"
+																? "句级"
+																: "仅句队列"}
+														· 单次上限 {e.capabilities.maxCharsPerRequest} 字
+													</span>
+												</div>
+											))}
+											{(ttsInfo?.engines.length ?? 0) === 0 && (
+												<div className="settings-hint">
+													还没有可用引擎：下载一个本地模型，或在 settings.json 里配置 ttsEndpoint。
+												</div>
+											)}
+										</div>
+									</Card>
+								</>
 							)}
 
 							{section === "config" && (

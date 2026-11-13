@@ -17,6 +17,14 @@ import { Welcome } from "./components/shell/Welcome.tsx";
 import { Resizer } from "./components/shell/Resizer.tsx";
 import type { ExportRequest, ExportResult } from "../shared/chat-export.ts";
 import type {
+  TtsInfo,
+  TtsModelProgress,
+  TtsModelsPayload,
+  TtsSynthesizeReply,
+  TtsSynthesizeRequest,
+  TtsVoiceGroup,
+} from "../shared/tts.ts";
+import type {
   ActivityView,
   AiConfig,
   CustomProvider,
@@ -86,6 +94,18 @@ declare global {
       getSkillRuntime: () => Promise<SkillRuntimeInfo>;
       onPermissionRequest: (cb: (req: PermissionRequest) => void) => () => void;
       replyPermission: (id: string, decision: PermissionDecision) => Promise<boolean>;
+      ttsInfo: () => Promise<TtsInfo>;
+      ttsVoices: () => Promise<{ groups: TtsVoiceGroup[] }>;
+      ttsSynthesize: (req: TtsSynthesizeRequest) => Promise<TtsSynthesizeReply>;
+      ttsSpeak: (req: TtsSynthesizeRequest) => Promise<TtsSynthesizeReply>;
+      ttsModelsList: () => Promise<TtsModelsPayload>;
+      ttsModelDownload: (id: string) => Promise<{ ok: boolean; message?: string }>;
+      ttsModelCancel: (id: string) => Promise<boolean>;
+      ttsModelRemove: (id: string) => Promise<boolean>;
+      ttsModelActivate: (id: string) => Promise<boolean>;
+      onTtsModelProgress: (cb: (p: TtsModelProgress) => void) => () => void;
+      ttsCacheClear: () => Promise<{ freedBytes: number }>;
+      ttsCacheSize: () => Promise<number>;
       getReading: (docId: string) => Promise<{ page: number | null; location: string | null }>;
       saveReading: (docId: string, patch: { page?: number; location?: string }) => Promise<void>;
       onChatDelta: (cb: (d: string) => void) => () => void;

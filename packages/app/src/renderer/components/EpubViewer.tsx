@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icons.tsx";
+import { ReadAloud, type ReadState } from "../read-aloud.ts";
+import {
+	buildMultiText,
+	ensureHighlightStyle,
+	highlightRange,
+	rangeForMulti,
+	revealRange,
+	type MultiText,
+} from "../readable.ts";
+import { ReadBar } from "./ReadBar.tsx";
 import type { Annotation } from "./AnnotationLayer.tsx";
 import {
 	loadReadingCfi,
@@ -217,6 +227,15 @@ export function EpubViewer({
 	const ref = useRef<HTMLDivElement>(null);
 	const areaRef = useRef<HTMLDivElement>(null);
 	const renditionRef = useRef<Rendition | null>(null);
+
+	// --- read-aloud: text is read from the EPUB iframe so highlight offsets
+	// address the same nodes the user sees. ---
+	const readerRef = useRef<ReadAloud | null>(null);
+	const readMultiRef = useRef<MultiText | null>(null);
+	const readDocsRef = useRef<Document[]>([]);
+	const readRateRef = useRef(1);
+	const [readState, setReadState] = useState<ReadState | null>(null);
+	const [readRate, setReadRate] = useState(1);
 	const bookRef = useRef<EpubBook | null>(null);
 	// Reflow entry point installed by the load effect; lets the layout-signal
 	// effect (and ResizeObserver) share one implementation.
@@ -737,6 +756,135 @@ export function EpubViewer({
 			</div>
 		);
 
+	// --- read-aloud wiring ---------------------------------------------------
+	/** Every visible iframe, in reading order (a spread has two). */
+	const currentReadDocs = useCallback((): Document[] => {
+		const contents = (renditionRef.current?.getContents?.() ?? []) as { document?: Document }[];
+		return contents.map((c) => c.document).filter((d): d is Document => Boolean(d?.body));
+	}, []);
+
+	const loadReadText = useCallback((): MultiText | null => {
+		const docs = currentReadDocs();
+		if (docs.length === 0) return null;
+		for (const doc of docs) ensureHighlightStyle(doc);
+		const multi = buildMultiText(docs);
+		if (!multi.text.trim()) return null;
+		readMultiRef.current = multi;
+		readDocsRef.current = docs;
+		return multi;
+	}, [currentReadDocs]);
+
+	/**
+	 * Move to the next spine section.
+	 *
+	 * `rendition.next()` is page-level: inside a long chapter it just turns the
+	 * page, so calling it until the document changes would flip through the rest
+	 * of the chapter without reading it. Jump straight to the next spine item
+	 * instead, and fall back to `next()` only when the spine cannot be read.
+	 */
+	const advanceSection = useCallback(async () => {
+		const reader = readerRef.current;
+		const rendition = renditionRef.current;
+		if (!reader || !rendition) return;
+
+		type SpineLike = {
+			get?: (target: string) => unknown;
+			next?: (item: unknown) => unknown;
+		};
+		const book = (rendition as unknown as { book?: { spine?: SpineLike } }).book;
+		const href = (rendition.currentLocation() as { start?: { href?: string } } | undefined)?.start?.href;
+		const spine = book?.spine;
+		const current = href ? spine?.get?.(href) : undefined;
+		const nextItem = current ? spine?.next?.(current) : undefined;
+		const nextHref = (nextItem as { href?: string } | undefined)?.href;
+
+		if (nextHref) {
+			await rendition.display(nextHref);
+			await new Promise((r) => window.setTimeout(r, 320));
+			const multi = loadReadText();
+			if (multi) {
+				reader.load(multi.text, 0);
+				reader.play();
+				return;
+			}
+		}
+
+		// Fallback: page forward until a different section shows up.
+		const before = readDocsRef.current[0] ?? null;
+		for (let attempt = 0; attempt < 6; attempt++) {
+			await rendition.next();
+			await new Promise((r) => window.setTimeout(r, 220));
+			const first = currentReadDocs()[0] ?? null;
+			if (first && first !== before) {
+				const multi = loadReadText();
+				if (multi) {
+					reader.load(multi.text, 0);
+					reader.play();
+					return;
+				}
+			}
+		}
+		reader.stop();
+	}, [currentReadDocs, loadReadText]);
+
+	const ensureReader = useCallback(() => {
+		if (readerRef.current) return readerRef.current;
+		const reader = new ReadAloud({
+			synthesize: (text) => window.api.ttsSynthesize({ text, rate: readRateRef.current }),
+			onState: setReadState,
+			onSegment: (segment) => {
+				const multi = readMultiRef.current;
+				const range = segment && multi ? rangeForMulti(multi, segment.start, segment.end) : null;
+				const activeDoc = range?.startContainer.ownerDocument ?? null;
+				// A spread is two documents: clear the other one so only the
+				// sentence being spoken is highlighted.
+				for (const doc of readDocsRef.current) {
+					if (doc !== activeDoc) highlightRange(doc, null);
+				}
+				if (activeDoc) highlightRange(activeDoc, range);
+				if (range) revealRange(range);
+			},
+			onEnd: () => {
+				void advanceSection();
+			},
+		});
+		readerRef.current = reader;
+		return reader;
+	}, [advanceSection]);
+
+	const startReading = useCallback(() => {
+		const multi = loadReadText();
+		if (!multi) return;
+		const reader = ensureReader();
+		reader.load(multi.text, 0);
+		reader.play();
+	}, [ensureReader, loadReadText]);
+
+	const toggleReading = useCallback(() => {
+		const reader = readerRef.current;
+		const status = readState?.status ?? "idle";
+		if (reader && (status === "playing" || status === "loading")) {
+			reader.pause();
+			return;
+		}
+		if (reader && status === "paused") {
+			reader.resume();
+			return;
+		}
+		startReading();
+	}, [readState, startReading]);
+
+	useEffect(() => {
+		readRateRef.current = readRate;
+	}, [readRate]);
+
+	useEffect(
+		() => () => {
+			readerRef.current?.stop();
+		},
+		[],
+	);
+
 	return (
 		<div ref={areaRef} className="editor-area" style={{ background: "#fff" }}>
 			<div className="editor-toolbar">
@@ -808,6 +956,20 @@ export function EpubViewer({
 				<span className="toolbar-muted" style={{ marginLeft: 8 }}>
 					{flowMode === "scrolled" ? "滚动阅读 · 选中文本可高亮或引用" : "方向键翻页 · 选中文本可高亮或引用"}
 				</span>
+				<button
+					type="button"
+					className={`icon-btn${readState && readState.status !== "idle" ? " active" : ""}`}
+					onClick={toggleReading}
+					disabled={!ready}
+					title="朗读本章（句子高亮跟随，读完自动进入下一章）"
+					style={{ width: "auto", padding: "0 8px" }}
+				>
+					<Icon
+						name={readState?.status === "playing" || readState?.status === "loading" ? "pause" : "play"}
+						size={12}
+					/>{" "}
+					朗读
+				</button>
 				{toc.length > 0 && (
 					<select
 						onChange={(e) => renditionRef.current?.display(e.target.value)}
@@ -825,6 +987,17 @@ export function EpubViewer({
 			</div>
 			<div className="epub-viewport">
 				<div ref={ref} className="epub-viewport-inner" />
+				{readState && readState.status !== "idle" && (
+					<ReadBar
+						state={readState}
+						rate={readRate}
+						onRate={setReadRate}
+						onToggle={toggleReading}
+						onPrev={() => readerRef.current?.prev()}
+						onNext={() => readerRef.current?.next()}
+						onStop={() => readerRef.current?.stop()}
+					/>
+				)}
 				{!ready && (
 					<div className="epub-loading">
 						<span className="pdf-spinner" />

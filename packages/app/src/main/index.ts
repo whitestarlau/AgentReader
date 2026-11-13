@@ -15,6 +15,7 @@ import { installAppMenu } from "./menu.ts";
 import { registerPermissionIpc } from "./permissions.ts";
 import { readSettings } from "./settings.ts";
 import { registerSkillsIpc } from "./skills-ipc.ts";
+import { registerTtsIpc } from "./tts/index.ts";
 
 /**
  * Main-process entry point: app lifecycle, the window, and wiring up every IPC
@@ -33,6 +34,7 @@ registerConversationIpc();
 registerExportIpc();
 registerAiIpc();
 registerSkillsIpc();
+registerTtsIpc();
 registerPermissionIpc();
 registerChatIpc();
 

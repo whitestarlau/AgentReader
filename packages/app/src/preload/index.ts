@@ -78,6 +78,22 @@ contextBridge.exposeInMainWorld("api", {
 		ipcRenderer.invoke("skills:trust:set", name, trusted),
 	setSkillExecution: (enabled: boolean) => ipcRenderer.invoke("skills:execution:set", enabled),
 	getSkillRuntime: () => ipcRenderer.invoke("skills:runtime"),
+	ttsInfo: () => ipcRenderer.invoke("tts:info"),
+	ttsVoices: () => ipcRenderer.invoke("tts:voices"),
+	ttsSynthesize: (req: unknown) => ipcRenderer.invoke("tts:synthesize", req),
+	ttsSpeak: (req: unknown) => ipcRenderer.invoke("tts:speak", req),
+	ttsModelsList: () => ipcRenderer.invoke("tts:models:list"),
+	ttsModelDownload: (id: string) => ipcRenderer.invoke("tts:models:download", id),
+	ttsModelCancel: (id: string) => ipcRenderer.invoke("tts:models:cancel", id),
+	ttsModelRemove: (id: string) => ipcRenderer.invoke("tts:models:remove", id),
+	ttsModelActivate: (id: string) => ipcRenderer.invoke("tts:models:activate", id),
+	onTtsModelProgress: (cb: (p: unknown) => void) => {
+		const h = (_e: unknown, p: unknown) => cb(p);
+		ipcRenderer.on("tts:model:progress", h);
+		return () => ipcRenderer.removeListener("tts:model:progress", h);
+	},
+	ttsCacheClear: () => ipcRenderer.invoke("tts:cache:clear"),
+	ttsCacheSize: () => ipcRenderer.invoke("tts:cache:size"),
 	getReading: (docId: string) => ipcRenderer.invoke("reading:get", docId),
 	saveReading: (docId: string, patch: unknown) => ipcRenderer.invoke("reading:save", docId, patch),
 	onChatDelta: (cb: (d: string) => void) => {

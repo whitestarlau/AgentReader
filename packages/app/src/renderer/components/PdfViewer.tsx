@@ -5,6 +5,16 @@ import { PdfPage, type RectSelectKind } from "./PdfPage.tsx";
 import { Icon } from "./Icons.tsx";
 import { ocrCanvas } from "../ocr.ts";
 import { loadPdfLocation, savePdfLocation, saveReadingPage } from "../reading.ts";
+import { ReadAloud, type ReadState } from "../read-aloud.ts";
+import {
+	buildTextMap,
+	ensureHighlightStyle,
+	highlightRange,
+	rangeFor,
+	revealRange,
+	type TextMap,
+} from "../readable.ts";
+import { ReadBar } from "./ReadBar.tsx";
 import type { OutlineItem } from "../types.ts";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.mjs", import.meta.url).toString();
@@ -188,6 +198,15 @@ export function PdfViewer({
 }: Props) {
 	const areaRef = useRef<HTMLDivElement>(null);
 	const stageRef = useRef<HTMLDivElement>(null);
+
+	// --- read-aloud: page text comes from the rendered text layer so that
+	// sentence offsets map straight back onto DOM nodes for highlighting. ---
+	const readerRef = useRef<ReadAloud | null>(null);
+	const readMapRef = useRef<TextMap | null>(null);
+	const readPageRef = useRef(1);
+	const readRateRef = useRef(1);
+	const [readState, setReadState] = useState<ReadState | null>(null);
+	const [readRate, setReadRate] = useState(1);
 	const pagesContentRef = useRef<HTMLDivElement>(null);
 	const selectionOverlayRef = useRef<SelectionOverlayHandle>(null);
 	const [pdf, setPdf] = useState<pdfjs.PDFDocumentProxy | null>(null);
@@ -1271,6 +1290,118 @@ export function PdfViewer({
 		</div>
 	);
 
+	// --- read-aloud wiring ---------------------------------------------------
+	const readRootFor = useCallback(
+		(n: number) =>
+			stageRef.current?.querySelector<HTMLElement>(`.pdf-shell[data-page="${n}"] .textLayer`) ?? null,
+		[],
+	);
+
+	const loadReadMap = useCallback(
+		(n: number): TextMap | null => {
+			const root = readRootFor(n);
+			if (!root) return null;
+			const map = buildTextMap(root);
+			if (!map.text.trim()) return null;
+			ensureHighlightStyle(root.ownerDocument);
+			readMapRef.current = map;
+			readPageRef.current = n;
+			return map;
+		},
+		[readRootFor],
+	);
+
+	/** Text layers render lazily, so a page turn needs a short wait. */
+	const waitForReadMap = useCallback(
+		(n: number, timeoutMs = 3000) =>
+			new Promise<TextMap | null>((resolve) => {
+				const started = Date.now();
+				const tick = () => {
+					const map = loadReadMap(n);
+					if (map) return resolve(map);
+					if (Date.now() - started > timeoutMs) return resolve(null);
+					window.setTimeout(tick, 120);
+				};
+				tick();
+			}),
+		[loadReadMap],
+	);
+
+	const advanceRead = useCallback(async () => {
+		const reader = readerRef.current;
+		if (!reader) return;
+		const next = readPageRef.current + 1;
+		if (total > 0 && next > total) {
+			reader.stop();
+			return;
+		}
+		jumpToPage(next);
+		const map = await waitForReadMap(next);
+		if (!map) {
+			reader.stop();
+			return;
+		}
+		reader.load(map.text, 0);
+		reader.play();
+	}, [jumpToPage, total, waitForReadMap]);
+
+	const ensureReader = useCallback(() => {
+		if (readerRef.current) return readerRef.current;
+		const reader = new ReadAloud({
+			synthesize: (text) => window.api.ttsSynthesize({ text, rate: readRateRef.current }),
+			onState: setReadState,
+			onSegment: (segment) => {
+				const map = readMapRef.current;
+				const range = segment && map ? rangeFor(map, segment.start, segment.end) : null;
+				highlightRange(document, range);
+				if (range) revealRange(range);
+			},
+			onEnd: () => {
+				void advanceRead();
+			},
+		});
+		readerRef.current = reader;
+		return reader;
+	}, [advanceRead]);
+
+	const startReading = useCallback(() => {
+		const reader = ensureReader();
+		void (async () => {
+			// A page that was just scrolled into view may still be extracting text.
+			const map = loadReadMap(pageNum) ?? (await waitForReadMap(pageNum, 2500));
+			if (!map) return;
+			reader.load(map.text, 0);
+			reader.play();
+		})();
+	}, [ensureReader, loadReadMap, pageNum, waitForReadMap]);
+
+	const toggleReading = useCallback(() => {
+		const reader = readerRef.current;
+		const status = readState?.status ?? "idle";
+		if (reader && (status === "playing" || status === "loading")) {
+			reader.pause();
+			return;
+		}
+		if (reader && status === "paused") {
+			reader.resume();
+			return;
+		}
+		startReading();
+	}, [readState, startReading]);
+
+	useEffect(() => {
+		readRateRef.current = readRate;
+	}, [readRate]);
+
+	// Stop audio when the viewer goes away (document switch / close).
+	useEffect(
+		() => () => {
+			readerRef.current?.stop();
+			highlightRange(document, null);
+		},
+		[],
+	);
+
 	return (
 		<div ref={areaRef} className="editor-area">
 			<div className="editor-toolbar pdf-toolbar">
@@ -1348,6 +1479,25 @@ export function PdfViewer({
 					</button>
 				</div>
 
+				<div className="toolbar-group" role="group" aria-label="朗读">
+					<button
+						type="button"
+						className={`icon-btn${readState && readState.status !== "idle" ? " active" : ""}`}
+						onClick={toggleReading}
+						disabled={!pdf}
+						title="朗读本页（句子高亮跟随，读完自动翻页）"
+						style={{ width: "auto", padding: "0 8px" }}
+					>
+						<Icon
+							name={
+								readState?.status === "playing" || readState?.status === "loading" ? "pause" : "play"
+							}
+							size={12}
+						/>{" "}
+						朗读
+					</button>
+				</div>
+
 				<div className="toolbar-sep" />
 
 				<span className="pdf-ocr-wrap" ref={ocrMenuRef}>
@@ -1421,6 +1571,18 @@ export function PdfViewer({
 					</div>
 				) : null}
 			</div>
+
+			{readState && readState.status !== "idle" && (
+				<ReadBar
+					state={readState}
+					rate={readRate}
+					onRate={setReadRate}
+					onToggle={toggleReading}
+					onPrev={() => readerRef.current?.prev()}
+					onNext={() => readerRef.current?.next()}
+					onStop={() => readerRef.current?.stop()}
+				/>
+			)}
 
 			{selectionMenu && (
 				<div

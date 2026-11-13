@@ -15,7 +15,7 @@
 		"package": "npm run build && electron-builder --config electron-builder.json",
 		"package:dir": "npm run build && electron-builder --config electron-builder.json --dir",
 		"typecheck": "tsc --noEmit",
-		"test": "node --experimental-strip-types --test src/shared/chat-export.test.ts src/main/export/render.test.ts",
+		"test": "node --experimental-strip-types --test src/shared/chat-export.test.ts src/main/export/render.test.ts src/main/tts/segment.test.ts src/main/tts/pipeline.test.ts src/main/tts/registry.test.ts src/main/tts/cache.test.ts src/main/tts/providers/mock.test.ts src/main/tts/providers/openai-compatible.test.ts src/main/tts/wav.test.ts src/main/tts/providers/sherpa.test.ts src/main/tts/models.test.ts src/renderer/read-aloud.test.ts",
 		"check": "biome check --write --error-on-warnings ."
 	},
 	"dependencies": {
@@ -29,6 +29,7 @@
 		"remark-gfm": "^4.0.1",
 		"remark-parse": "^11.0.0",
 		"remark-rehype": "^11.1.2",
+		"sherpa-onnx-node": "^2.0.1",
 		"tesseract.js": "^7.0.0",
 		"unified": "^11.0.5",
 		"zustand": "5.0.7"

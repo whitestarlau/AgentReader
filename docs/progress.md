@@ -1,5 +1,31 @@
 # 进度记录
 
+## 2026-11-07 朗读（TTS）方案调研与抽象层
+
+- [x] 调研：跨平台 + 拟真两个约束下先否掉了系统语音（macOS AVSpeech / Windows SAPI / Linux espeak 音质断代）和纯端侧（M1 实测 MeloTTS RTF 0.24、Kokoro 0.83，听感仍明显低于云端）；结论是云端神经 TTS 为主、端侧/缓存为离线档。详见 `docs/tts-research.md`（含 6 种离线形态、价格与 2026 模型清单）与 `docs/research/` 下的原始笔记
+- [x] 实测：本机 Electron 38 / Chromium 140 的 `speechSynthesis`（191 音色 / 21 中文 / 中文词级 `onboundary` 可用）；Edge Read Aloud（14 个中文音色、短句首字节 272ms、2310 字首字节 381ms 总耗时 10.5s、返回 WordBoundary + SentenceBoundary）；`sherpa-onnx@2.0.1` 三平台预编译包与中文模型 RTF
+- [x] 关键事实：OpenAI OpenAPI spec 已标注 `tts-1` / `tts-1-hd` / `gpt-4o-mini-tts` 于 2027-01-06 关停且无时间戳；微软 Edge 鉴权已升级到 `Sec-MS-GEC v2`（手写 v1 token 403），`msedge-tts` 依赖 axios + ws + buffer/stream polyfill，与「主进程全打包」的产物形态冲突
+- [x] 抽象层 `src/main/tts/`：`types.ts` 引擎契约与错误模型（`TtsError.kind` 驱动回退）、`segment.ts` 中英混排切句（引号/小数/缩写/超长句二次切分/不切断代理对，保留 charRange）、`pipeline.ts` 长文按句切分并平移边界、`registry.ts` 回退链（aborted 立即终止，其余降级到下一个引擎）、`cache.ts` 内容寻址音频缓存 + LRU、`keys.ts` cache key
+- [x] 适配器：`openai-compatible`（零依赖 `fetch`，可接 Kokoro-FastAPI / Speaches / 任何 `/v1/audio/speech`；按字节嗅探真实格式，不信 `response_format`；401/403/404 → not-configured、429 → rate-limited）与 `mock`（静音 WAV，无网络也能开发播放器）
+- [x] 接入：`shared/tts.ts` 跨进程 wire 类型；IPC `tts:info` / `tts:voices` / `tts:synthesize` / `tts:speak`（绕过缓存）/ `tts:cache:clear|size`，失败返回 `{ok:false,kind,message}` 而非抛异常；preload 与渲染层类型声明同步
+- [x] 验证：单测 30 项（切句 9 / 管线 4 / 注册表 6 / 缓存 4 / mock 2 / OpenAI 兼容适配器 5，全量 42 项通过）；`typecheck`、`build` 通过，主进程 bundle 132KB → 151KB
+- [x] 端侧引擎：接入 `sherpa-onnx-node@2.0.1`，新增 `providers/sherpa.ts`（模型目录即配置、按文件名识别 VITS/Matcha、自动收集 date/number/phone rule fsts、按 `numSpeakers` 生成音色、`generateAsync` 不阻塞主进程、单句边界精确）与 `wav.ts`（Float32 → 16-bit PCM WAV）
+- [x] 端侧实测（M1 / 4 线程）：MeloTTS zh_en RTF **0.25**、Matcha zh-baker RTF **0.04**（4 线程用满 3.9 核；16s 合成期间主线程事件循环仍保持 ~84% 的 tick 率）
+- [x] 两个坑写进代码：`numThreads`/`provider` 必须在 `model` 内，放顶层被静默忽略 → 单线程 RTF 0.74（3 倍差）；`model.int8.onnx` 可能是 133 字节 Git-LFS 指针（MeloTTS release 包即如此），选文件必须按大小过滤
+- [x] 打包：用 `createRequire` 让原生模块保持运行时解析（不进 bundle），`electron-builder.json` 增补 `node_modules/sherpa-onnx-*/**` 与 `asarUnpack`；`npm run package:dir` 通过，`app.asar.unpacked` 内含 `sherpa-onnx.node` + 3 个 dylib，并已验证可从该布局加载
+- [x] 应用内模型下载：`tts/catalog.ts`（MeloTTS / Matcha 两条目，含 URL、精确字节数、许可证与非商用标记）+ `tts/models.ts`（fetch 流式下载 → 每 250ms 推进度 → 2% 容差校验 → `tar -xjf --strip-components=1` 解包 → 附带 vocoder → 安装后验证；失败回滚、可取消、可删除）
+- [x] 不做 JS 解压库：Node 无 bzip2 解码器，引入会多一个打进主进程 bundle 的依赖；`tar` 在 macOS / Linux / Windows 10+ 均由系统自带
+- [x] 自动接管：`resolveSherpa()` 按「显式目录 → 用户激活的目录模型 → 首选已安装模型」解析，下载完即可用，不需要用户填路径；`ttsModelPreset` 记录用户选择
+- [x] 设置页「朗读」分区：模型卡片（大小 / 许可证 / 磁盘占用 / 使用中）、下载进度条、取消 / 删除 / 切换，以及引擎能力列表；IPC `tts:models:list|download|cancel|remove|activate` + 事件 `tts:model:progress`
+- [x] 端到端实测：真实拉取 Matcha（75MB + 54MB vocoder）15.3 秒完成，解包后 `isInstalled` 通过
+- [x] 播放器入口：PDF 工具栏「朗读」从当前页开始、EPUB 工具栏「朗读」从当前章开始；底部浮出播放条（上一句/暂停/下一句、`3 / 17 句`、0.8–2× 语速、停止、错误直显）
+- [x] `read-aloud.ts`：句子队列 + 后 2 句预取 + `generation` 防串台（跳句/停止后迟到结果丢弃）+ 失败转错误态；音频用 Blob URL 播放，与引擎无关
+- [x] `readable.ts`：从**已渲染的 DOM** 取文本（PDF text layer / EPUB iframe），同时产出每个 Text 节点的偏移表，句子偏移可直接映射回 `Range`；高亮用 CSS Custom Highlight API，不改 DOM、iframe 内同样有效
+- [x] 自动推进：PDF 读完当前页 → 翻页（等待文字层渲染，最多 3s）→ 继续；EPUB 读完当前节 → `next()` 跳过同节剩余屏 → 继续
+- [x] 文案一致性：切句器移到 `src/shared/segment.ts`，主进程与渲染层共用同一套边界，避免「读的和高亮的不是同一句」
+- [x] 单测：播放器状态机 6 项（按句推进、预取 2 句、失败转错误、暂停恢复、停止清高亮、空文本），全量 66 项通过 65、跳过 1
+- [ ] 待做：真机点击验收（朗读按钮、高亮跟随、自动翻页音画衔接）、EPUB 分页模式下的跨屏高亮、Edge 适配器（手写 WS 客户端 + 移植 v2 token）、Azure/Qwen 适配器
+
 ## 2026-11-03 对话导出（Markdown / HTML / JSON）
 
 - [x] 需求：只导当前会话，支持 Markdown / HTML / JSON；默认引用开、思考关、工具调用开、工具结果关，可在导出对话框调整
