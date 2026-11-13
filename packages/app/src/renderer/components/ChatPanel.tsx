@@ -7,6 +7,8 @@ import { type Selection, MODIFIER_LABEL, SELECTION_LABEL } from "../selection.ts
 import { buildHistory, type HistoryMessage } from "../history.ts";
 import { estimateTokens, formatTokens } from "../tokens.ts";
 import type { OutlineItem } from "../types.ts";
+import { parseUserPrompt, type RefBlock } from "../../shared/chat-export.ts";
+import { ExportDialog } from "./ExportDialog.tsx";
 
 type TimelineItem =
 	| { kind: "reasoning"; content: string }
@@ -23,8 +25,13 @@ type Msg = {
 };
 type ChatRow = { id?: string; role?: string; content?: string; timeline?: TimelineItem[]; notice?: string };
 type Conv = { id: string; title: string; updatedAt?: number };
+type ExportToast = { kind: "ok" | "error"; text: string; path?: string };
 
 const lastConvKey = (docId: string) => `chat.last.${docId}`;
+// Menu commands are delivered as increasing tokens. Module scope survives a
+// ChatPanel remount (closing/reopening the panel), so an old token is not
+// replayed while a freshly requested export still opens.
+let lastConsumedExportToken = 0;
 function readLastConv(docId: string): string | null {
 	try {
 		return localStorage.getItem(lastConvKey(docId));
@@ -55,6 +62,8 @@ type Props = {
 	totalPages?: number;
 	contextWindow?: number;
 	newChatToken?: number;
+	exportChatToken?: number;
+	docTitle?: string;
 };
 /** Real or estimated context usage for the current conversation. */
 type ContextUsage = { used: number; max: number; estimated: boolean };
@@ -119,31 +128,6 @@ function toolSummary(name: string, args: string): string {
 		if (a.page) return `第 ${a.page} 页`;
 	} catch {}
 	return "";
-}
-
-type RefBlock = { header: string; body: string };
-
-/**
- * Split a persisted user message into its citation blocks and the actual
- * question. The prompt sent to the model is
- *   `【引用…】\n<body>\n\n【问题】\n<question>`
- * so we can render the (often very long) citations collapsed while keeping the
- * full text available to expand. Messages without citations render as before.
- */
-function parseUserPrompt(content: string): { refs: RefBlock[]; question: string } {
-	const marker = "\n\n【问题】\n";
-	const qi = content.indexOf(marker);
-	if (qi < 0) return { refs: [], question: content };
-	const refsPart = content.slice(0, qi);
-	const question = content.slice(qi + marker.length);
-	const refs: RefBlock[] = [];
-	for (const chunk of refsPart.split(/\n\n(?=【引用)/)) {
-		const nl = chunk.indexOf("\n");
-		const header = (nl >= 0 ? chunk.slice(0, nl) : chunk).trim();
-		const body = nl >= 0 ? chunk.slice(nl + 1).replace(/\s+$/, "") : "";
-		if (header.startsWith("【引用")) refs.push({ header, body });
-	}
-	return { refs, question };
 }
 
 function refIcon(header: string): "book" | "file" | "annotations" | "chat" {
@@ -312,6 +296,8 @@ export function ChatPanel({
 	totalPages = 0,
 	contextWindow,
 	newChatToken = 0,
+	exportChatToken = 0,
+	docTitle = "",
 }: Props) {
 	const [convs, setConvs] = useState<Conv[]>([]);
 	const [convId, setConvId] = useState<string | null>(null);
@@ -358,6 +344,8 @@ export function ChatPanel({
 	// Latest context usage for this conversation: exact when a provider reports
 	// token usage, otherwise estimated from the loaded messages.
 	const [usage, setUsage] = useState<ContextUsage | null>(null);
+	const [exportOpen, setExportOpen] = useState(false);
+	const [exportToast, setExportToast] = useState<ExportToast | null>(null);
 
 	const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
 		const el = scrollRef.current;
@@ -415,6 +403,29 @@ export function ChatPanel({
 		setQuoteEditing(false);
 		lastSelRef.current = null;
 	}, [docId]);
+
+	// An open export dialog and its result toast belong to the document that
+	// produced them; switching documents must not leave them floating around.
+	useEffect(() => {
+		setExportOpen(false);
+		setExportToast(null);
+	}, [docId]);
+
+	// Menu command: consume the token once. Module-scope bookkeeping survives
+	// ChatPanel remounts, so reopening the panel doesn't replay an old command.
+	useEffect(() => {
+		if (!exportChatToken || exportChatToken <= lastConsumedExportToken) return;
+		if (!docIdRef.current || !convIdRef.current) return;
+		lastConsumedExportToken = exportChatToken;
+		setConvMenuOpen(false);
+		setExportOpen(true);
+	}, [exportChatToken, docId, convId]);
+
+	useEffect(() => {
+		if (!exportToast) return;
+		const timer = setTimeout(() => setExportToast(null), 6000);
+		return () => clearTimeout(timer);
+	}, [exportToast]);
 
 	// Focus/select the inline rename field as soon as it appears.
 	useEffect(() => {
@@ -1092,6 +1103,26 @@ export function ChatPanel({
 					<button
 						type="button"
 						className="icon-btn"
+						onClick={() => {
+							setConvMenuOpen(false);
+							setExportOpen(true);
+						}}
+						disabled={!convId || convLoading || streaming || msgs.length === 0}
+						title={
+							convLoading
+								? "对话加载中"
+								: streaming
+									? "回答生成中，结束后可导出"
+									: msgs.length === 0
+										? "对话还没有消息"
+										: "导出当前对话"
+						}
+					>
+						<Icon name="download" size={15} />
+					</button>
+					<button
+						type="button"
+						className="icon-btn"
 						onClick={() => void createNew()}
 						disabled={!docId || convLoading}
 						title="新建对话"
@@ -1462,6 +1493,43 @@ export function ChatPanel({
 					</button>
 				)}
 			</div>
+
+			{exportToast && (
+				<div className={`chat-toast ${exportToast.kind}`} role="status">
+					<span className="chat-toast-text" title={exportToast.path}>
+						{exportToast.text}
+					</span>
+					<button
+						type="button"
+						className="chat-toast-close"
+						onClick={() => setExportToast(null)}
+						title="关闭"
+					>
+						<Icon name="close" size={12} />
+					</button>
+				</div>
+			)}
+
+			<ExportDialog
+				open={exportOpen}
+				docId={docId}
+				convId={convId}
+				conversationTitle={convs.find((c) => c.id === convId)?.title || "新对话"}
+				documentTitle={docTitle}
+				messageCount={msgs.length}
+				streaming={streaming}
+				onClose={() => setExportOpen(false)}
+				onExported={(result) => {
+					const label =
+						result.format === "md" ? "Markdown" : result.format === "html" ? "HTML" : "JSON";
+					const name = result.path.split(/[\\/]/).pop() || result.path;
+					setExportToast({
+						kind: "ok",
+						text: `已导出 ${label} · ${result.messages} 条消息 · ${name}`,
+						path: result.path,
+					});
+				}}
+			/>
 		</div>
 	);
 }

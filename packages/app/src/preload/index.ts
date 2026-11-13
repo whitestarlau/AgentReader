@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld("api", {
 		ipcRenderer.invoke("conversations:delete", docId, convId),
 	renameConversation: (docId: string, convId: string, title: string) =>
 		ipcRenderer.invoke("conversations:rename", docId, convId, title),
+	exportChat: (req: unknown) => ipcRenderer.invoke("chat:export", req),
 	getSettings: () => ipcRenderer.invoke("settings:get"),
 	saveSettings: (s: unknown) => ipcRenderer.invoke("settings:save", s),
 	getAiConfig: () => ipcRenderer.invoke("ai:config"),

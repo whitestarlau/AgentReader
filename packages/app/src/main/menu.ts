@@ -13,7 +13,13 @@ import { APP_NAME } from "./identity.ts";
  * 渲染层已有对应处理函数；窗口/编辑类动作直接使用 Electron role。
  */
 
-export type MenuCommand = "settings" | "import" | "new-chat" | "toggle-sidebar" | "toggle-chat";
+export type MenuCommand =
+	| "settings"
+	| "import"
+	| "new-chat"
+	| "export-chat"
+	| "toggle-sidebar"
+	| "toggle-chat";
 
 function sendCommand(cmd: MenuCommand) {
 	const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
@@ -46,6 +52,11 @@ export function installAppMenu() {
 		submenu: [
 			{ label: "导入 PDF / EPUB…", accelerator: "CmdOrCtrl+O", click: () => sendCommand("import") },
 			{ label: "新建对话", accelerator: "CmdOrCtrl+N", click: () => sendCommand("new-chat") },
+			{
+				label: "导出对话…",
+				accelerator: "CmdOrCtrl+Shift+E",
+				click: () => sendCommand("export-chat"),
+			},
 			{ type: "separator" },
 			...(isMac
 				? ([{ role: "close", label: "关闭窗口" }] as MenuItemConstructorOptions[])

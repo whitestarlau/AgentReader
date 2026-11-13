@@ -23,6 +23,7 @@ export type IconName =
 	| "tool"
 	| "check"
 	| "edit"
+	| "download"
 	| "stop";
 
 const PATHS: Record<IconName, ReactNode> = {
@@ -73,6 +74,13 @@ const PATHS: Record<IconName, ReactNode> = {
 		<>
 			<path d="M14 2 2 7.2l4.7 1.8L9 14z" />
 			<path d="M14 2 6.7 9" />
+		</>
+	),
+	download: (
+		<>
+			<path d="M8 2.6v7.6" />
+			<path d="M5 7.4 8 10.4l3-3" />
+			<path d="M2.8 13.2h10.4" />
 		</>
 	),
 	sparkle: <path d="M8 1.4 9.4 6 14 7.4 9.4 8.8 8 13.4 6.6 8.8 2 7.4 6.6 6z" />,

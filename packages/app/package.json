@@ -15,6 +15,7 @@
 		"package": "npm run build && electron-builder --config electron-builder.json",
 		"package:dir": "npm run build && electron-builder --config electron-builder.json --dir",
 		"typecheck": "tsc --noEmit",
+		"test": "node --experimental-strip-types --test src/shared/chat-export.test.ts src/main/export/render.test.ts",
 		"check": "biome check --write --error-on-warnings ."
 	},
 	"dependencies": {
@@ -23,7 +24,13 @@
 		"pdfjs-dist": "5.4.394",
 		"react": "19.1.1",
 		"react-dom": "19.1.1",
+		"rehype-sanitize": "^6.0.0",
+		"rehype-stringify": "^10.0.1",
+		"remark-gfm": "^4.0.1",
+		"remark-parse": "^11.0.0",
+		"remark-rehype": "^11.1.2",
 		"tesseract.js": "^7.0.0",
+		"unified": "^11.0.5",
 		"zustand": "5.0.7"
 	},
 	"devDependencies": {

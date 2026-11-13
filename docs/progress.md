@@ -1,5 +1,19 @@
 # 进度记录
 
+## 2026-11-03 对话导出（Markdown / HTML / JSON）
+
+- [x] 需求：只导当前会话，支持 Markdown / HTML / JSON；默认引用开、思考关、工具调用开、工具结果关，可在导出对话框调整
+- [x] `src/shared/chat-export.ts`：抽出 `parseUserPrompt()`，加导出类型、文件名/时间/围栏/转义工具；`ChatPanel` 改为复用共享解析
+- [x] 主进程 `src/main/export/`：`collect` 读 `doc.json + conversations.json + chats/*.jsonl`（坏行跳过）；`markdown` / `html` / `json` 三个渲染器；`markdown-to-html` 动态加载 unified + remark-gfm + rehype-sanitize
+- [x] IPC `chat:export`：校验 docId/convId、原生保存对话框、按最终扩展名决定格式、写 UTF-8；`openAfter` 用系统默认应用打开
+- [x] 渲染层：ChatPanel 标题栏下载按钮 + `ExportDialog`（格式/内容开关、localStorage 记忆、错误显示、流式/空对话禁用）+ 成功 toast；文件菜单「导出对话…」`⌘⇧E`
+- [x] 安全：HTML 走 `rehype-sanitize`，动态字段全部转义；实测 `javascript:` 链接被移除、`<script>`/`onerror` 不进入导出 HTML
+- [x] 验证：`npm run typecheck --workspace=@agentreader/app`、`npm run build --workspace=@agentreader/app`、全 workspace typecheck 通过；用 mock 对话跑通 Markdown/HTML/JSON 渲染与开关组合
+- [x] 打包：`npm run package:dir --workspace=@agentreader/app` 成功；`app.asar` 内含 `dist-electron/main.js` 与 `markdown-to-html` chunk
+- [x] 单测：`chat-export.test.ts` + `export/render.test.ts`，12 项通过（解析、文件名、默认选项、扩展名、围栏、Markdown、HTML XSS、JSON）
+- [x] 修复导出弹窗排版：全局 `input` / `.field input` 样式把 checkbox 撑成 100% 宽、`.field label` 把选项变成粗体；弹窗改用独立的 `.export-field` 作用域，全局输入样式排除 checkbox/radio，补上弹窗最大高度、内容区滚动和窄屏单列布局；用 Electron 离屏截图验证 900×760 与 420×700 两种尺寸
+- [ ] 待补：Electron 真机点击验收（保存对话框、打开文件、系统菜单快捷键）
+
 ## 2026-11-01 修复 PDF 文本管线、切换文档后的会话串台、会话导航
 
 - [x] 体验排查发现三个高优先级问题：PDF 全文检索始终为空（AI 的

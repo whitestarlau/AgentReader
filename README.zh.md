@@ -16,6 +16,7 @@
 - **阅读**：PDF.js `canvas+textLayer`，连续滚动 / 单页翻页双模式，适应宽度 / 适应页面 / 指针缩放，PDF 书签目录，精确恢复上次阅读位置（页内偏移）；EPUB 支持翻页（单/双栏）与连续滑动两种模式
 - **标注**：选中文本弹出「高亮 / 引用提问 / 复制」菜单，**双击选词、三击选中整段**（与浏览器一致）；修饰键拖拽矩形框选（macOS `⌥`、其它平台 `Alt`），归一化坐标持久化；EPUB 高亮以 epub.js CFI 锚定
 - **AI 对话**：侧边栏，选中文本或已有标注可按「引用」注入，`@` 联想引用章节 / 目录 / 页码 / 标注，分级上下文（选中/章节/全文RAG），流式输出
+- **导出**：当前对话导出为 Markdown / 单文件 HTML / JSON，可选择引用、思考、工具调用与工具结果
 - **多提供商**：复刻 `pi-ai` 的 `Model/Context/StreamFn`，支持 OpenAI 兼容接口
 
 ## 技术栈
@@ -75,6 +76,7 @@ npm run package --workspace=@agentreader/app -- --win   # -> out/AgentReader-Set
 - `docs/requirements.md` 需求文档
 - `docs/plan.md` 规划文档
 - `docs/plan-v0.2.md` 提供商/多模型/Web Search/Skill 规划
+- `docs/export-design.md` 对话导出（Markdown / HTML / JSON）设计
 - `docs/progress.md` 进度记录
 - `Reference/pi` 参考项目（已 gitignore，不提交）
 

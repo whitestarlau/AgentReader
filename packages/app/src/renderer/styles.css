@@ -159,7 +159,7 @@ button.primary:hover:not(:disabled) {
 	color: var(--vscode-fg-bright);
 }
 
-input,
+input:not([type="checkbox"]):not([type="radio"]),
 select,
 textarea {
 	font-family: inherit;
@@ -171,7 +171,7 @@ textarea {
 	padding: 5px 8px;
 	outline: none;
 }
-input:focus,
+input:not([type="checkbox"]):not([type="radio"]):focus,
 select:focus,
 textarea:focus {
 	border-color: var(--vscode-focus);
@@ -2207,7 +2207,7 @@ body.resizing iframe {
 	font-weight: 400;
 	color: var(--vscode-fg-dim);
 }
-.field input {
+.field input:not([type="checkbox"]):not([type="radio"]) {
 	width: 100%;
 }
 .field select,
@@ -2528,6 +2528,7 @@ body.resizing iframe {
 .settings-pill.src-inferred {
 	color: #7ec699;
 }
+
 .settings-pill.src-metadata {
 	color: #d7a6ff;
 }
@@ -2968,4 +2969,221 @@ body.resizing iframe {
 	/* The PDF viewer paints selection itself (see .pdf-selection-rect) so the
 	   highlight is one clean rect per line instead of per overlapping span. */
 	background: transparent;
+}
+
+/* ------------------------------------------------------------ chat export */
+.export-modal {
+	width: 520px;
+	max-height: calc(100vh - 48px);
+	display: flex;
+	flex-direction: column;
+}
+.export-modal .modal-header,
+.export-modal .modal-footer {
+	flex: 0 0 auto;
+}
+.export-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	gap: 14px;
+}
+.export-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+.export-summary {
+	margin: 0;
+	color: var(--vscode-fg-dim);
+	font-size: 12px;
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+}
+.export-summary-doc {
+	opacity: 0.8;
+}
+.export-label {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	color: var(--vscode-fg-dim);
+	font-size: 12px;
+}
+.export-label-note {
+	font-size: 11px;
+	opacity: 0.8;
+}
+.export-formats {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 8px;
+	margin-top: 5px;
+}
+.export-format {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+	padding: 9px 10px;
+	border: 1px solid var(--vscode-border);
+	border-radius: 6px;
+	background: var(--vscode-editor);
+	cursor: pointer;
+}
+.export-format:hover {
+	border-color: var(--vscode-border-strong, var(--vscode-fg-dim));
+}
+.export-format:focus-within {
+	outline: 1px solid var(--vscode-focus);
+	outline-offset: 1px;
+}
+.export-format.active {
+	border-color: var(--vscode-accent);
+	background: rgba(0, 122, 204, 0.12);
+}
+.export-format input {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: 0;
+	padding: 0;
+	opacity: 0;
+	pointer-events: none;
+}
+.export-format-name {
+	color: var(--vscode-fg-bright);
+	font-size: 12px;
+	font-weight: 600;
+}
+.export-format-ext {
+	color: var(--vscode-fg-dim);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 11px;
+}
+.export-format-hint {
+	margin-top: 3px;
+	color: var(--vscode-fg-dim);
+	font-size: 10.5px;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+.export-options {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+	margin-top: 5px;
+}
+.export-options.disabled {
+	opacity: 0.5;
+}
+.export-check {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	color: var(--vscode-fg);
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 1.4;
+	cursor: pointer;
+}
+.export-check input {
+	flex: 0 0 auto;
+	width: 14px;
+	height: 14px;
+	margin: 2px 0 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	accent-color: var(--vscode-accent);
+}
+.export-check > span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.export-check em {
+	display: block;
+	color: var(--vscode-fg-dim);
+	font-size: 11px;
+	font-style: normal;
+	font-weight: 400;
+	line-height: 1.4;
+}
+.export-open-after {
+	margin-top: 1px;
+}
+.export-hint {
+	padding: 7px 10px;
+	border-radius: 4px;
+	background: rgba(0, 122, 204, 0.1);
+	color: var(--vscode-fg);
+	font-size: 11.5px;
+	line-height: 1.45;
+}
+.export-hint.warn {
+	background: rgba(240, 160, 80, 0.12);
+	color: #f0a050;
+}
+.export-hint.error {
+	background: rgba(220, 80, 80, 0.14);
+	color: #f48771;
+}
+@media (max-width: 560px) {
+	.export-modal {
+		width: calc(100vw - 32px);
+	}
+	.export-formats {
+		grid-template-columns: 1fr;
+	}
+}
+
+.chat-toast {
+	position: absolute;
+	left: 10px;
+	right: 10px;
+	bottom: 74px;
+	z-index: 40;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px;
+	border: 1px solid var(--vscode-border);
+	border-radius: 6px;
+	background: var(--vscode-widget);
+	box-shadow: var(--vscode-shadow);
+	color: var(--vscode-fg);
+	font-size: 12px;
+}
+.chat-toast.ok {
+	border-color: rgba(0, 122, 204, 0.55);
+}
+.chat-toast.error {
+	border-color: rgba(220, 80, 80, 0.55);
+}
+.chat-toast-text {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.chat-toast-close {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--vscode-fg-dim);
+	cursor: pointer;
+}
+.chat-toast-close:hover {
+	background: var(--vscode-hover);
+	color: var(--vscode-fg);
 }

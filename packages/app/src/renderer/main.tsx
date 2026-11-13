@@ -15,6 +15,7 @@ import { EditorTabs } from "./components/shell/EditorTabs.tsx";
 import { StatusBar } from "./components/shell/StatusBar.tsx";
 import { Welcome } from "./components/shell/Welcome.tsx";
 import { Resizer } from "./components/shell/Resizer.tsx";
+import type { ExportRequest, ExportResult } from "../shared/chat-export.ts";
 import type {
   ActivityView,
   AiConfig,
@@ -57,6 +58,7 @@ declare global {
       createConversation: (docId: string, title?: string) => Promise<{ id: string; title: string }>;
       deleteConversation: (docId: string, convId: string) => Promise<unknown>;
       renameConversation: (docId: string, convId: string, title: string) => Promise<unknown>;
+      exportChat: (req: ExportRequest) => Promise<ExportResult>;
       getSettings: () => Promise<Record<string, string>>;
       saveSettings: (s: unknown) => Promise<void>;
       getAiConfig: () => Promise<AiConfig>;
@@ -120,6 +122,8 @@ function App() {
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   // 菜单「新建对话」信号：递增 token，ChatPanel 监听后新建。
   const [newChatToken, setNewChatToken] = useState(0);
+  // 菜单「导出对话」信号：同样用 token，避免把菜单事件直接耦合到 ChatPanel。
+  const [exportChatToken, setExportChatToken] = useState(0);
 
   // shell layout state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -235,6 +239,11 @@ function App() {
       else if (cmd === "toggle-sidebar") setSidebarOpen((v) => !v);
       else if (cmd === "toggle-chat") setChatOpen((v) => !v);
       else if (cmd === "new-chat") setNewChatToken(Date.now());
+      else if (cmd === "export-chat") {
+        if (!selected) return;
+        setChatOpen(true);
+        setExportChatToken((value) => value + 1);
+      }
     };
   });
   useEffect(() => window.api.onMenuCommand((cmd) => menuHandlerRef.current(cmd)), []);
@@ -415,6 +424,7 @@ function App() {
               <ChatPanel
                 selection={selection}
                 docId={selected}
+                docTitle={selectedDoc?.title ?? ""}
                 page={page}
                 isEpub={isEpub}
                 annotations={anns}
@@ -422,6 +432,7 @@ function App() {
                 totalPages={total}
                 contextWindow={ai?.models.find((m) => m.ref === ai.defaultModel)?.contextWindow}
                 newChatToken={newChatToken}
+                exportChatToken={exportChatToken}
               />
             </aside>
           </>
