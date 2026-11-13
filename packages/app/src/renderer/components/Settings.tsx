@@ -12,8 +12,13 @@ import { formatTokens } from "../tokens.ts";
 import { Icon, type IconName } from "./Icons.tsx";
 
 function errorText(e: unknown): string {
-	if (e instanceof Error) return e.message;
-	return String(e);
+	const raw = e instanceof Error ? e.message : String(e);
+	// Strip Electron's wrapper so the actionable part is visible.
+	const detail = raw.replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
+	if (/No handler registered/i.test(detail)) {
+		return "主进程还是旧版本（没有注册朗读接口）。请完全退出应用后重新启动；仍不行就重新构建（npm run build）";
+	}
+	return detail;
 }
 
 /** IPC calls must never leave the panel spinning forever. */
