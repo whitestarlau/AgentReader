@@ -84,6 +84,21 @@ test("installed means real weights are present, not a partial download", (t) => 
 	assert.equal(isInstalled(vitsEntry, root), true);
 });
 
+test("kokoro also requires the speaker bank", (t) => {
+	const root = tempRoot(t);
+	const entry: ModelEntry = { ...vitsEntry, id: "test-kokoro", family: "kokoro" };
+	const dir = modelDir(entry.id, root);
+	mkdirSync(dir, { recursive: true });
+	writeSized(join(dir, "model.onnx"), 2_000_000);
+	assert.equal(isInstalled(entry, root), false);
+
+	writeSized(join(dir, "voices.bin"), 133);
+	assert.equal(isInstalled(entry, root), false);
+
+	writeSized(join(dir, "voices.bin"), 1_500_000);
+	assert.equal(isInstalled(entry, root), true);
+});
+
 test("matcha also requires a real vocoder", (t) => {
 	const root = tempRoot(t);
 	const dir = modelDir(matchaEntry.id, root);

@@ -29,9 +29,22 @@ function config(dir) {
 	const base = { tokens: path.join(dir, "tokens.txt") };
 	if (files.includes("lexicon.txt")) base.lexicon = path.join(dir, "lexicon.txt");
 	const acoustic = files.find((f) => /^(model-steps|acoustic).*\.onnx$/.test(f));
-	const body = isMatcha
-		? { matcha: { acousticModel: path.join(dir, acoustic), vocoder, ...base } }
-		: { vits: { model: path.join(dir, model), ...base } };
+	const isKokoro = files.includes("voices.bin");
+	const lexicon = files
+		.filter((f) => /^lexicon-.*\.txt$/.test(f))
+		.map((f) => path.join(dir, f));
+	const body = isKokoro
+		? {
+				kokoro: {
+					model: path.join(dir, model),
+					voices: path.join(dir, "voices.bin"),
+					...base,
+					...(lexicon.length ? { lexicon: lexicon.join(",") } : {}),
+				},
+			}
+		: isMatcha
+			? { matcha: { acousticModel: path.join(dir, acoustic), vocoder, ...base } }
+			: { vits: { model: path.join(dir, model), ...base } };
 	return {
 		model: { ...body, numThreads: 2, provider: "cpu" },
 		maxNumSentences: 1,

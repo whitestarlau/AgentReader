@@ -138,6 +138,30 @@ Azure 还有一个独特优势：一次请求整段 SSML，句间插入 `<bookma
 - 模型不要塞进安装包，首次使用时下载到 `userData`；
 - `vits-melo-tts-zh_en` 的 `model.int8.onnx` 实际是 133 字节的 Git-LFS 指针，必须用 `model.onnx`（170MB）。
 
+#### 2.2.1 2026-11 复核：新一代候选
+
+> 来源：各仓库 README（2026-11-13 拉取）+ Seed-TTS-eval 公开跑分（VoxCPM 仓库整理，含竞品）。
+> 结论先说：**开源中文质量天花板已经明显抬升，但「实时 + 消费级硬件」仍没解决**。
+
+| 模型 | 参数 | 许可 | 中文 CER↓ | 中文 SIM↑ | 4090 RTF | 能否在 Node 里直接跑 |
+|---|---|---|---|---|---|---|
+| **VoxCPM2** | 2B | Apache-2.0 | 0.97 | 79.5 | ~0.30 | ❌ PyTorch / llama.cpp-omni |
+| **VoxCPM-0.5B** | 0.6B | Apache-2.0 | **0.93** | 77.2 | ~0.17 | ❌ 同上 |
+| VoxCPM1.5 | 0.6B | Apache-2.0 | 1.18 | 77.0 | ~0.15 | ❌ |
+| MOSS-TTS | — | ✅ | 1.20 | 78.8 | — | ❌ |
+| Qwen3-TTS | 1.7B | ✅ | 1.22 | 77.0 | — | ❌ |
+| IndexTTS2 | 1.5B | ⛔ B 站非商用 | 1.03 | 76.5 | — | ❌ |
+| CosyVoice2 | 0.5B | Apache-2.0 | 1.38 | 75.7 | — | ❌ Python |
+| F5-TTS | 0.3B | ⛔ CC-BY-NC | 1.53 | 76.0 | — | ❌ |
+| 现有 MeloTTS/AISHELL-3/Matcha | ~0.1B | MIT / 非商用 | 不入榜（非零样本） | — | — | ✅ sherpa |
+
+关键事实：
+
+- **VoxCPM 的 0.6B 版本质量已经压过 CosyVoice2 和 F5**，且 Apache-2.0 可商用；还支持「用一句话描述音色」（Voice Design）和零样本克隆。
+- 但它不是 ONNX 模型：官方走 PyTorch（cpu/mps/cuda），或 **llama.cpp-omni**（MIT，C++/GGUF，CPU/Metal/CUDA/Vulkan）——后者在 M4 Pro Metal 上 **RTF ≈ 1.76（2B, Q8_0）**，0.5B 按参数比例粗估 ≈0.4–0.6，接近实时但没有余量；Windows 纯 CPU 会更慢。
+- **Kokoro multi-lang**（Apache-2.0，82M，103 音色）仍在 sherpa 支持范围内，是本目录里唯一「换模型就能上」的升级项；质量在 82M 量级里最好，但语调偏平。
+- 3B 以上（MOSS-TTSD、LongCat-Audio-DiT、Higgs v2）质量更高，但消费级 CPU 不可行，只能 GPU。
+
 ### 2.3 本机实测（macOS 15.7.4 / M1 / Electron 38.2.1 / Chromium 140）
 
 **Edge Read Aloud**（`zh-CN-XiaoxiaoNeural`）：

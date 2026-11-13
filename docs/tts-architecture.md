@@ -261,7 +261,8 @@ export class MyTts implements TtsEngine {
 - 音色：设置页「音色」分区按引擎分组列出可选音色（本地模型按 `numSpeakers` 展开，如 AISHELL-3 的 174 个），选择写入 `ttsVoice:<engineId>`；「试听」走 `tts:speak` 绕过缓存，换音色立刻能听出区别。
 - 模型管理器：应用内下载（流式进度、可取消）、完整性校验、`tar` 解包、安装后校验、删除；实测真实下载 129MB（Matcha + vocoder）15.3 秒完成并验证通过。
 - 设置页「朗读」分区：模型卡片（大小 / 许可证 / 占用）、下载进度条、取消 / 删除 / 切换使用，以及当前可用引擎与能力。
-- `sherpa-onnx` 本地适配器：模型目录即配置，自动识别 VITS / Matcha 家族、自动收集 `date/number/phone.fst`、按 `numSpeakers` 生成音色列表；合成走 `generateAsync`（不阻塞主进程）；输出 16-bit WAV。
+- `sherpa-onnx` 本地适配器：模型目录即配置，自动识别 **VITS / Matcha / Kokoro** 三族、自动收集 rule fsts、按 `numSpeakers` 生成音色列表；合成走 `generateAsync`（不阻塞主进程）；输出 16-bit WAV。
+- Kokoro 多语言（82M / 103 音色 / Apache-2.0）：中文 8 个音色（sid 45–52）在列表里排在最前并带名字，其余标注「其他语言」；M1 实测 RTF 0.71–0.89（int8，4 线程）。
 - `openai-compatible` 适配器（零依赖 `fetch`）：可直接接 Kokoro-FastAPI、Speaches 或任何 `/v1/audio/speech` 服务；自动嗅探返回格式（mp3/wav/opus），不信任 `response_format`。
 - `mock` 静音引擎：无网络也能把播放器 UI 做出来。
 - 切句器（中英混排、引号/小数/缩写、超长句二次切分、不切断代理对）。

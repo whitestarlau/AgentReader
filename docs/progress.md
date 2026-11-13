@@ -32,6 +32,8 @@
 - [x] 朗读起点改为「视口内第一句」（`firstVisibleIndex`，同时判断水平/垂直可见，双栏分页不会选中屏幕外那一页）
 - [x] 朗读期间锁定导航：滚轮、翻页键、工具栏翻页/上下章禁用，Esc 结束会话；点正文可跳读（`caretRangeFromPoint` → 句子下标 → `playFrom`）
 - [x] 修复「标题和正文连读、听起来很急」：构建文本时按块级祖先（EPUB）或几何间距（PDF）插入硬断句，切句器在新断点处切句
+- [x] 接入 Kokoro 多语言（82M / 103 音色 / Apache-2.0，147MB）：适配器新增 kokoro 配置分支（model + voices.bin + 中英双 lexicon），中文 8 个音色按名字排在列表最前，其余标注「其他语言」；`isInstalled` 要求 voices.bin 存在
+- [x] Kokoro 实测（M1 / int8 / 4 线程）：加载 1.3s，RTF 0.71–0.89，25 字约 6.1s 音频；已设为未指定时的首选模型
 - [ ] 待做：真机点击验收（朗读按钮、高亮跟随、自动翻页音画衔接）、EPUB 分页模式下的跨屏高亮、Edge 适配器（手写 WS 客户端 + 移植 v2 token）、Azure/Qwen 适配器
 
 ## 2026-11-03 对话导出（Markdown / HTML / JSON）

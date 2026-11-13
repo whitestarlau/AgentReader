@@ -72,6 +72,31 @@ test("builds a matcha config when the vocoder is supplied", (t) => {
 	assert.equal(config.model.matcha.vocoder, vocoder);
 });
 
+test("builds a kokoro config with the speaker bank and both lexicons", (t) => {
+	const dir = bundle(t, {
+		"model.int8.onnx": 2_000_000,
+		"voices.bin": 1_500_000,
+		"tokens.txt": 900,
+		"lexicon-us-en.txt": 900,
+		"lexicon-zh.txt": 900,
+	});
+	const config = buildConfig({ modelDir: dir }) as {
+		model: { kokoro: { model: string; voices: string; lexicon: string }; numThreads: number };
+	};
+	assert.equal(config.model.kokoro.voices, join(dir, "voices.bin"));
+	assert.equal(config.model.kokoro.model, join(dir, "model.int8.onnx"));
+	assert.match(config.model.kokoro.lexicon, /lexicon-us-en\.txt,.*lexicon-zh\.txt$/);
+	assert.equal(typeof config.model.numThreads, "number");
+});
+
+test("kokoro without voices.bin is refused", (t) => {
+	const dir = bundle(t, { "model.int8.onnx": 2_000_000, "tokens.txt": 900 });
+	assert.throws(
+		() => buildConfig({ modelDir: dir, kind: "kokoro" }),
+		(e: unknown) => e instanceof TtsError && /voices\.bin/.test(e.message),
+	);
+});
+
 test("reports a missing model directory as not-configured", () => {
 	assert.throws(
 		() => buildConfig({ modelDir: "/nope/definitely/missing" }),

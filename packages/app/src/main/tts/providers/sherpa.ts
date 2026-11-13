@@ -84,6 +84,22 @@ export type SherpaTtsConfig = {
  */
 const MODEL_RUNTIME = { provider: "cpu", debug: false } as const;
 
+/**
+ * Kokoro's Chinese speakers (the zf_ and zm_ prefixed voices). The sid
+ * assignment is shared by the 53-speaker v1.0 and the 103-speaker v1.1
+ * bundles; everything else speaks English or another language.
+ */
+const KOKORO_ZH_VOICES: Record<number, string> = {
+	45: "晓北 zf_xiaobei",
+	46: "晓妮 zf_xiaoni",
+	47: "晓晓 zf_xiaoxiao",
+	48: "晓伊 zf_xiaoyi",
+	49: "云健 zm_yunjian",
+	50: "云希 zm_yunxi",
+	51: "云夏 zm_yunxia",
+	52: "云扬 zm_yunyang",
+};
+
 const MODEL_CACHE_LIMIT = 2;
 const handles = new Map<string, Promise<SherpaHandle>>();
 
@@ -194,6 +210,22 @@ export class SherpaTts implements TtsEngine {
 		const name = basename(this.cfg.modelDir) || "本地模型";
 		const count = Math.max(1, handle.numSpeakers);
 		if (count === 1) return [{ id: "0", name, lang, offline: true }];
+		const isKokoro = (this.cfg.kind ?? "auto") === "kokoro" || /kokoro/i.test(this.cfg.modelDir);
+		if (isKokoro) {
+			// Chinese names first, then the rest of the multilingual cast.
+			const zh = Object.entries(KOKORO_ZH_VOICES)
+				.map(([sid, name]) => ({ id: sid, name, lang, offline: true }))
+				.filter((voice) => Number(voice.id) < count);
+			const others = Array.from({ length: count }, (_, i) =>
+				KOKORO_ZH_VOICES[i]
+					? null
+					: { id: String(i), name: `音色 ${i}（其他语言）`, lang: "en", offline: true },
+			).filter(
+				(voice): voice is { id: string; name: string; lang: string; offline: true } =>
+					voice !== null,
+			);
+			return [...zh, ...others];
+		}
 		// A 100+ entry picker is more usable with short names; the model name is
 		// already visible in the engine group.
 		return Array.from({ length: count }, (_, i) => ({
@@ -351,16 +383,41 @@ export function buildConfig(cfg: SherpaTtsConfig): Record<string, unknown> {
 			engineId: "sherpa",
 		});
 	}
-	if (kind === "kokoro") {
-		throw new TtsError("unsupported", "Kokoro 模型暂未接入（先支持 VITS / Matcha）", {
-			engineId: "sherpa",
-		});
-	}
-
 	const tokens = join(cfg.modelDir, "tokens.txt");
 	const lexicon = join(cfg.modelDir, "lexicon.txt");
 	const ruleFsts = cfg.ruleFsts ?? detectRuleFsts(cfg.modelDir);
 	const numThreads = clampThreads(cfg.numThreads);
+
+	if (kind === "kokoro") {
+		const model = pickModelFile(files);
+		const voices = join(cfg.modelDir, "voices.bin");
+		if (!model) {
+			throw new TtsError("not-configured", "找不到 Kokoro 模型文件（model.onnx）", {
+				engineId: "sherpa",
+			});
+		}
+		if (!existsSync(voices)) {
+			throw new TtsError("not-configured", "Kokoro 模型缺少 voices.bin", { engineId: "sherpa" });
+		}
+		// Both lexicons are required: Chinese books mix in English terms.
+		const lexicons = ["lexicon-us-en.txt", "lexicon-gb-en.txt", "lexicon-zh.txt"]
+			.map((name) => join(cfg.modelDir, name))
+			.filter((path) => existsSync(path));
+		return {
+			model: {
+				kokoro: {
+					model: join(cfg.modelDir, model),
+					voices,
+					tokens,
+					lexicon: lexicons.join(","),
+				},
+				...MODEL_RUNTIME,
+				numThreads,
+			},
+			maxNumSentences: 1,
+			...(ruleFsts ? { ruleFsts } : {}),
+		};
+	}
 
 	if (kind === "matcha") {
 		const acoustic = pickModelFile(files);

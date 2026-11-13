@@ -20,7 +20,7 @@ export type ModelEntry = {
 	id: string;
 	name: string;
 	/** Family passed to the sherpa adapter. */
-	family: "vits" | "matcha";
+	family: "vits" | "matcha" | "kokoro";
 	lang: string;
 	desc: string;
 	/** Human-readable licence summary shown before downloading. */
@@ -36,6 +36,24 @@ export type ModelEntry = {
 const RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
 
 export const TTS_MODELS: ModelEntry[] = [
+	{
+		id: "kokoro-zh",
+		name: "Kokoro 多语言",
+		family: "kokoro",
+		lang: "zh-CN",
+		desc: "82M 参数、103 个音色，其中中文 8 个（晓北/晓妮/晓晓/晓伊/云健/云希/云夏/云扬）。音色与韵律比 VITS 系自然，合成速度约为实时的 1.2 倍。",
+		license: "Apache-2.0（可商用）",
+		commercial: true,
+		sizeLabel: "147 MB",
+		assets: [
+			{
+				kind: "bundle",
+				url: `${RELEASE}/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2`,
+				name: "kokoro-int8-multi-lang-v1_1.tar.bz2",
+				bytes: 147_052_523,
+			},
+		],
+	},
 	{
 		id: "melo-zh-en",
 		name: "MeloTTS 中英混排",
@@ -104,4 +122,4 @@ export function getModel(id: string): ModelEntry | undefined {
 }
 
 /** Default model when several are installed and the user has not chosen one. */
-export const PREFERRED_MODEL_ID = "melo-zh-en";
+export const PREFERRED_MODEL_ID = "kokoro-zh";

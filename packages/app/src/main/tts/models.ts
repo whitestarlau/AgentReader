@@ -55,6 +55,12 @@ export function isInstalled(entry: ModelEntry, root: string): boolean {
 			const vocoder = files.find((f) => f.name === entry.vocoderName);
 			if (!vocoder || vocoder.size < 1_000_000) return false;
 		}
+		if (entry.family === "kokoro") {
+			// The speaker bank is what makes Kokoro multi-voice; without it the
+			// bundle cannot produce audio at all.
+			const voices = files.find((f) => f.name === "voices.bin");
+			if (!voices || voices.size < 1_000_000) return false;
+		}
 		return true;
 	} catch {
 		return false;
