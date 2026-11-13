@@ -173,6 +173,11 @@ function chainFor(registry: TtsRegistry, requested?: string): string[] {
 	return ordered;
 }
 
+/** Cache fingerprint of an engine; empty for engines that do not define one. */
+function engineTag(registry: TtsRegistry, engineId: string): string {
+	return registry.get(engineId)?.cacheTag?.() ?? "";
+}
+
 function currentRate(override?: number): number {
 	const raw = override ?? Number(readSettings().ttsRate ?? "1");
 	if (!Number.isFinite(raw)) return 1;
@@ -209,7 +214,7 @@ async function synthesize(payload: SynthesizePayload): Promise<TtsSynthesizeRepl
 	// Cache first: a re-read page or a replayed sentence must not hit the network.
 	if (!payload.preview) {
 		for (const engineId of chain) {
-			const key = cacheKey({ engineId, voiceId, rate, text });
+			const key = cacheKey({ engineId, tag: engineTag(registry, engineId), voiceId, rate, text });
 			const hit = ttsCache().read(key);
 			if (hit) {
 				return {
@@ -232,7 +237,10 @@ async function synthesize(payload: SynthesizePayload): Promise<TtsSynthesizeRepl
 		const result = outcome.result;
 
 		if (!payload.preview) {
-			ttsCache().put(cacheKey({ engineId, voiceId, rate, text }), result);
+			ttsCache().put(
+				cacheKey({ engineId, tag: engineTag(registry, engineId), voiceId, rate, text }),
+				result,
+			);
 		}
 		return {
 			ok: true,

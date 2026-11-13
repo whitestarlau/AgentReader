@@ -61,6 +61,13 @@ export interface TtsEngine {
 	synthesize(req: TtsRequest): Promise<TtsResult>;
 	/** Optional: engines that stream override this; see `collectStream()`. */
 	synthesizeStream?(req: TtsRequest): AsyncIterable<TtsEvent>;
+	/**
+	 * Extra cache-key material for everything engine-side that changes the audio
+	 * (model directory, endpoint, model name...). Without it, switching models
+	 * keeps replaying the previous model's cached audio, because `id` and the
+	 * voice id stay the same.
+	 */
+	cacheTag?(): string;
 }
 
 export type TtsErrorKind =

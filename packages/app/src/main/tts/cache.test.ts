@@ -21,6 +21,9 @@ test("cache key is stable and sensitive to every audio-affecting input", () => {
 	assert.notEqual(key(), key({ engineId: "e2" }));
 	assert.notEqual(key(), key({ rate: 1.5 }));
 	assert.notEqual(key(), key({ text: "你好！" }));
+	// Switching the local model or the TTS endpoint keeps the engine/voice ids,
+	// so the configuration fingerprint is what makes the cache miss.
+	assert.notEqual(key(), key({ tag: "model-b" }));
 });
 
 test("round-trips audio and boundaries", (t) => {

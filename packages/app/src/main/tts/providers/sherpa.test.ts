@@ -88,6 +88,13 @@ test("empty directory is an actionable configuration error", (t) => {
 	);
 });
 
+test("cache tag changes with the model bundle", () => {
+	const a = new SherpaTts({ modelDir: "/models/melo" });
+	const b = new SherpaTts({ modelDir: "/models/matcha", vocoder: "/models/vocos.onnx" });
+	assert.notEqual(a.cacheTag(), b.cacheTag());
+	assert.equal(a.cacheTag(), new SherpaTts({ modelDir: "/models/melo" }).cacheTag());
+});
+
 test("an unknown voice id falls back to speaker 0 instead of failing", async () => {
 	// No model needed: the request fails at load time, which proves voice parsing
 	// ran first and did not throw on its own.

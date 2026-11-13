@@ -10,6 +10,8 @@ import { createHash } from "node:crypto";
  */
 export type CacheKeyInput = {
 	engineId: string;
+	/** Engine-side configuration fingerprint (model dir, endpoint, ...). */
+	tag?: string;
 	voiceId: string;
 	rate?: number;
 	pitch?: number;
@@ -22,6 +24,7 @@ export function cacheKey(input: CacheKeyInput): string {
 	const pitch = (input.pitch ?? 1).toFixed(2);
 	const material = [
 		input.engineId,
+		input.tag ?? "",
 		input.voiceId,
 		rate,
 		pitch,

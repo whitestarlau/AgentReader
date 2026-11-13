@@ -113,6 +113,13 @@ test("mp3 frames are detected when the server returns mp3", async (t) => {
 	assert.equal(result.audio.format, "mp3");
 });
 
+test("cache tag changes with endpoint or model", () => {
+	const base = "http://127.0.0.1:8880/v1";
+	assert.notEqual(engineFor(base).cacheTag(), engineFor("http://127.0.0.1:9999/v1").cacheTag());
+	const other = new OpenAiCompatibleTts({ baseUrl: base, model: "other", defaultVoice: "v" });
+	assert.notEqual(engineFor(base).cacheTag(), other.cacheTag());
+});
+
 test("loopback endpoints are advertised as offline-capable", () => {
 	const local = engineFor("http://127.0.0.1:8880/v1");
 	assert.equal(local.capabilities().offline, true);

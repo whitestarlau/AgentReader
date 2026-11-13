@@ -36,6 +36,10 @@ export class MockTts implements TtsEngine {
 		};
 	}
 
+	cacheTag(): string {
+		return "mock";
+	}
+
 	async listVoices(): Promise<TtsVoice[]> {
 		return [{ id: "mock-zh", name: "静音音色", lang: "zh-CN", gender: "neutral", offline: true }];
 	}

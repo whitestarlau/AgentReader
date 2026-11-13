@@ -63,6 +63,11 @@ export class OpenAiCompatibleTts implements TtsEngine {
 		};
 	}
 
+	/** Endpoint + model identity: switching either must invalidate the cache. */
+	cacheTag(): string {
+		return [this.id, this.cfg.baseUrl, this.cfg.model].join("|");
+	}
+
 	async listVoices(): Promise<TtsVoice[]> {
 		if (!this.cfg.baseUrl) {
 			throw new TtsError("not-configured", "未配置 TTS 端点", { engineId: this.id });

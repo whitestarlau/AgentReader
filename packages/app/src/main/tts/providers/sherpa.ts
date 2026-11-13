@@ -181,6 +181,11 @@ export class SherpaTts implements TtsEngine {
 		};
 	}
 
+	/** Model bundle identity: a different model must not reuse cached audio. */
+	cacheTag(): string {
+		return [this.id, this.cfg.modelDir, this.cfg.vocoder ?? "", this.cfg.kind ?? "auto"].join("|");
+	}
+
 	async listVoices(): Promise<TtsVoice[]> {
 		const handle = await this.load();
 		// Model metadata is unreliable for language (the Chinese matcha bundle

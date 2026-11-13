@@ -99,7 +99,9 @@ interface TtsEngine {
 
 ## 4. 缓存
 
-- **key** = `sha256(engineId | voiceId | rate | pitch | format | text)`，见 `keys.ts`；
+- **key** = `sha256(engineId | 引擎配置指纹 | voiceId | rate | pitch | format | text)`，见 `keys.ts`；
+  指纹来自 `TtsEngine.cacheTag?()`（sherpa 是模型目录 + vocoder，OpenAI 兼容端点是 baseUrl + model）。
+  没有它的话，切换模型后 `engineId`/`voiceId` 都没变，缓存会一直命中旧模型的声音；
 - 落盘在 `{userData}/tts-cache/{key}.{mp3|wav|...}` + 同名 `.json`（存边界与时长）；
 - 读取时 `utimes` 刷新 mtime，`prune()` 按 mtime 淘汰，默认上限 500MB（`ttsCacheMb`）；
 - 写入超过预算 1/4 或 8MB 才触发一次扫描，避免逐句 stat。
