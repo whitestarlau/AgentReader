@@ -11,7 +11,8 @@
 		"build/icon.png",
 		"package.json",
 		"node_modules/sherpa-onnx-node/**",
-		"node_modules/sherpa-onnx-*/**"
+		"node_modules/sherpa-onnx-*/**",
+		"node_modules/ws/**"
 	],
 	"asar": true,
 	"extraResources": [

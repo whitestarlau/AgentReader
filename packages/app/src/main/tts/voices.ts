@@ -11,6 +11,7 @@ export type VoiceSettings = Record<string, string | undefined>;
 
 /** Fallback when an engine has never been configured. */
 const DEFAULTS: Record<string, string> = {
+	edge: "zh-CN-XiaoxiaoNeural",
 	sherpa: "0",
 	mock: "mock-zh",
 	"openai-compatible": "zf_xiaobei",

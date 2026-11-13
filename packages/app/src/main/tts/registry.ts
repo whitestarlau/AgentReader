@@ -37,8 +37,13 @@ export type SynthesisOutcome = {
 	result: TtsResult;
 };
 
+/** How long a failing engine is skipped before being retried. */
+const COOLDOWN_MS = 60_000;
+
 export class TtsRegistry {
 	private readonly engines = new Map<string, TtsEngine>();
+	/** Engines that failed recently; a free endpoint can be down for a while. */
+	private readonly cooldownUntil = new Map<string, number>();
 
 	register(engine: TtsEngine): this {
 		this.engines.set(engine.id, engine);
@@ -94,8 +99,13 @@ export class TtsRegistry {
 	): Promise<SynthesisOutcome> {
 		const attempts: { engineId: string; error: TtsError }[] = [];
 		const tried: string[] = [];
+		const now = Date.now();
+		const known = chain.filter((id) => this.engines.has(id));
+		// Skip engines that just failed, unless that would leave nothing to try.
+		const healthy = known.filter((id) => (this.cooldownUntil.get(id) ?? 0) <= now);
+		const order = healthy.length > 0 ? healthy : known;
 
-		for (const id of chain) {
+		for (const id of order) {
 			const engine = this.engines.get(id);
 			if (!engine) continue;
 			tried.push(id);
@@ -103,12 +113,14 @@ export class TtsRegistry {
 				// Long text is split at sentence boundaries before it reaches the
 				// engine, so every engine only has to honor its own per-call cap.
 				const result = await synthesizeText(engine, req);
+				this.cooldownUntil.delete(id);
 				return { engineId: id, result };
 			} catch (e) {
 				const error = toTtsError(e, id);
 				if (error.kind === "aborted") throw error;
+				if (error.retryable) this.cooldownUntil.set(id, Date.now() + COOLDOWN_MS);
 				attempts.push({ engineId: id, error });
-				const next = nextUsable(chain, id, this.engines);
+				const next = nextUsable(order, id, this.engines);
 				if (next) onFallback?.({ from: id, to: next, error });
 			}
 		}

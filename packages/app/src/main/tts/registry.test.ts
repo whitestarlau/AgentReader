@@ -95,6 +95,30 @@ test("explains an empty chain instead of throwing a generic error", async () => 
 	await assert.rejects(() => registry.synthesize([], req), /没有可用的朗读引擎/);
 });
 
+test("a failing engine is skipped for a while instead of retried every sentence", async () => {
+	const flaky = fakeEngine("a", { fail: "network" });
+	const stable = fakeEngine("b");
+	const registry = new TtsRegistry().register(flaky).register(stable);
+
+	const first = await registry.synthesize(["a", "b"], req);
+	assert.equal(first.engineId, "b");
+	assert.equal(flaky.calls, 1);
+
+	// Within the cooldown window the broken engine is not called again.
+	const second = await registry.synthesize(["a", "b"], req);
+	assert.equal(second.engineId, "b");
+	assert.equal(flaky.calls, 1, "should not retry the failing engine on every sentence");
+	assert.equal(stable.calls, 2);
+});
+
+test("an abort does not put the engine into cooldown", async () => {
+	const aborted = fakeEngine("a", { fail: "aborted" });
+	const stable = fakeEngine("b");
+	const registry = new TtsRegistry().register(aborted).register(stable);
+	await assert.rejects(() => registry.synthesize(["a", "b"], req));
+	assert.equal(stable.calls, 0, "abort is terminal, not a fall-through");
+});
+
 test("collects voices from every engine that answers", async () => {
 	const registry = new TtsRegistry()
 		.register(fakeEngine("a"))

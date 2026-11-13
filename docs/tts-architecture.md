@@ -33,7 +33,8 @@
   tts/cache.ts            内容寻址音频缓存 + LRU
   tts/keys.ts             cache key
   tts/types.ts            TtsEngine 契约、TtsResult、TtsError
-  tts/providers/*         sherpa（本地）/ openai-compatible / mock（edge 待接入）
+  tts/providers/*         edge（免费在线）/ sherpa（本地）/ openai-compatible / mock
+  tts/edge-token.ts       Edge 朗读的 Sec-MS-GEC v2 令牌（CS64 + SHA-256）
   tts/wav.ts              Float32 → 16-bit PCM WAV（本地引擎用）
   tts/catalog.ts          可下载的本地模型清单（URL / 大小 / 许可）
   tts/models.ts           下载 → 校验 → 解包 → 验证 → 删除
@@ -285,16 +286,27 @@ export class MyTts implements TtsEngine {
 3. **Metal / CoreML 对这类模型没有收益**。实测 Kokoro 在 `provider=coreml` 下 RTF 0.88、CPU 0.82，加载还更慢：这些图是动态 shape，绝大多数节点回退到 CPU。Metal 真正有用的场景是重模型（如 llama.cpp-omni 跑 VoxCPM），不是 82M 的 ONNX TTS。
 4. **Electron 禁止 external ArrayBuffer**。sherpa 默认把音频放在外部缓冲区里返回，纯 Node 允许、Electron 直接拒绝：同步接口报 `External buffers are not allowed`，异步接口被包装成完全看不出原因的 **`TTS settlement failed`**。调用时必须传 `enableExternalBuffer: false`。这个坑只有在 Electron 里才暴露，纯 Node 单测全绿也发现不了 —— 所以补了 `npm run test:electron`（见下）。
 
+**Edge 朗读（免费在线）**
+
+`edge` 引擎直接对接微软 Edge「朗读」用的接口：无需 Key、中文音色好（晓晓/云希/云健…），还带字级边界。两个工程难点已解决：
+
+- **鉴权**：`Sec-MS-GEC v2`（Edge 版权行 + Windows 时间戳的 CS64 校验和，再拼 SHA-256），时间戳必须用 BigInt 保证精度；本地时钟跑偏时用 403 响应的 `Date` 头校正后重试一次。
+- **传输**：该接口需要自定义 `Origin`/`User-Agent` 头，Node 自带 WebSocket 不支持 → 用 `ws`（无依赖）并在 Vite 里 external，打包时随 `node_modules/ws` 分发。
+- **风险控制**：它不是正式 API，随时可能变。所以注册表加了**熔断**：某个引擎失败后 60 秒内跳过它，避免每句话都白等一次超时；Edge 挂掉就直接用本地 MeloTTS。
+
+实测（本机）：一次中文合成 1.1s 出 3.8s 音频（含建连），返回 8 个字/句边界；音色列表 322 个，中文排在最前。
+
 **待做（按建议顺序）**
 1. **Edge 适配器**：免费默认层。微软已把鉴权升级到 `Sec-MS-GEC v2`（自定义 CS64 校验 + 服务器时钟校正，`Sec-MS-GEC-Version=2-143.0.3650.96`），手写 v1 token 会被 403；`msedge-tts` 依赖 axios + ws + buffer/stream polyfill，而主进程是**全打包**的，硬塞风险高。两条路：手写 ~120 行 WS 客户端 + 移植 v2 token，或调整打包策略（`files` 加 node_modules + external）。
 2. **播放器**：句子队列、预取 2–3 句、自动翻页、断点续听、句子高亮（PDF textLayer / EPUB CFI）。
 3. **设置页「朗读」分区**：引擎、音色、语速、缓存清理、试听。
 4. **Azure / Qwen 适配器**：正版、稳定、字级/句级边界。
-5. **模型清单扩充**：目前两个模型；后续可加 Kokoro 中文（适配器还没接 kokoro 分支）与更多女声/男声。
+5. **字级高亮**：Edge 已返回 word boundaries，播放器目前仍按句高亮，可以接上做卡拉OK式跟随。
+6. **模型清单扩充**：目前两个模型；后续可加 Kokoro 中文（适配器还没接 kokoro 分支）与更多女声/男声。
 
 ## 11. 验证
 
-- 单测 54 项：切句 9、管线 4、注册表 6、缓存 4、mock 2、OpenAI 兼容适配器 5、WAV 2、sherpa 9、模型管理 7（含真实 tar.bz2 的下载/解包/校验与取消、截断失败）、播放器状态机 6（按句推进、预取、失败转错误态、暂停恢复、停止清高亮）；其中 1 项 sherpa 集成测试需 `SHERPA_TTS_MODEL_DIR`，默认跳过；全量 66 项通过 65、跳过 1；
+- 单测 60 项：切句 9、管线 4、注册表 6、缓存 4、mock 2、OpenAI 兼容适配器 5、WAV 2、sherpa 9、模型管理 7、播放器状态机 6、Edge 令牌 4、注册表熔断 2；其中 1 项 sherpa 集成测试需 `SHERPA_TTS_MODEL_DIR`，默认跳过；全量 66 项通过 65、跳过 1；
 - `npm run typecheck --workspace=@agentreader/app` 通过；
 - `npm run build --workspace=@agentreader/app` 通过（主进程 bundle ≈168KB）。
 - `npm run test:electron --workspace=@agentreader/app`（需 `SHERPA_TTS_MODEL_DIR` 指向解包模型）在真实 Electron 里跑一次合成：3.34s 音频 / 1.36s 合成，通过。这是唯一能覆盖「外部缓冲区」这类宿主差异的测试。

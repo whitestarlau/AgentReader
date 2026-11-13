@@ -39,6 +39,10 @@
 - [x] 实测 CoreML/Metal：Kokoro 在 coreml provider 下 RTF 0.88、CPU 0.82（加载更慢），动态 shape 导致节点回退 → 82M ONNX 模型上 Metal 无收益
 - [x] 按体验结论收敛模型目录：只保留 MeloTTS（删除 Kokoro / Kokoro fp32 / Matcha / AISHELL-3 条目）；适配器仍支持这些家族，用户手动放 bundle 时可用
 - [x] VoxCPM-0.5B 实测（M1 / PyTorch MPS）：加载 7.2s、输出 16kHz、RTF 2.39（10 步）/1.53（5 步）；llama.cpp-omni 只有 2B 的 GGUF（M4 Pro Metal RTF 1.76），没有 0.5B → 该方案不满足实时阅读
+- [x] 接入 Edge 朗读（免费在线）：`edge-token.ts` 移植 Sec-MS-GEC v2（CS64 + SHA-256，BigInt 保时间戳精度）、`providers/edge.ts` 用 `ws` 完成握手/SSML/音频与字级边界解析；403 时钟偏移自动校正重试
+- [x] 注册表加熔断：引擎失败后 60 秒内跳过，避免免费接口不可用时每句都等一次超时；Edge 失败自动落到本地 MeloTTS
+- [x] 打包：`ws` 在 Vite 里 external、随 `node_modules/ws` 分发（与 sherpa 同一套做法）
+- [x] 实测：一次中文合成 1.1s 出 3.8s 音频（含建连），8 个字/句边界，322 个音色中文优先；Electron 内 `import("ws")` 正常
 - [ ] 待做：真机点击验收（朗读按钮、高亮跟随、自动翻页音画衔接）、EPUB 分页模式下的跨屏高亮、Edge 适配器（手写 WS 客户端 + 移植 v2 token）、Azure/Qwen 适配器
 
 ## 2026-11-03 对话导出（Markdown / HTML / JSON）

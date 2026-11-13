@@ -17,7 +17,17 @@ export default defineConfig({
 		electron({
 			main: {
 				entry: resolve(__dirname, "src/main/index.ts"),
-				vite: { build: { outDir: resolve(__dirname, "dist-electron"), rollupOptions: { output: { entryFileNames: "main.js" } } } },
+				vite: {
+					build: {
+						outDir: resolve(__dirname, "dist-electron"),
+						rollupOptions: {
+							// `ws` is a Node library (with optional native speedups); keep it
+							// out of the bundle and ship it as a dependency instead.
+							external: ["ws"],
+							output: { entryFileNames: "main.js" },
+						},
+					},
+				},
 			},
 			preload: {
 				input: resolve(__dirname, "src/preload/index.ts"),

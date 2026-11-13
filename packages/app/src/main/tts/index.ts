@@ -25,6 +25,7 @@ import {
 	modelDir,
 	removeModel,
 } from "./models.ts";
+import { EdgeTts } from "./providers/edge.ts";
 import { MockTts } from "./providers/mock.ts";
 import { OpenAiCompatibleTts } from "./providers/openai-compatible.ts";
 import { type SherpaModelKind, SherpaTts } from "./providers/sherpa.ts";
@@ -69,6 +70,10 @@ function ttsCache(): TtsCache {
 function buildRegistry(): TtsRegistry {
 	const settings = readSettings();
 	const registry = new TtsRegistry();
+
+	// Free tier first: best voices for nothing, with the local engine as fallback
+	// when Microsoft's endpoint is unavailable (the registry circuit-breaks it).
+	registry.register(new EdgeTts());
 
 	const endpoint = settings.ttsEndpoint?.trim();
 	if (endpoint) {
