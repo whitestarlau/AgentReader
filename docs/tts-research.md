@@ -155,6 +155,18 @@ Azure 还有一个独特优势：一次请求整段 SSML，句间插入 `<bookma
 | F5-TTS | 0.3B | ⛔ CC-BY-NC | 1.53 | 76.0 | — | ❌ |
 | 现有 MeloTTS/AISHELL-3/Matcha | ~0.1B | MIT / 非商用 | 不入榜（非零样本） | — | — | ✅ sherpa |
 
+**本机实测（M1 / Mac 15.7 / torch 2.15 MPS）**：
+
+| 项目 | 结果 |
+|---|---|
+| VoxCPM-0.5B 加载 | 7.2s（MPS，float32） |
+| 输出采样率 | **16 kHz** |
+| RTF（10 timesteps） | **2.39** |
+| RTF（5 timesteps） | **1.53** |
+| llama.cpp-omni | 只有 VoxCPM2(2B) 的 GGUF，没有 0.5B；2B 在 M4 Pro Metal 上是 1.76 |
+
+→ 0.5B 在 M1 上仍慢于实时，且 16kHz 带宽比 Kokoro 的 24kHz 更窄；Windows 纯 CPU 只会更慢。**结论：这条路目前不适合「按了就能听」的阅读场景**，只能作为「先下载章节再听」或云端/GPU 方案。
+
 关键事实：
 
 - **VoxCPM 的 0.6B 版本质量已经压过 CosyVoice2 和 F5**，且 Apache-2.0 可商用；还支持「用一句话描述音色」（Voice Design）和零样本克隆。

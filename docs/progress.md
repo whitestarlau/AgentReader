@@ -37,6 +37,8 @@
 - [x] 修复 Kokoro 音色映射错误：v1.1（103 音色）与 v1.0（53 音色）sid 布局不同，之前把 v1.1 的中文男声（58–102）标成了「其他语言」、把 45–52 标成了 v1.0 的名字；现按说话人总数分流，中文 100 个（55 女 + 45 男）排在最前
 - [x] 新增 Kokoro fp32 高保真版（365MB）作为对比项，用于判断杂音是否来自 int8 量化
 - [x] 实测 CoreML/Metal：Kokoro 在 coreml provider 下 RTF 0.88、CPU 0.82（加载更慢），动态 shape 导致节点回退 → 82M ONNX 模型上 Metal 无收益
+- [x] 按体验结论收敛模型目录：只保留 MeloTTS（删除 Kokoro / Kokoro fp32 / Matcha / AISHELL-3 条目）；适配器仍支持这些家族，用户手动放 bundle 时可用
+- [x] VoxCPM-0.5B 实测（M1 / PyTorch MPS）：加载 7.2s、输出 16kHz、RTF 2.39（10 步）/1.53（5 步）；llama.cpp-omni 只有 2B 的 GGUF（M4 Pro Metal RTF 1.76），没有 0.5B → 该方案不满足实时阅读
 - [ ] 待做：真机点击验收（朗读按钮、高亮跟随、自动翻页音画衔接）、EPUB 分页模式下的跨屏高亮、Edge 适配器（手写 WS 客户端 + 移植 v2 token）、Azure/Qwen 适配器
 
 ## 2026-11-03 对话导出（Markdown / HTML / JSON）
