@@ -695,7 +695,7 @@ export function EpubViewer({
 			return;
 		}
 		const hash = target.indexOf("#");
-		if (hash < 0 || flowModeRef.current !== "paged") {
+		if (hash < 0) {
 			const manager = getManager(rendition);
 			if (manager) manager.ignore = false;
 			updateLocationRef.current(true);
@@ -706,8 +706,40 @@ export function EpubViewer({
 			id = decodeURIComponent(id);
 		} catch {}
 		if (!id) return;
-		// Let the iframe finish its column layout before measuring the anchor.
+		// Let the iframe finish its layout before measuring the anchor.
 		await new Promise((r) => window.setTimeout(r, 80));
+		if (flowModeRef.current === "scrolled") {
+			// The continuous manager's `moveTo(target)` is unreliable for deep
+			// anchors: epub.js may scroll to the section start (or an arbitrary
+			// offset) instead. Locate the anchor ourselves and scroll its section
+			// container to it.
+			const manager = getManager(rendition);
+			const container = manager?.container;
+			if (container) {
+				const containerRect = container.getBoundingClientRect();
+				for (const content of (rendition.getContents?.() ?? []) as unknown as {
+					document?: Document;
+				}[]) {
+					const doc = content.document;
+					const el = doc?.getElementById(id);
+					const frame = doc?.defaultView?.frameElement as HTMLElement | null;
+					if (!el || !frame) continue;
+					const frameRect = frame.getBoundingClientRect();
+					if (frameRect.height < 2) continue;
+					const top = Math.max(
+						0,
+						container.scrollTop + (frameRect.top + el.getBoundingClientRect().top - containerRect.top) - 12,
+					);
+					manager.ignore = false;
+					if (manager.scrollTo) manager.scrollTo(0, top, false);
+					else container.scrollTo({ top, behavior: "auto" });
+					break;
+				}
+			}
+			if (manager) manager.ignore = false;
+			updateLocationRef.current(true);
+			return;
+		}
 		const hostRect = ref.current?.parentElement?.getBoundingClientRect();
 		let found = false;
 		let visible = false;
