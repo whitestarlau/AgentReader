@@ -147,7 +147,11 @@ export class ReadAloud {
 		const audio = this.opts.createAudio ? this.opts.createAudio() : new Audio();
 		audio.preload = "auto";
 		audio.onended = () => {
-			if (this.state.status === "paused") return;
+			// A stopped session clears its queue, but the media element can still
+			// fire `ended` afterwards (pause/reload races). Only a genuinely
+			// playing sentence may advance the reader — otherwise stopping read-
+			// aloud would silently flip to the next page/section.
+			if (this.state.status !== "playing") return;
 			const next = this.index + 1;
 			if (next < this.segments.length) void this.startAt(next);
 			else this.opts.onEnd();

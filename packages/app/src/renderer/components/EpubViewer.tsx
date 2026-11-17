@@ -8,7 +8,7 @@ import {
 	highlightRange,
 	offsetAtPoint,
 	rangeForMulti,
-	revealRange,
+	revealRangeIn,
 	type MultiText,
 	type VisibleArea,
 } from "../readable.ts";
@@ -882,6 +882,52 @@ export function EpubViewer({
 		reader.stop();
 	}, [currentReadDocs, loadReadText]);
 
+	/**
+	 * Follow the voice without moving the app shell.
+	 *
+	 * Paged EPUB is a horizontal strip whose page width is `layout.delta`.
+	 * `scrollIntoView()` used to move that strip by an arbitrary offset (e.g.
+	 * 547px into a 730px page), so both columns were clipped; it could also
+	 * scroll the outer document. Snap to whole pages instead, and leave a
+	 * sentence that is already on screen alone. Continuous mode only scrolls
+	 * the section container vertically.
+	 */
+	const revealReadRange = useCallback((range: Range) => {
+		const manager = getManager(renditionRef.current);
+		const container = manager?.container;
+		if (!container) return;
+		if (flowModeRef.current === "scrolled") {
+			revealRangeIn(container, range, { block: "center", inline: "none" });
+			return;
+		}
+		const frame = range.startContainer.ownerDocument?.defaultView?.frameElement as HTMLElement | null;
+		if (!frame) {
+			revealRangeIn(container, range, { block: "nearest", inline: "none" });
+			return;
+		}
+		const layout = manager.layout;
+		const delta = layout?.delta && layout.delta > 0 ? layout.delta : container.clientWidth || 1;
+		const containerRect = container.getBoundingClientRect();
+		const frameRect = frame.getBoundingClientRect();
+		const rect = range.getBoundingClientRect();
+		// The range rect is in the iframe viewport; translate it into the
+		// strip's content coordinate so it is independent of the scroll offset.
+		const left = container.scrollLeft + (frameRect.left - containerRect.left) + rect.left;
+		const right = left + rect.width;
+		const group = Math.max(0, Math.floor(left / delta));
+		const current = container.scrollLeft;
+		const currentGroup = Math.floor(current / delta);
+		const visible = left >= current + 2 && right <= current + container.clientWidth - 2;
+		const aligned = Math.abs(current - currentGroup * delta) < 1;
+		if (visible && aligned && group === currentGroup) return;
+		const maxOffset = Math.max(0, container.scrollWidth - container.clientWidth);
+		const target = Math.min(maxOffset, group * delta);
+		if (Math.abs(target - current) < 1) return;
+		manager.ignore = false;
+		if (manager.scrollTo) manager.scrollTo(target, 0, false);
+		else container.scrollTo({ left: target, top: 0, behavior: "auto" });
+	}, []);
+
 	const ensureReader = useCallback(() => {
 		if (readerRef.current) return readerRef.current;
 		const reader = new ReadAloud({
@@ -897,7 +943,7 @@ export function EpubViewer({
 					if (doc !== activeDoc) highlightRange(doc, null);
 				}
 				if (activeDoc) highlightRange(activeDoc, range);
-				if (range) revealRange(range);
+				if (range) revealReadRange(range);
 			},
 			onEnd: () => {
 				void advanceSection();
@@ -905,7 +951,7 @@ export function EpubViewer({
 		});
 		readerRef.current = reader;
 		return reader;
-	}, [advanceSection]);
+	}, [advanceSection, revealReadRange]);
 
 	/**
 	 * Visible slice of an iframe, in that iframe's own coordinate space.

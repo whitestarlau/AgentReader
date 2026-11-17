@@ -14,7 +14,7 @@ import {
 	highlightRange,
 	offsetAtPoint,
 	rangeFor,
-	revealRange,
+	revealRangeIn,
 	type TextMap,
 } from "../readable.ts";
 import { ReadBar } from "./ReadBar.tsx";
@@ -1371,7 +1371,7 @@ export function PdfViewer({
 				const map = readMapRef.current;
 				const range = segment && map ? rangeFor(map, segment.start, segment.end) : null;
 				highlightRange(document, range);
-				if (range) revealRange(range);
+				if (range) revealRangeIn(stageRef.current, range, { block: "center", inline: "nearest" });
 			},
 			onEnd: () => {
 				void advanceRead();

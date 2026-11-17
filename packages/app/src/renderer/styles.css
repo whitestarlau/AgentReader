@@ -68,6 +68,15 @@ body,
 	height: 100%;
 }
 
+html {
+	/* The shell is exactly one viewport tall. PDF.js appends a hidden canvas to
+	   <body>, so the document can otherwise end up 18px taller; any focus or
+	   scroll-into-view would then shift the whole app and clip the chrome.
+	   `clip` (not just hidden) rejects programmatic scrolling too. */
+	overflow: hidden;
+	overflow: clip;
+}
+
 body {
 	margin: 0;
 	font-family: var(--font-ui);
@@ -77,6 +86,7 @@ body {
 	color: var(--vscode-fg);
 	-webkit-font-smoothing: antialiased;
 	overflow: hidden;
+	overflow: clip;
 }
 
 ::-webkit-scrollbar {
@@ -894,6 +904,10 @@ textarea::placeholder {
 	min-height: 0;
 	position: relative;
 	overflow: auto;
+	/* Keep the fit-width scale stable when the toolbar/page count changes the
+	   scrollbar, and while read-aloud hides it (`.reading-locked`). Without a
+	   reserved gutter the page width jumps whenever the scrollbar appears. */
+	scrollbar-gutter: stable;
 	background: #1a1a1a;
 	outline: none;
 	overscroll-behavior: contain;

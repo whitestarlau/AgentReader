@@ -1,5 +1,15 @@
 # 进度记录
 
+## 2026-11-17 修复朗读跟读导致的阅读区错位 / 裁切
+
+- [x] 复现：在真实 Electron 窗口里打开《陈老师课程合集》分页 EPUB 并朗读，`.epub-container` 的 `scrollLeft` 从 0 变成 547.5（页宽 730），左右两栏都被切掉；PDF 朗读时 `window.scrollY` 变成 18，整个 `.app` 上移，标题栏与状态栏被裁切，停止朗读后也不复位
+- [x] 根因：高亮跟读用 `Element.scrollIntoView({ block:"center", inline:"center" })`，它会滚动所有可滚动祖先。EPUB iframe 的 Range 会把分页容器推到非整页偏移；PDF.js 又往 `<body>` 追加了一个 0×0 的 `hiddenCanvasElement`，让文档比视口高 18px，于是 `scrollIntoView` 顺手滚动了应用文档
+- [x] 修复：`readable.ts` 新增 `revealRangeIn()`，只滚调用方指定的容器，不再用 `scrollIntoView`；PDF 滚 `.pdf-stage`，连续滑动 EPUB 滚 `.epub-container`，分页 EPUB 用 `layout.delta` 对齐整页（句子已在当前屏时不动）
+- [x] 加固：`html` / `body` 使用 `overflow: clip`，库或焦点引起的程序化滚动不能再移动应用外壳；`.pdf-stage` 加 `scrollbar-gutter: stable`，朗读锁定 `overflow:hidden` 时 fit-width 页宽不再跳动
+- [x] 顺带修复停止朗读后的迟到 `ended` 事件：旧逻辑在 `segments` 已清空时仍会触发 `onEnd`，导致停止后偷偷翻到下一页/下一节；现在只有 `playing` 状态才推进
+- [x] 单测 11 项（新增 `revealOffset` 3 项、`revealRangeIn` 只滚单容器 2 项、停止后迟到 ended 1 项），全量 97 项通过 96（跳过 1）
+- [x] 回归：Electron 实测分页 EPUB 朗读推进到第 2 屏时 `scrollLeft` 为 730 的整数倍、无半页偏移；连续滑动 EPUB 只滚纵向；PDF 朗读前后 `scrollY=0`、`.app` 顶边为 0、朗读锁定期间 `.pdf-stage.clientWidth` 与页宽不变
+
 ## 2026-11-07 朗读（TTS）方案调研与抽象层
 
 - [x] 调研：跨平台 + 拟真两个约束下先否掉了系统语音（macOS AVSpeech / Windows SAPI / Linux espeak 音质断代）和纯端侧（M1 实测 MeloTTS RTF 0.24、Kokoro 0.83，听感仍明显低于云端）；结论是云端神经 TTS 为主、端侧/缓存为离线档。详见 `docs/tts-research.md`（含 6 种离线形态、价格与 2026 模型清单）与 `docs/research/` 下的原始笔记

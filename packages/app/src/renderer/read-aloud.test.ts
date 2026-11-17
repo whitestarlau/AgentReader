@@ -166,3 +166,14 @@ test("empty text is not readable", () => {
 	const { reader } = makeReader(async () => okReply());
 	assert.equal(reader.load("   \n  "), false);
 });
+
+test("a late ended event after stop does not advance the reader", async () => {
+	const { reader, audio, endedCount } = makeReader(async () => okReply());
+	reader.load("一。二。");
+	reader.play();
+	await flush();
+	reader.stop();
+	audio.fireEnded();
+	assert.equal(endedCount(), 0, "stopping must not turn the page behind the user's back");
+	assert.equal(reader.getState().status, "idle");
+});

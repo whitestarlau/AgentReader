@@ -295,10 +295,110 @@ export function offsetAtPoint(doc: Document, map: TextMap, x: number, y: number)
 	return entry.start + Math.min(offset, entry.node.data.length);
 }
 
-/** Bring the sentence into view without stealing the user's selection. */
-export function revealRange(range: Range | null): void {
-	if (!range) return;
-	const node = range.startContainer;
-	const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-	el?.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+export type RevealBlock = "center" | "nearest";
+export type RevealInline = "center" | "nearest" | "none";
+
+export type RevealOptions = {
+	block?: RevealBlock;
+	inline?: RevealInline;
+	/** Keep at least this many pixels of the target away from the edge. */
+	margin?: number;
+};
+
+/**
+ * New scroll offset for one axis, given a target inside a scroll container.
+ *
+ * `nearest` only moves when the target is outside the padded viewport. `center`
+ * additionally recenters after a jump, but never for a target that is already
+ * comfortably visible — otherwise every sentence would nudge the page.
+ */
+export function revealOffset(input: {
+	targetStart: number;
+	targetSize: number;
+	viewStart: number;
+	viewSize: number;
+	block: RevealBlock;
+	margin: number;
+}): number {
+	const { targetStart, targetSize, viewStart, viewSize, block, margin } = input;
+	const pad = Math.min(Math.max(0, margin), Math.floor(viewSize / 3));
+	const viewEnd = viewStart + viewSize;
+	const targetEnd = targetStart + targetSize;
+	if (targetStart >= viewStart + pad && targetEnd <= viewEnd - pad) return viewStart;
+	if (block === "nearest") {
+		if (targetStart < viewStart + pad) return targetStart - pad;
+		if (targetEnd > viewEnd - pad) return targetEnd - viewSize + pad;
+		return viewStart;
+	}
+	// Put the sentence above the middle so the next few lines stay readable.
+	return targetStart - Math.max(0, Math.min(viewSize * 0.32, (viewSize - targetSize) / 2));
+}
+
+type ViewportRect = { top: number; left: number; width: number; height: number };
+
+/** Range rect in the top document's viewport, through a same-origin iframe. */
+function rangeViewportRect(range: Range): ViewportRect {
+	const rect = range.getBoundingClientRect();
+	const doc = range.startContainer.ownerDocument;
+	const frame = doc?.defaultView?.frameElement as HTMLElement | null;
+	if (!frame) return rect;
+	const frameRect = frame.getBoundingClientRect();
+	return {
+		top: frameRect.top + rect.top,
+		left: frameRect.left + rect.left,
+		width: rect.width,
+		height: rect.height,
+	};
+}
+
+/**
+ * Bring a range into view by scrolling **one known container**.
+ *
+ * `Element.scrollIntoView()` is deliberately not used: it walks every scrollable
+ * ancestor. Inside an EPUB iframe it scrolls the paginated container to an
+ * arbitrary half-page offset (content clipped on both sides), and in PDF it can
+ * scroll the app document itself (the shell shifts and the title/status bars are
+ * cut off). Both are visible regressions while read-aloud advances sentences.
+ */
+export function revealRangeIn(
+	container: HTMLElement | null,
+	range: Range | null,
+	opts: RevealOptions = {},
+): void {
+	if (!container || !range) return;
+	const rect = rangeViewportRect(range);
+	const box = container.getBoundingClientRect();
+	const margin = opts.margin ?? 24;
+	const block = opts.block ?? "center";
+	const inline = opts.inline ?? "nearest";
+
+	const targetTop = container.scrollTop + (rect.top - box.top);
+	const targetLeft = container.scrollLeft + (rect.left - box.left);
+
+	const nextTop = revealOffset({
+		targetStart: targetTop,
+		targetSize: rect.height,
+		viewStart: container.scrollTop,
+		viewSize: container.clientHeight,
+		block,
+		margin,
+	});
+	let nextLeft = container.scrollLeft;
+	if (inline !== "none") {
+		nextLeft = revealOffset({
+			targetStart: targetLeft,
+			targetSize: rect.width,
+			viewStart: container.scrollLeft,
+			viewSize: container.clientWidth,
+			block: inline,
+			margin,
+		});
+	}
+
+	const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+	const maxLeft = Math.max(0, container.scrollWidth - container.clientWidth);
+	const top = Math.min(maxTop, Math.max(0, nextTop));
+	const left = Math.min(maxLeft, Math.max(0, nextLeft));
+	if (Math.abs(top - container.scrollTop) < 1 && Math.abs(left - container.scrollLeft) < 1) return;
+	container.scrollTo({ top, left, behavior: "auto" });
 }
