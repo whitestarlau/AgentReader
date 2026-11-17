@@ -997,6 +997,31 @@ textarea::placeholder {
 	overflow: hidden;
 	background: #fff;
 }
+/* EPUB paged turn: the strip slides, with a soft shadow on the leading edge.
+   The actual spread is swapped in the same paint the animation ends. */
+.epub-viewport::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: 7;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 0.14s ease;
+}
+.epub-viewport.turn-next::after {
+	opacity: 1;
+	background: linear-gradient(
+		to right,
+		rgba(0, 0, 0, 0.18),
+		rgba(0, 0, 0, 0) 22%,
+		rgba(255, 255, 255, 0) 74%,
+		rgba(0, 0, 0, 0.06)
+	);
+}
+.epub-viewport.turn-prev::after {
+	opacity: 1;
+	background: linear-gradient(to left, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0) 22%);
+}
 .epub-loading {
 	position: absolute;
 	inset: 0;

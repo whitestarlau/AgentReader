@@ -1,5 +1,12 @@
 # 进度记录
 
+## 2026-11-17 EPUB 翻页模式滑动动画
+
+- [x] 分页 EPUB 翻页改用滑动动画：在 `.epub-container` 上用 Web Animations 做 `translate3d`（320ms ease-out），动画结束的同一帧提交 `scrollLeft` 并清除 transform，避免白闪/回弹；动画期间忽略重复翻页
+- [x] 支持工具栏上一页/下一页、方向键、空格；按 `layout.delta` 翻一屏（单/双栏通用）；section 边界退回 epub.js 换节并短暂显示阴影；尊重 `prefers-reduced-motion`
+- [x] 翻页阴影：`.epub-viewport::after` 按 `turn-next` / `turn-prev` 渐变，不改变排版
+- [x] 验证 Electron 实测：动画中 `scrollLeft` 不变、transform 在动；结束后 `scrollLeft` 730，上一页回到 0；快速双击只翻一页；typecheck / build 通过
+
 ## 2026-11-17 修复 EPUB 目录跳转落到文件开头 / 上一章尾部
 
 - [x] 复现（《三国志集解》）：TOC 多个条目共享一个 spine 文件，例如「卷二」锚点在 `index_split_006.html` 末尾。侧边栏目录此前只保存 `spine.index` 并丢掉 `#fragment`，点「卷二」实际跳到该文件开头（216至220年，属于上一章尾部）；工具栏目录下拉直接使用 `href#anchor`，却能落到另一页

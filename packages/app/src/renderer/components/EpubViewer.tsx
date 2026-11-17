@@ -264,6 +264,9 @@ export function EpubViewer({
 	const [readRate, setReadRate] = useState(1);
 	const readActiveRef = useRef(false);
 	const readActive = readState !== null && readState.status !== "idle" && readState.status !== "error";
+	const [turning, setTurning] = useState<"next" | "prev" | null>(null);
+	const turnAnimRef = useRef<Animation | null>(null);
+	const turnPageRef = useRef<(dir: 1 | -1) => void>(() => {});
 	// Bumped whenever the user starts/stops a session. Async chapter advances
 	// must abort if this changed while they were awaiting display/timers.
 	const readSessionRef = useRef(0);
@@ -354,6 +357,69 @@ export function EpubViewer({
 			manager.scrollTo(Math.min(aligned, maxOffset), 0, true);
 		})();
 	}, []);
+
+	/**
+	 * Slide one spread, then commit the real `scrollLeft` in the same paint.
+	 *
+	 * epub.js moves pages by assigning `scrollLeft` (instant). We animate a
+	 * transform on the whole strip, which shows the neighbouring spread sliding
+	 * in, and swap the two at the end so scroll/page state stays authoritative.
+	 */
+	const turnPage = useCallback((dir: 1 | -1) => {
+		const rendition = renditionRef.current;
+		if (!rendition || flowModeRef.current !== "paged") return;
+		const manager = getManager(rendition);
+		const container = manager?.container;
+		if (!container) {
+			void (dir > 0 ? rendition.next() : rendition.prev());
+			return;
+		}
+		if (turnAnimRef.current) return;
+		if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+			void (dir > 0 ? rendition.next() : rendition.prev());
+			return;
+		}
+		const step =
+			manager?.layout?.delta && manager.layout.delta > 0 ? manager.layout.delta : container.clientWidth;
+		if (!step || step <= 0) return;
+		const current = container.scrollLeft;
+		const max = Math.max(0, container.scrollWidth - container.clientWidth);
+		const target = Math.min(max, Math.max(0, Math.round(current / step) * step + dir * step));
+		setTurning(dir > 0 ? "next" : "prev");
+		if (Math.abs(target - current) < 1) {
+			// Section boundary: let epub.js replace the rendered section. A short
+			// shadow fade hides the snap without pretending we can slide a page
+			// that is not in the current strip.
+			void (dir > 0 ? rendition.next() : rendition.prev());
+			window.setTimeout(() => setTurning(null), 220);
+			return;
+		}
+		const distance = target - current;
+		const anim = container.animate(
+			[
+				{ transform: "translate3d(0, 0, 0)" },
+				{ transform: `translate3d(${-distance}px, 0, 0)` },
+			],
+			{ duration: 320, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)", fill: "forwards" },
+		);
+		turnAnimRef.current = anim;
+		anim.onfinish = () => {
+			if (turnAnimRef.current !== anim) return;
+			turnAnimRef.current = null;
+			// Commit the scroll and drop the transform in one task, so the browser
+			// paints the final spread exactly once (no white flash / snap back).
+			container.scrollLeft = target;
+			anim.cancel();
+			setTurning(null);
+		};
+		anim.oncancel = () => {
+			if (turnAnimRef.current === anim) {
+				turnAnimRef.current = null;
+				setTurning(null);
+			}
+		};
+	}, []);
+	turnPageRef.current = turnPage;
 
 	/** Switch between paginated and continuous scrolling; the load effect rebuilds the rendition. */
 	const applyFlowMode = useCallback(
@@ -524,8 +590,8 @@ export function EpubViewer({
 						else if (e.key === "End") { e.preventDefault(); const container = getManager(rendition)?.container; if (container) container.scrollTop = container.scrollHeight; }
 						return;
 					}
-					if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") { e.preventDefault(); rendition.next(); }
-					else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); rendition.prev(); }
+					if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") { e.preventDefault(); turnPageRef.current(1); }
+					else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); turnPageRef.current(-1); }
 				});
 			};
 			// Dismiss the floating selection menu when the user clicks elsewhere in
@@ -642,6 +708,7 @@ export function EpubViewer({
 					lastHeight = height;
 					const at = captureLocation(rendition, flow);
 					if (scrolled) {
+						turnAnimRef.current?.cancel();
 						// display(href) alone reuses the old iframe width. `resize()` rebuilds
 						// it at the new width; restore by CFI so the same text stays at the
 						// top after the column width changes (a pixel offset would drift).
@@ -727,6 +794,15 @@ export function EpubViewer({
 		appliedGotoRef.current = null;
 	}, [docId]);
 
+	useEffect(
+		() => () => {
+			turnAnimRef.current?.cancel();
+			turnAnimRef.current = null;
+			setTurning(null);
+		},
+		[docId, flowMode],
+	);
+
 	useEffect(() => {
 		if (!layoutSignal) return;
 		const t = window.setTimeout(() => reflowRef.current(), 140);
@@ -742,6 +818,9 @@ export function EpubViewer({
 	 * resolves the anchor correctly; retry once if the anchor is not on screen.
 	 */
 	const displayTarget = useCallback(async (target: string, label?: string) => {
+		// A TOC jump during a page-turn animation wins; otherwise the pending
+		// transform would move the page after the jump commits.
+		turnAnimRef.current?.cancel();
 		const navToken = ++tocNavRef.current;
 		const rendition = renditionRef.current;
 		if (!rendition) return;
@@ -996,8 +1075,8 @@ export function EpubViewer({
 				else if (e.key === "End") { e.preventDefault(); container.scrollTop = container.scrollHeight; }
 				return;
 			}
-			if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") { e.preventDefault(); renditionRef.current?.next(); }
-			else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); renditionRef.current?.prev(); }
+			if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") { e.preventDefault(); turnPageRef.current(1); }
+			else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); turnPageRef.current(-1); }
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
@@ -1279,7 +1358,7 @@ export function EpubViewer({
 				<button
 					type="button"
 					className="icon-btn"
-					onClick={() => (flowMode === "scrolled" ? stepChapter(-1) : renditionRef.current?.prev())}
+					onClick={() => (flowMode === "scrolled" ? stepChapter(-1) : turnPage(-1))}
 					disabled={atStart || readActive}
 					title="上一章"
 					style={{ width: "auto", padding: "0 8px" }}
@@ -1289,7 +1368,7 @@ export function EpubViewer({
 				<button
 					type="button"
 					className="icon-btn"
-					onClick={() => (flowMode === "scrolled" ? stepChapter(1) : renditionRef.current?.next())}
+					onClick={() => (flowMode === "scrolled" ? stepChapter(1) : turnPage(1))}
 					disabled={atEnd || readActive}
 					title="下一章"
 					style={{ width: "auto", padding: "0 8px" }}
@@ -1382,7 +1461,7 @@ export function EpubViewer({
 					</select>
 				)}
 			</div>
-			<div className="epub-viewport">
+			<div className={`epub-viewport${turning ? ` turn-${turning}` : ""}`}>
 				<div ref={ref} className="epub-viewport-inner" />
 				{readState && readState.status !== "idle" && (
 					<ReadBar
