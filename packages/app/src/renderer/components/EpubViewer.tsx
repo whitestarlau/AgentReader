@@ -1175,8 +1175,38 @@ export function EpubViewer({
 				prevPage = pageAt(entry.end - 1) ?? startPage;
 			}
 		}
-		return Array.from(breaks)
-			.filter((n) => n > 0 && n < multi.text.length)
+		// Do not cut TTS mid-word at the exact column boundary. Move each
+		// boundary to the nearest punctuation (prefer forward, i.e. the first
+		// comma/period after the page turn), which keeps the pause natural; if
+		// there is no punctuation nearby, drop the break rather than forcing a
+		// robotic mid-sentence split.
+		const text = multi.text;
+		const punctuation = new Set(["，", "、", ",", "：", ":", "；", ";", "—", "－", "。", "！", "？", "!", "?", "…", "\n"]);
+		const closers = new Set(["」", "』", "”", "’", "）", ")", "]", "】", "》", "〉", "»"]);
+		const adjusted: number[] = [];
+		for (const offset of Array.from(breaks).sort((a, b) => a - b)) {
+			let cut = -1;
+			const forwardEnd = Math.min(text.length, offset + 48);
+			for (let i = offset; i < forwardEnd; i++) {
+				if (punctuation.has(text[i])) {
+					cut = i + 1;
+					break;
+				}
+			}
+			if (cut < 0) {
+				for (let i = offset - 1; i >= Math.max(0, offset - 24); i--) {
+					if (punctuation.has(text[i])) {
+						cut = i + 1;
+						break;
+					}
+				}
+			}
+			if (cut < 0) continue;
+			while (cut < text.length && closers.has(text[cut])) cut++;
+			adjusted.push(cut);
+		}
+		return Array.from(new Set(adjusted))
+			.filter((n) => n > 0 && n < text.length)
 			.sort((a, b) => a - b);
 	}, []);
 
