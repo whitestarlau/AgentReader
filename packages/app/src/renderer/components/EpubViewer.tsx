@@ -26,6 +26,7 @@ import {
 import ePub from "epubjs";
 
 import type { OutlineItem } from "../types.ts";
+import { flattenToc } from "../toc.ts";
 
 type Props = {
 	docId: string;
@@ -38,7 +39,7 @@ type Props = {
 	onAnnotationCreate?: (a: Annotation) => void;
 	onAnnotationDelete?: (id: string) => void;
 	/** Jump to a chapter (from in-document search etc.). Token forces a re-jump. */
-	goto?: { chapter: number; token: number } | null;
+	goto?: { chapter: number; href?: string; token: number } | null;
 	/** Changes when surrounding chrome (sidebars/chat) toggles or resizes. */
 	layoutSignal?: string;
 	/** Flattened TOC for the shell's outline view (chapter is the locator). */
@@ -241,6 +242,13 @@ export function EpubViewer({
 	const [readRate, setReadRate] = useState(1);
 	const readActiveRef = useRef(false);
 	const readActive = readState !== null && readState.status !== "idle" && readState.status !== "error";
+	// Bumped whenever the user starts/stops a session. Async chapter advances
+	// must abort if this changed while they were awaiting display/timers.
+	const readSessionRef = useRef(0);
+	const stopReading = useCallback(() => {
+		readSessionRef.current++;
+		readerRef.current?.stop();
+	}, []);
 	const bookRef = useRef<EpubBook | null>(null);
 	// Reflow entry point installed by the load effect; lets the layout-signal
 	// effect (and ResizeObserver) share one implementation.
@@ -282,6 +290,9 @@ export function EpubViewer({
 	// Avoid re-applying the last external jump when the rendition is rebuilt
 	// (e.g. switching between 翻页 and 滑动).
 	const appliedGotoRef = useRef<number | null>(null);
+	// Persist the position after an explicit TOC jump; epub.js's silent retry
+	// does not emit another `relocated`, so the relocated handler cannot do it.
+	const updateLocationRef = useRef<(force?: boolean) => void>(() => {});
 
 	const [error, setError] = useState<string | null>(null);
 
@@ -382,21 +393,12 @@ export function EpubViewer({
 			setToc(rawToc.map((t) => ({ label: String(t.label ?? ""), href: String(t.href ?? "") })));
 			// Flatten the (nested) TOC and resolve each entry to the spine index
 			// used by the chapter-based locator. Same list feeds the shell's
-			// outline sidebar as the PDF bookmarks do.
-			const flatToc: OutlineItem[] = [];
-			const walkToc = (nodes: FlipBookTocNode[], depth: number) => {
-				for (const node of nodes) {
-					const href = String(node.href ?? "").split("#")[0];
-					let chapter: number | null = null;
-					try {
-						const section = href ? (bookRef.current?.spine.get(href) as { index?: number } | null | undefined) : null;
-						if (typeof section?.index === "number") chapter = section.index + 1;
-					} catch {}
-					flatToc.push({ title: String(node.label ?? "").trim() || "（未命名）", page: chapter, depth });
-					if (node.subitems?.length) walkToc(node.subitems, depth + 1);
-				}
-			};
-			walkToc(rawToc, 0);
+			// outline sidebar as the PDF bookmarks do. `href` keeps its fragment:
+			// several TOC chapters often share one spine file.
+			const flatToc = flattenToc(rawToc, (href) => {
+				const section = bookRef.current?.spine.get(href) as { index?: number } | null | undefined;
+				return typeof section?.index === "number" ? section.index + 1 : null;
+			});
 			outlineCb.current?.(flatToc);
 			const rendition = book.renderTo(ref.current, {
 				width: "100%",
@@ -437,7 +439,7 @@ export function EpubViewer({
 				if (mgr) mgr.ignore = false;
 			}
 			console.log("[epub] displayed");
-			const update = (located?: LocatedLike) => {
+			const update = (located?: LocatedLike, force = false) => {
 				setMenu(null);
 				const loc = located ?? (rendition.currentLocation() as LocatedLike | undefined);
 				setAtStart(!!loc?.atStart);
@@ -455,11 +457,11 @@ export function EpubViewer({
 				const current = captureLocation(rendition, flow, loc);
 				if (current) {
 					const now = Date.now();
-					if (now - lastLocalSaveRef.current > 200) {
+					if (force || now - lastLocalSaveRef.current > 200) {
 						lastLocalSaveRef.current = now;
 						saveReadingLoc(docId, current);
 					}
-					if (now - lastApiSaveRef.current > 800) {
+					if (force || now - lastApiSaveRef.current > 800) {
 						lastApiSaveRef.current = now;
 						window.api.saveReading(docId, { location: serializeEpubLocation(current) }).catch(() => {});
 					}
@@ -471,6 +473,7 @@ export function EpubViewer({
 				totalCb.current?.(0);
 			};
 			rendition.on("relocated", update);
+			updateLocationRef.current = (force = false) => update(undefined, force);
 			const scrollReader = (dy: number) => {
 				const container = getManager(rendition)?.container;
 				if (container) container.scrollBy({ top: dy, behavior: "auto" });
@@ -483,7 +486,7 @@ export function EpubViewer({
 					if (readActiveRef.current) {
 						if (e.key === "Escape") {
 							e.preventDefault();
-							readerRef.current?.stop();
+							stopReading();
 						}
 						return;
 					}
@@ -648,6 +651,7 @@ export function EpubViewer({
 		return () => {
 			disposed = true;
 			reflowRef.current = () => {};
+			updateLocationRef.current = () => {};
 			setReady(false);
 			if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
 			ro?.disconnect();
@@ -674,6 +678,75 @@ export function EpubViewer({
 		return () => window.clearTimeout(t);
 	}, [layoutSignal]);
 
+	/**
+	 * Display a TOC target, including its `#anchor`.
+	 *
+	 * epub.js resolves a fragment while the new view is still laying out, so the
+	 * first display of a long section can land several pages short (often at the
+	 * previous chapter's tail). Once the section is visible, the same display
+	 * resolves the anchor correctly; retry once if the anchor is not on screen.
+	 */
+	const displayTarget = useCallback(async (target: string) => {
+		const rendition = renditionRef.current;
+		if (!rendition) return;
+		try {
+			await rendition.display(target);
+		} catch {
+			return;
+		}
+		const hash = target.indexOf("#");
+		if (hash < 0 || flowModeRef.current !== "paged") {
+			const manager = getManager(rendition);
+			if (manager) manager.ignore = false;
+			updateLocationRef.current(true);
+			return;
+		}
+		let id = target.slice(hash + 1);
+		try {
+			id = decodeURIComponent(id);
+		} catch {}
+		if (!id) return;
+		// Let the iframe finish its column layout before measuring the anchor.
+		await new Promise((r) => window.setTimeout(r, 80));
+		const hostRect = ref.current?.parentElement?.getBoundingClientRect();
+		let found = false;
+		let visible = false;
+		for (const content of (rendition.getContents?.() ?? []) as unknown as {
+			document?: Document;
+		}[]) {
+			const doc = content.document;
+			const el = doc?.getElementById(id);
+			if (!el) continue;
+			found = true;
+			const frame = doc?.defaultView?.frameElement as HTMLElement | null;
+			if (!frame || !hostRect) {
+				visible = true;
+				break;
+			}
+			const frameRect = frame.getBoundingClientRect();
+			const rect = el.getBoundingClientRect();
+			const top = frameRect.top + rect.top;
+			const bottom = top + rect.height;
+			const left = frameRect.left + rect.left;
+			const right = left + rect.width;
+			if (bottom > hostRect.top && top < hostRect.bottom && right > hostRect.left && left < hostRect.right) {
+				visible = true;
+				break;
+			}
+		}
+		if (found && !visible) {
+			try {
+				await rendition.display(target);
+			} catch {}
+		}
+		// `display` scrolls silently for an already-visible section; if the offset
+		// did not change no scroll event clears epub.js's ignore flag, which would
+		// swallow the next page turn.
+		const manager = getManager(rendition);
+		if (manager) manager.ignore = false;
+		updateLocationRef.current(true);
+	}, []);
+
 	// Jump to a chapter requested from outside (in-document search results). The
 	// token lets the same chapter be re-targeted; display() by section href.
 	useEffect(() => {
@@ -685,8 +758,14 @@ export function EpubViewer({
 		if (!rendition || !book) return;
 		const section = book.spine.get(Math.max(0, goto.chapter - 1)) as { href?: string } | undefined;
 		if (!section?.href) return;
-		Promise.resolve(rendition.display(section.href)).catch(() => {});
-	}, [goto, ready]);
+		// A TOC entry may point inside this section (`file#anchor`); displaying the
+		// section alone would land at its start, not at the requested chapter.
+		const target = goto.href || section.href;
+		// Navigation always wins over the voice; otherwise read-aloud would keep
+		// playing the old section and auto-advance away from the jump.
+		stopReading();
+		void displayTarget(target);
+	}, [displayTarget, goto, ready, stopReading]);
 
 	// Draw persisted highlights inside the book. epub.js keeps annotations per
 	// rendition and re-injects them whenever a view renders, so we only add the
@@ -773,7 +852,7 @@ export function EpubViewer({
 			if (readActiveRef.current) {
 				if (e.key === "Escape") {
 					e.preventDefault();
-					readerRef.current?.stop();
+					stopReading();
 				}
 				return;
 			}
@@ -841,6 +920,14 @@ export function EpubViewer({
 		const reader = readerRef.current;
 		const rendition = renditionRef.current;
 		if (!reader || !rendition) return;
+		const session = readSessionRef.current;
+		// Stop/pause/new session must cancel a chapter transition that is still
+		// waiting on epub.js layout. Without this, stopping exactly at a chapter
+		// boundary silently restarts playback on the following section.
+		const stale = () =>
+			session !== readSessionRef.current ||
+			readerRef.current !== reader ||
+			reader.getState().status !== "playing";
 
 		type SpineLike = {
 			get?: (target: string) => unknown;
@@ -855,7 +942,9 @@ export function EpubViewer({
 
 		if (nextHref) {
 			await rendition.display(nextHref);
+			if (stale()) return;
 			await new Promise((r) => window.setTimeout(r, 320));
+			if (stale()) return;
 			const multi = loadReadText();
 			if (multi) {
 				reader.load(multi.text, 0);
@@ -869,6 +958,7 @@ export function EpubViewer({
 		for (let attempt = 0; attempt < 6; attempt++) {
 			await rendition.next();
 			await new Promise((r) => window.setTimeout(r, 220));
+			if (stale()) return;
 			const first = currentReadDocs()[0] ?? null;
 			if (first && first !== before) {
 				const multi = loadReadText();
@@ -879,8 +969,8 @@ export function EpubViewer({
 				}
 			}
 		}
-		reader.stop();
-	}, [currentReadDocs, loadReadText]);
+		if (!stale()) stopReading();
+	}, [currentReadDocs, loadReadText, stopReading]);
 
 	/**
 	 * Follow the voice without moving the app shell.
@@ -977,6 +1067,7 @@ export function EpubViewer({
 	}, []);
 
 	const startReading = useCallback(() => {
+		readSessionRef.current++;
 		const multi = loadReadText();
 		if (!multi) return;
 		const reader = ensureReader();
@@ -1051,6 +1142,7 @@ export function EpubViewer({
 
 	useEffect(
 		() => () => {
+			readSessionRef.current++;
 			readerRef.current?.stop();
 		},
 		[],
@@ -1143,7 +1235,16 @@ export function EpubViewer({
 				</button>
 				{toc.length > 0 && (
 					<select
-						onChange={(e) => renditionRef.current?.display(e.target.value)}
+						onChange={(e) => {
+							const href = e.target.value;
+							// Keep the control as an action menu: read-aloud moves through
+							// chapters without syncing this value, so re-picking the same
+							// entry must fire again.
+							e.target.value = "";
+							if (!href) return;
+							stopReading();
+							void displayTarget(href);
+						}}
 						style={{ marginLeft: "auto", maxWidth: 180 }}
 						aria-label="目录"
 					>
@@ -1166,7 +1267,7 @@ export function EpubViewer({
 						onToggle={toggleReading}
 						onPrev={() => readerRef.current?.prev()}
 						onNext={() => readerRef.current?.next()}
-						onStop={() => readerRef.current?.stop()}
+						onStop={stopReading}
 					/>
 				)}
 				{!ready && (

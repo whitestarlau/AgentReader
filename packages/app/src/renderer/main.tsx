@@ -134,7 +134,12 @@ function App() {
   const [anns, setAnns] = useState<Annotation[]>([]);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [page, setPage] = useState(1);
-  const [gotoChapter, setGotoChapter] = useState<{ chapter: number; token: number } | null>(null);
+  const [gotoChapter, setGotoChapter] = useState<{ chapter: number; href?: string; token: number } | null>(null);
+  // Which outline row the user just jumped to. Several TOC entries can share a
+  // spine chapter, so page equality alone highlights the first one (often the
+  // previous chapter's tail) instead of the entry that was clicked.
+  const [outlineFocus, setOutlineFocus] = useState<{ href: string; page: number } | null>(null);
+  const outlineFocusRef = useRef<{ href: string; page: number; armed: boolean } | null>(null);
   const [total, setTotal] = useState(0);
   const [zoom, setZoom] = useState(1.2);
   const [ocrJob, setOcrJob] = useState<{ running: boolean; page: number; total: number; progress: number } | null>(null);
@@ -211,6 +216,8 @@ function App() {
     // A pending citation / external jump belongs to the document it was made in.
     setSelection(null);
     setGotoChapter(null);
+    outlineFocusRef.current = null;
+    setOutlineFocus(null);
     setPage(ext === "epub" ? 1 : (loadReadingPage(selected) ?? 1));
   }, [selected]);
 
@@ -307,10 +314,39 @@ function App() {
     setSidebarOpen(true);
   };
 
-  // Jump to a page (PDF) or chapter (EPUB) from annotations or search results.
-  const jumpToLocator = (n: number) => {
-    if (isEpub) setGotoChapter({ chapter: n, token: Date.now() });
-    else setPage(n);
+  // Drop the outline focus once navigation moves to another chapter. Arm it
+  // only after the jump's own page update, otherwise setting it from the old
+  // chapter would clear immediately.
+  useEffect(() => {
+    const focus = outlineFocusRef.current;
+    if (!focus) return;
+    if (!focus.armed) {
+      if (page === focus.page) focus.armed = true;
+      return;
+    }
+    if (page !== focus.page) {
+      outlineFocusRef.current = null;
+      setOutlineFocus(null);
+    }
+  }, [outlineFocus, page]);
+
+  // Jump to a page (PDF) or chapter (EPUB) from annotations/search/outline.
+  // EPUB outline entries can carry an exact `href#anchor`; keep it so a chapter
+  // that starts mid-file lands on its heading instead of the file start.
+  const jumpToLocator = (n: number, href?: string) => {
+    if (isEpub) {
+      if (href) {
+        const focus = { href, page: n, armed: false };
+        outlineFocusRef.current = focus;
+        setOutlineFocus({ href, page: n });
+      } else {
+        outlineFocusRef.current = null;
+        setOutlineFocus(null);
+      }
+      setGotoChapter({ chapter: n, href, token: Date.now() });
+    } else {
+      setPage(n);
+    }
   };
 
   const openDocList = openDocs
@@ -354,6 +390,7 @@ function App() {
               onOpenDoc={openDoc}
               onRemoveDoc={removeDoc}
               onJumpToPage={jumpToLocator}
+              activeOutlineHref={outlineFocus?.href ?? null}
               onDeleteAnnotation={deleteAnn}
               onClearAnnotations={() => { if (confirm("清空当前文档的所有标注？")) persist([]); }}
             />

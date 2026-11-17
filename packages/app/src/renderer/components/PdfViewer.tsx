@@ -214,6 +214,12 @@ export function PdfViewer({
 	// (once-installed) key and click handlers honest.
 	const readActiveRef = useRef(false);
 	const readActive = readState !== null && readState.status !== "idle" && readState.status !== "error";
+	// Bumped on start/stop; async page advances abort when it changes.
+	const readSessionRef = useRef(0);
+	const stopReading = useCallback(() => {
+		readSessionRef.current++;
+		readerRef.current?.stop();
+	}, []);
 	const pagesContentRef = useRef<HTMLDivElement>(null);
 	const selectionOverlayRef = useRef<SelectionOverlayHandle>(null);
 	const [pdf, setPdf] = useState<pdfjs.PDFDocumentProxy | null>(null);
@@ -881,8 +887,13 @@ export function PdfViewer({
 		if (!pdf || externalPage === undefined) return;
 		if (!initializedRef.current) return;
 		if (externalPage === pageNumRef.current) return;
+		// A user-driven jump wins over read-aloud; otherwise the voice keeps
+		// reading the old page and auto-advances away from the requested one.
+		// Auto page turns inside the player update pageNumRef first, so they do
+		// not reach this branch.
+		stopReading();
 		jumpToPage(externalPage);
-	}, [externalPage, pdf, jumpToPage]);
+	}, [externalPage, pdf, jumpToPage, stopReading]);
 
 	// Resolution changes when the window moves between displays.
 	useEffect(() => {
@@ -953,7 +964,7 @@ export function PdfViewer({
 			if (readActiveRef.current) {
 				if (e.key === "Escape") {
 					e.preventDefault();
-					readerRef.current?.stop();
+					stopReading();
 				}
 				return;
 			}
@@ -1347,20 +1358,27 @@ export function PdfViewer({
 	const advanceRead = useCallback(async () => {
 		const reader = readerRef.current;
 		if (!reader) return;
+		const session = readSessionRef.current;
+		const stale = () =>
+			session !== readSessionRef.current ||
+			readerRef.current !== reader ||
+			reader.getState().status !== "playing";
 		const next = readPageRef.current + 1;
 		if (total > 0 && next > total) {
-			reader.stop();
+			stopReading();
 			return;
 		}
 		jumpToPage(next);
 		const map = await waitForReadMap(next);
+		// Stopping during the lazy text-layer wait must not restart playback.
+		if (stale()) return;
 		if (!map) {
-			reader.stop();
+			stopReading();
 			return;
 		}
 		reader.load(map.text, 0);
 		reader.play();
-	}, [jumpToPage, total, waitForReadMap]);
+	}, [jumpToPage, stopReading, total, waitForReadMap]);
 
 	const ensureReader = useCallback(() => {
 		if (readerRef.current) return readerRef.current;
@@ -1382,10 +1400,12 @@ export function PdfViewer({
 	}, [advanceRead]);
 
 	const startReading = useCallback(() => {
+		const session = ++readSessionRef.current;
 		const reader = ensureReader();
 		void (async () => {
 			// A page that was just scrolled into view may still be extracting text.
 			const map = loadReadMap(pageNum) ?? (await waitForReadMap(pageNum, 2500));
+			if (session !== readSessionRef.current) return;
 			if (!map) return;
 			// Start where the reader is looking, not at the top of the page.
 			const stage = stageRef.current;
@@ -1435,6 +1455,7 @@ export function PdfViewer({
 	// Stop audio when the viewer goes away (document switch / close).
 	useEffect(
 		() => () => {
+			readSessionRef.current++;
 			readerRef.current?.stop();
 			highlightRange(document, null);
 		},
@@ -1634,7 +1655,7 @@ export function PdfViewer({
 					onToggle={toggleReading}
 					onPrev={() => readerRef.current?.prev()}
 					onNext={() => readerRef.current?.next()}
-					onStop={() => readerRef.current?.stop()}
+					onStop={stopReading}
 				/>
 			)}
 

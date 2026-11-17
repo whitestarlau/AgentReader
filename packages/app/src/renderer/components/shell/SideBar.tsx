@@ -15,7 +15,9 @@ type Props = {
 	onImport: () => void;
 	onOpenDoc: (id: string) => void;
 	onRemoveDoc: (doc: DocMeta) => void;
-	onJumpToPage: (page: number) => void;
+	onJumpToPage: (page: number, href?: string) => void;
+	/** Exact TOC target the user picked (EPUB entries can share one chapter). */
+	activeOutlineHref?: string | null;
 	onDeleteAnnotation: (id: string) => void;
 	onClearAnnotations: () => void;
 };
@@ -48,6 +50,7 @@ export function SideBar({
 	annotations,
 	outline = [],
 	page,
+	activeOutlineHref = null,
 	isEpub,
 	onImport,
 	onOpenDoc,
@@ -80,9 +83,16 @@ export function SideBar({
 		return docs.filter((d) => d.title.toLowerCase().includes(q));
 	}, [docs, query]);
 
-	// Several TOC entries often share one locator (front matter, EPUB sections);
-	// highlight only the first so the list doesn't look entirely selected.
-	const activeOutlineIndex = useMemo(() => outline.findIndex((item) => item.page === page), [outline, page]);
+	// Several TOC entries often share one locator (front matter, EPUB sections).
+	// Prefer the exact row the user just picked; otherwise highlight the first
+	// entry for the current chapter/page.
+	const activeOutlineIndex = useMemo(() => {
+		if (isEpub && activeOutlineHref) {
+			const exact = outline.findIndex((item) => item.href === activeOutlineHref);
+			if (exact >= 0) return exact;
+		}
+		return outline.findIndex((item) => item.page === page);
+	}, [activeOutlineHref, isEpub, outline, page]);
 
 	// Default to in-document search whenever a document is open.
 	useEffect(() => {
@@ -326,7 +336,7 @@ export function SideBar({
 									style={{ paddingLeft: 10 + Math.min(6, item.depth) * 12 }}
 									disabled={!item.page}
 									title={item.page ? `跳到${isEpub ? `第 ${item.page} 章` : `第 ${item.page} 页`}` : `${item.title}（无页码）`}
-									onClick={() => item.page && onJumpToPage(item.page)}
+									onClick={() => item.page && onJumpToPage(item.page, item.href)}
 								>
 									<span className="outline-title">{item.title}</span>
 									{item.page && <span className="outline-page">{isEpub ? `第${item.page}章` : `P${item.page}`}</span>}

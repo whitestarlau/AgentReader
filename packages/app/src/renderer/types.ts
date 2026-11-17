@@ -40,7 +40,13 @@ export type DocSearchResult = {
 export type ActivityView = "explorer" | "search" | "annotations" | "outline";
 
 /** Flattened table of contents. PDF bookmarks resolve to a physical page. */
-export type OutlineItem = { title: string; page: number | null; depth: number };
+export type OutlineItem = {
+	title: string;
+	page: number | null;
+	depth: number;
+	/** Exact TOC target (EPUB href with fragment); absent for PDF/legacy entries. */
+	href?: string;
+};
 
 export type AiModelOption = {
 	ref: string;
