@@ -7,6 +7,7 @@ import {
 	ensureHighlightStyle,
 	highlightRange,
 	offsetAtPoint,
+	rangeFor,
 	rangeForMulti,
 	revealRangeIn,
 	type MultiText,
@@ -1116,6 +1117,70 @@ export function EpubViewer({
 	}, [currentReadDocs]);
 
 	/**
+	 * Extra hard breaks at paged-EPUB page boundaries.
+	 *
+	 * A paragraph can cross a page; without a break the whole sentence is one
+	 * segment, so the voice reads the hidden half without ever turning the page.
+	 * Sample the rendered range's column and cut wherever the page index changes.
+	 */
+	const readPageBreaks = useCallback((multi: MultiText): number[] => {
+		if (flowModeRef.current !== "paged") return [];
+		const manager = getManager(renditionRef.current);
+		const container = manager?.container;
+		if (!manager || !container) return [];
+		const layout = manager.layout;
+		const delta = layout?.delta && layout.delta > 0 ? layout.delta : container.clientWidth;
+		const divisor = layout?.divisor && layout.divisor > 0 ? layout.divisor : 1;
+		const pageWidth =
+			layout?.pageWidth && layout.pageWidth > 0 ? layout.pageWidth : Math.max(1, delta / divisor);
+		const breaks = new Set<number>();
+		for (const slice of multi.slices) {
+			const length = slice.map.text.length;
+			const pageAt = (offset: number): number | null => {
+				if (offset < 0 || offset >= length) return null;
+				const range = rangeFor(slice.map, offset, Math.min(length, offset + 1));
+				if (!range) return null;
+				const rect = range.getBoundingClientRect();
+				if (rect.width === 0 && rect.height === 0) return null;
+				return Math.floor(rect.left / pageWidth);
+			};
+			let prevPage: number | null = null;
+			for (const entry of slice.map.nodes) {
+				const startPage = pageAt(entry.start);
+				if (startPage === null) continue;
+				if (prevPage !== null && startPage !== prevPage && entry.start > 0) {
+					breaks.add(slice.base + entry.start);
+				}
+				let page = startPage;
+				let from = entry.start;
+				for (let guard = 0; guard < 8 && from + 1 < entry.end; guard++) {
+					let lo = from + 1;
+					let hi = entry.end - 1;
+					let cut = entry.end;
+					while (lo <= hi) {
+						const mid = Math.floor((lo + hi) / 2);
+						const p = pageAt(mid);
+						if (p !== null && p > page) {
+							cut = mid;
+							hi = mid - 1;
+						} else {
+							lo = mid + 1;
+						}
+					}
+					if (cut >= entry.end) break;
+					breaks.add(slice.base + cut);
+					page = pageAt(cut) ?? page + 1;
+					from = cut;
+				}
+				prevPage = pageAt(entry.end - 1) ?? startPage;
+			}
+		}
+		return Array.from(breaks)
+			.filter((n) => n > 0 && n < multi.text.length)
+			.sort((a, b) => a - b);
+	}, []);
+
+	/**
 	 * Move to the next spine section.
 	 *
 	 * `rendition.next()` is page-level: inside a long chapter it just turns the
@@ -1154,7 +1219,7 @@ export function EpubViewer({
 			if (stale()) return;
 			const multi = loadReadText();
 			if (multi) {
-				reader.load(multi.text, 0);
+				reader.load(multi.text, 0, readPageBreaks(multi));
 				reader.play();
 				return;
 			}
@@ -1170,7 +1235,7 @@ export function EpubViewer({
 			if (first && first !== before) {
 				const multi = loadReadText();
 				if (multi) {
-					reader.load(multi.text, 0);
+					reader.load(multi.text, 0, readPageBreaks(multi));
 					reader.play();
 					return;
 				}
@@ -1278,7 +1343,11 @@ export function EpubViewer({
 		const multi = loadReadText();
 		if (!multi) return;
 		const reader = ensureReader();
-		const segments = splitSentences(multi.text, { maxChars: READ_MAX_CHARS });
+		const breaks = readPageBreaks(multi);
+		const segments = splitSentences(multi.text, {
+			maxChars: READ_MAX_CHARS,
+			...(breaks.length > 0 ? { breaks } : {}),
+		});
 		// Start from what is on screen: a spread is two documents, each with its
 		// own visible area, so resolve the area per document.
 		const areas = new Map<Document, VisibleArea>();
@@ -1307,9 +1376,9 @@ export function EpubViewer({
 				break;
 			}
 		}
-		reader.load(multi.text, start);
+		reader.load(multi.text, start, breaks);
 		reader.play();
-	}, [ensureReader, loadReadText, visibleAreaFor]);
+	}, [ensureReader, loadReadText, readPageBreaks, visibleAreaFor]);
 
 	const toggleReading = useCallback(() => {
 		const reader = readerRef.current;

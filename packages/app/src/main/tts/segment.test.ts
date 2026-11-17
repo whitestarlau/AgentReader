@@ -72,3 +72,14 @@ test("never splits a surrogate pair", () => {
 test("returns nothing for whitespace-only input", () => {
 	assert.deepEqual(splitSentences("   \n\n  "), []);
 });
+
+test("forced page breaks split a sentence at the boundary", () => {
+	const text = "这一句话被分页切开了前后两半。";
+	const segments = splitSentences(text, { breaks: [8] });
+	assert.equal(segments.length, 2);
+	assert.equal(segments[0]?.text, "这一句话被分页切");
+	assert.equal(segments[1]?.text, "开了前后两半。");
+	assert.equal(segments[0]?.start, 0);
+	assert.equal(segments[0]?.end, 8);
+	for (const seg of segments) assert.equal(text.slice(seg.start, seg.end), seg.text);
+});

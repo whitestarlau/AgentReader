@@ -1,5 +1,12 @@
 # 进度记录
 
+## 2026-11-17 朗读段落跨页时自动翻页
+
+- [x] 分页 EPUB 读一句跨两页的段落时，句子里后半段在下一页，播放器没有新的 segment 边界，所以不会翻页。现在构建朗读文本时按页面列宽找出页边界（两端各采样 Range），把边界作为强制断句传给 `splitSentences`；跨页段落被切成两段，读到后半段时 `revealReadRange` 会翻到对应页
+- [x] `ReadAloud.load(text, startAt, breaks)` 支持强制边界；`readPageBreaks()` 按 `layout.pageWidth` / `delta` 判断列页，单双栏通用；起点索引与朗读队列使用同一组 breaks，避免 startAt 串位
+- [x] 验证：资治通鉴分页模式从 scrollLeft 1460 开始朗读，读到跨页段落后自动翻到 2190、2920；《陈老师课程合集》等不受影响
+- [x] 单测 102 项通过 101（跳过 1），typecheck/build 通过
+
 ## 2026-11-17 EPUB 翻页模式滑动动画
 
 - [x] 分页 EPUB 翻页改用滑动动画：在 `.epub-container` 上用 Web Animations 做 `translate3d`（320ms ease-out），动画结束的同一帧提交 `scrollLeft` 并清除 transform，避免白闪/回弹；动画期间忽略重复翻页

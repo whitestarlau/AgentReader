@@ -44,6 +44,12 @@ const ABBREVIATIONS = [
 export type SegmentOptions = {
 	/** Hard ceiling per segment; longer sentences are split at secondary punctuation. */
 	maxChars?: number;
+	/**
+	 * Extra hard boundaries (UTF-16 offsets). Used by paged EPUB read-aloud to
+	 * cut a paragraph where it crosses a page, so the second half gets its own
+	 * segment and the reader can turn the page before speaking it.
+	 */
+	breaks?: readonly number[];
 };
 
 /**
@@ -55,6 +61,11 @@ export type SegmentOptions = {
  */
 export function splitSentences(text: string, opts: SegmentOptions = {}): Segment[] {
 	const maxChars = Math.max(40, Math.floor(opts.maxChars ?? 400));
+	const breaks = (opts.breaks ?? [])
+		.filter((n) => Number.isFinite(n) && n > 0 && n < text.length)
+		.map((n) => Math.floor(n))
+		.sort((a, b) => a - b);
+	let breakIndex = 0;
 	const out: Segment[] = [];
 	let start = 0;
 	let i = 0;
@@ -65,6 +76,15 @@ export function splitSentences(text: string, opts: SegmentOptions = {}): Segment
 	};
 
 	while (i < text.length) {
+		// A forced boundary (page break) cuts here even mid-sentence.
+		while (breakIndex < breaks.length && breaks[breakIndex] <= i) {
+			const at = breaks[breakIndex++];
+			if (at > start) {
+				flush(at);
+				i = at;
+			}
+		}
+		if (i >= text.length) break;
 		const ch = text[i];
 		if (ch === "\n" || ch === "\r") {
 			let j = i;

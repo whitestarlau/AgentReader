@@ -74,10 +74,16 @@ export class ReadAloud {
 		void this.startAt(clamped);
 	}
 
-	/** Replace the text to read. Returns false when there is nothing speakable. */
-	load(text: string, startAt = 0): boolean {
+	/**
+	 * Replace the text to read. `breaks` are extra hard boundaries (paged EPUB
+	 * page turns) so a paragraph cut by a page becomes two segments.
+	 */
+	load(text: string, startAt = 0, breaks?: readonly number[]): boolean {
 		this.stopAudio();
-		this.segments = splitSentences(text, { maxChars: READ_MAX_CHARS });
+		this.segments = splitSentences(text, {
+			maxChars: READ_MAX_CHARS,
+			...(breaks && breaks.length > 0 ? { breaks } : {}),
+		});
 		this.index = Math.min(Math.max(0, startAt), Math.max(0, this.segments.length - 1));
 		this.emit("idle");
 		return this.segments.length > 0;
