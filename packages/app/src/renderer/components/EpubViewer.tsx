@@ -695,61 +695,73 @@ export function EpubViewer({
 			return;
 		}
 		const hash = target.indexOf("#");
-		if (hash < 0) {
+		let id = hash >= 0 ? target.slice(hash + 1) : "";
+		try {
+			id = decodeURIComponent(id);
+		} catch {}
+		const scrolled = flowModeRef.current === "scrolled";
+		// Paged targets without an anchor already land at the section start.
+		if (hash < 0 && !scrolled) {
 			const manager = getManager(rendition);
 			if (manager) manager.ignore = false;
 			updateLocationRef.current(true);
 			return;
 		}
-		let id = target.slice(hash + 1);
-		try {
-			id = decodeURIComponent(id);
-		} catch {}
-		if (!id) return;
-		// Let the iframe finish its layout before measuring the anchor.
+		if (hash >= 0 && !id) return;
+		// Let the iframe finish its layout before measuring the anchor/section.
 		await new Promise((r) => window.setTimeout(r, 80));
-		if (flowModeRef.current === "scrolled") {
-			// The continuous manager's `moveTo(target)` is unreliable for deep
-			// anchors: epub.js may scroll to the section start (or an arbitrary
-			// offset) instead. Locate the anchor ourselves and scroll its section
-			// container to it.
+		if (scrolled) {
+			// The continuous manager's own target handling is unreliable: it may
+			// land at a cover/front-matter section or several screens away. Resolve
+			// the target section view and snap it (or its anchor) to the top, then
+			// keep correcting for a moment because `fill()` prepends sections and
+			// shifts scrollTop after the first layout pass.
 			const manager = getManager(rendition);
 			const container = manager?.container;
 			if (container) {
+				const sectionHref = target.split("#")[0];
+				const sectionIndex = (bookRef.current?.spine.get(sectionHref) as { index?: number } | null)?.index;
 				const containerRect = container.getBoundingClientRect();
-				for (const content of (rendition.getContents?.() ?? []) as unknown as {
-					document?: Document;
-				}[]) {
-					const doc = content.document;
-					const el = doc?.getElementById(id);
-					const frame = doc?.defaultView?.frameElement as HTMLElement | null;
-					if (!el || !frame) continue;
-					const frameRect = frame.getBoundingClientRect();
-					if (frameRect.height < 2) continue;
-					const top = Math.max(
-						0,
-						container.scrollTop + (frameRect.top + el.getBoundingClientRect().top - containerRect.top) - 12,
+
+				// Keep correcting for ~1.4s: continuous `fill()`/image layout can shift
+				// the container after the first snap, which is what makes a jump look
+				// "completely wrong" only after it settles.
+				for (let attempt = 0; attempt < 24; attempt++) {
+					const view = (manager?.views?.all?.() ?? []).find(
+						(v) =>
+							v.section?.href?.split("#")[0] === sectionHref ||
+							(typeof sectionIndex === "number" && v.section?.index === sectionIndex),
 					);
-					manager.ignore = false;
-					if (manager.scrollTo) manager.scrollTo(0, top, false);
-					else container.scrollTo({ top, behavior: "auto" });
-					break;
+					const pos = view?.position?.();
+					if (view && pos && pos.height >= 2) {
+						const doc = (view as unknown as { document?: Document }).document;
+						const anchor = id ? doc?.getElementById(id) : null;
+						if (!id || anchor) {
+							const localTop = anchor ? anchor.getBoundingClientRect().top : 0;
+							const top = Math.max(0, container.scrollTop + (pos.top + localTop - containerRect.top) - 12);
+							manager.ignore = false;
+							if (manager.scrollTo) manager.scrollTo(0, top, false);
+							else container.scrollTo({ top, behavior: "auto" });
+
+						}
+					}
+					await new Promise((r) => window.setTimeout(r, 60));
 				}
 			}
 			if (manager) manager.ignore = false;
 			updateLocationRef.current(true);
 			return;
 		}
-		const hostRect = ref.current?.parentElement?.getBoundingClientRect();
-		let found = false;
 		let visible = false;
+		const hostRect = ref.current?.parentElement?.getBoundingClientRect();
 		for (const content of (rendition.getContents?.() ?? []) as unknown as {
 			document?: Document;
 		}[]) {
 			const doc = content.document;
-			const el = doc?.getElementById(id);
+			const el = id ? doc?.getElementById(id) : null;
 			if (!el) continue;
-			found = true;
+			// `found` is not needed for the retry decision; the anchor exists in a
+			// rendered view, which is what this branch cares about.
 			const frame = doc?.defaultView?.frameElement as HTMLElement | null;
 			if (!frame || !hostRect) {
 				visible = true;
@@ -766,7 +778,7 @@ export function EpubViewer({
 				break;
 			}
 		}
-		if (found && !visible) {
+		if (!visible) {
 			try {
 				await rendition.display(target);
 			} catch {}
