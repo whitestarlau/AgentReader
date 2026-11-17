@@ -395,10 +395,16 @@ export function EpubViewer({
 			return;
 		}
 		const distance = target - current;
+		// Commit scroll first: this is what makes epub.js/Chromium rasterise the
+		// incoming page. Then offset the strip back to the old page and animate
+		// the offset to zero, so *both* pages are present and moving throughout
+		// the transition (previously the incoming page only appeared after the
+		// scroll commit, so it had no entrance animation).
+		container.scrollLeft = target;
 		const anim = container.animate(
 			[
+				{ transform: `translate3d(${distance}px, 0, 0)` },
 				{ transform: "translate3d(0, 0, 0)" },
-				{ transform: `translate3d(${-distance}px, 0, 0)` },
 			],
 			{ duration: 320, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)", fill: "forwards" },
 		);
@@ -406,9 +412,6 @@ export function EpubViewer({
 		anim.onfinish = () => {
 			if (turnAnimRef.current !== anim) return;
 			turnAnimRef.current = null;
-			// Commit the scroll and drop the transform in one task, so the browser
-			// paints the final spread exactly once (no white flash / snap back).
-			container.scrollLeft = target;
 			anim.cancel();
 			setTurning(null);
 		};
