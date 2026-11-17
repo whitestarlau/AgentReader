@@ -398,6 +398,9 @@ function App() {
           </>
         )}
 
+        {/* The page fills the editor; the text column is centered INSIDE each
+            page (see EpubViewer theme), so toggling a panel only changes the
+            in-page margins — the columns themselves stay the same. */}
         <main className="editor">
           <EditorTabs
             docs={openDocList}
@@ -424,7 +427,6 @@ function App() {
                 onTotalChange={setTotal}
                 onOutlineChange={setOutline}
                 goto={gotoChapter}
-                layoutSignal={`${sidebarOpen}:${chatOpen}:${sidebarWidth}:${chatWidth}`}
                 onTextSelected={(t, p) => {
                   setSelection({ text: t, page: p, kind: "highlight" });
                   setChatOpen(true);

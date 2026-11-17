@@ -41,8 +41,6 @@ type Props = {
 	onAnnotationDelete?: (id: string) => void;
 	/** Jump to a chapter (from in-document search etc.). Token forces a re-jump. */
 	goto?: { chapter: number; href?: string; label?: string; token: number } | null;
-	/** Changes when surrounding chrome (sidebars/chat) toggles or resizes. */
-	layoutSignal?: string;
 	/** Flattened TOC for the shell's outline view (chapter is the locator). */
 	onOutlineChange?: (items: OutlineItem[]) => void;
 };
@@ -106,6 +104,14 @@ type LocatedLike = {
 
 const SPREAD_STORAGE_KEY = "epub-spread-mode";
 const FLOW_STORAGE_KEY = "epub-flow-mode";
+
+/**
+ * Text-column width inside each page. The page itself stays full-width white;
+ * the text is centered within it, so the margins belong to the page and move
+ * with it during the page-turn animation. Panel toggles only change these
+ * in-page margins — the text never re-flows while the page is wider than this.
+ */
+const PAGE_TEXT_MAX = 880;
 
 function readSpreadMode(): SpreadMode {
 	try {
@@ -233,9 +239,14 @@ async function applyLocation(rendition: Rendition, loc: EpubLocation, flow: Flow
 		manager.ignore = false;
 		manager.scrollTo(0, Math.min(maxOffset, Math.max(0, base + offset)), false);
 	} else {
+		// Restore onto a page boundary: an offset captured at another column
+		// width is mid-column here and clips both edges of the spread. Same
+		// delta-based alignment the page-turn and read-aloud code uses.
+		const step = manager.layout?.delta && manager.layout.delta > 0 ? manager.layout.delta : manager.container.clientWidth;
+		const aligned = Math.floor(offset / step) * step;
 		const maxOffset = Math.max(0, manager.container.scrollWidth - manager.container.clientWidth);
 		manager.ignore = false;
-		manager.scrollTo(Math.min(offset, maxOffset), 0, false);
+		manager.scrollTo(Math.min(aligned, maxOffset), 0, false);
 	}
 }
 
@@ -248,7 +259,6 @@ export function EpubViewer({
 	onAnnotationCreate,
 	onAnnotationDelete,
 	goto,
-	layoutSignal,
 	onOutlineChange,
 }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
@@ -278,8 +288,8 @@ export function EpubViewer({
 		readerRef.current?.stop();
 	}, []);
 	const bookRef = useRef<EpubBook | null>(null);
-	// Reflow entry point installed by the load effect; lets the layout-signal
-	// effect (and ResizeObserver) share one implementation.
+	// Reflow entry point installed by the load effect; the ResizeObserver below
+	// is the single layout-change trigger.
 	const reflowRef = useRef<() => void>(() => {});
 	const [toc, setToc] = useState<{ label: string; href: string }[]>([]);
 	const [atStart, setAtStart] = useState(true);
@@ -509,10 +519,25 @@ export function EpubViewer({
 				setSpread(rendition, spreadModeRef.current);
 			}
 			renditionRef.current = rendition as unknown as typeof renditionRef.current;
+			// 留白属于页面：正文列在每一「页」内居中限宽（多列布局下每个分栏独立
+			// 居中），页面保持全宽白底——翻页动画带动整页（含留白）滑动，开关
+			// 侧栏只改变页内留白，不重排正文。固定布局（pre-paginated）的书不套
+			// 用，避免破坏其固定页面尺寸。
+			const fixedLayout =
+				(book as unknown as { package?: { metadata?: { layout?: string } } }).package?.metadata?.layout === "pre-paginated";
 			rendition.themes.default({
 				body: { "font-family": "Inter, sans-serif", "line-height": "1.7", padding: "24px", "background-color": "#fff", "max-width": "100%", "word-wrap": "break-word", "overflow-wrap": "break-word" },
-				"img": { "max-width": "100% !important", height: "auto !important" },
-				"pre": { "white-space": "pre-wrap", "word-wrap": "break-word" },
+				...(fixedLayout
+					? {}
+					: {
+							"body > *": {
+								"max-width": `${PAGE_TEXT_MAX}px !important`,
+								"margin-left": "auto !important",
+								"margin-right": "auto !important",
+							},
+						}),
+				img: { "max-width": "100% !important", height: "auto !important" },
+				pre: { "white-space": "pre-wrap", "word-wrap": "break-word" },
 			});
 			// Resume the last read position for this document.
 			// Prefer the section href + scroll offset form (round-trips exactly);
@@ -692,11 +717,17 @@ export function EpubViewer({
 			// 而该 CFI 在双栏下会跳到更早一页，所以重排后按偏移量校正回来。
 			if (!disposed && ref.current) {
 				// Reflow on any container size change (sidebar/chat toggle, splitter
-				// drag, window resize). Re-assert the column mode, then re-render the
-				// current section at the new width via href (not CFI, which drifts),
-				// restoring the scroll offset afterwards.
+				// drag, window resize). Re-assert the column mode, rebuild the layout
+				// at the new size via resize(), then re-render the current section
+				// via href (not CFI, which drifts), restoring the scroll offset.
 				let lastWidth = ref.current.clientWidth;
 				let lastHeight = ref.current.clientHeight;
+				// Rapid toggles start a new reflow while the previous display()/
+				// scrollTo() chain is still running; interleaved restores leave the
+				// strip mid-column. Run reflows one at a time; a newer request
+				// supersedes older queued ones (they capture fresh state anyway).
+				let reflowSeq = 0;
+				let reflowChain: Promise<void> = Promise.resolve();
 				const reflow = () => {
 					if (disposed) return;
 					const el = ref.current;
@@ -710,34 +741,73 @@ export function EpubViewer({
 					}
 					lastWidth = width;
 					lastHeight = height;
-					const at = captureLocation(rendition, flow);
-					if (scrolled) {
-						turnAnimRef.current?.cancel();
-						// display(href) alone reuses the old iframe width. `resize()` rebuilds
-						// it at the new width; restore by CFI so the same text stays at the
-						// top after the column width changes (a pixel offset would drift).
-						let cfi: string | undefined;
-						try {
-							cfi = (rendition.currentLocation() as LocatedLike | undefined)?.start?.cfi;
-						} catch {}
-						try {
-							(rendition as unknown as { resize: (w: number, h: number) => void }).resize(width, height);
-						} catch {}
-						if (cfi) {
-							void Promise.resolve(rendition.display(cfi)).catch(() => {
-								if (at) void applyLocation(rendition, at, flow);
-							});
-						} else if (at) {
-							void applyLocation(rendition, at, flow);
-						}
-						return;
-					}
-					try { setSpread(rendition, spreadModeRef.current); } catch {}
-					if (at) {
-						void applyLocation(rendition, at, flow);
-					} else {
-						try { (rendition as unknown as { resize: () => void }).resize(); } catch {}
-					}
+					const token = ++reflowSeq;
+					reflowChain = reflowChain
+						.then(async () => {
+							if (disposed || token !== reflowSeq) return;
+							// Capture when this task actually runs: the previous restore
+							// has settled, so the location is measured on stable views.
+							const at = captureLocation(rendition, flow);
+							if (scrolled) {
+								turnAnimRef.current?.cancel();
+								// display(href) alone reuses the old iframe width. `resize()` rebuilds
+								// it at the new width; restore by CFI so the same text stays at the
+								// top after the column width changes (a pixel offset would drift).
+								let cfi: string | undefined;
+								try {
+									cfi = (rendition.currentLocation() as LocatedLike | undefined)?.start?.cfi;
+								} catch {}
+								try {
+									(rendition as unknown as { resize: (w: number, h: number) => void }).resize(width, height);
+								} catch {}
+								if (cfi) {
+									await Promise.resolve(rendition.display(cfi)).catch(() => {
+										if (at) return applyLocation(rendition, at, flow);
+									});
+								} else if (at) {
+									await applyLocation(rendition, at, flow);
+								}
+								return;
+							}
+							turnAnimRef.current?.cancel();
+							try { setSpread(rendition, spreadModeRef.current); } catch {}
+							// `resize()` is required even when only the container changed: epub.js
+							// sizes its columns from the layout captured at the last real resize /
+							// window event, so without it the old column width survives inside the
+							// new container and pages get clipped on both edges (no window resize
+							// fires for sidebar/chat toggles or splitter drags). Passing the
+							// section href as the epubcfi hint makes epub.js's own post-resize
+							// display() target the right section instead of the drifted CFI.
+							try { (rendition as unknown as { resize: (w: number, h: number, epubcfi?: string) => void }).resize(width, height, at?.href); } catch {}
+							// epub.js's onResized handler displays the hinted section
+							// asynchronously (add() → views.show()); issuing another
+							// display() concurrently would clear() and re-add the same
+							// section twice. Wait for its view, then restore the page by
+							// offset directly — no second display, no section-start scroll
+							// racing ours.
+							if (at) {
+								for (let i = 0; i < 10 && !viewForHref(rendition, at.href); i++) {
+									await new Promise((r) => setTimeout(r, 60));
+								}
+								const manager = getManager(rendition);
+								const container = manager?.container;
+								if (viewForHref(rendition, at.href) && manager?.scrollTo && container) {
+									// Same delta-based page alignment the page-turn and
+									// read-aloud code use; a raw offset captured at another
+									// column width would land mid-column and clip both edges.
+									const step = manager.layout?.delta && manager.layout.delta > 0 ? manager.layout.delta : container.clientWidth;
+									const aligned = Math.floor(Math.max(0, at.offset) / step) * step;
+									const maxOffset = Math.max(0, container.scrollWidth - container.clientWidth);
+									manager.ignore = false;
+									manager.scrollTo(Math.min(aligned, maxOffset), 0, false);
+								} else {
+									// No view appeared (epub.js skipped its post-resize
+									// display, e.g. no location yet) — do a full display+restore.
+									await applyLocation(rendition, at, flow);
+								}
+							}
+						})
+						.catch(() => {});
 				};
 				reflowRef.current = reflow;
 				ro = new ResizeObserver(() => {
@@ -806,12 +876,6 @@ export function EpubViewer({
 		},
 		[docId, flowMode],
 	);
-
-	useEffect(() => {
-		if (!layoutSignal) return;
-		const t = window.setTimeout(() => reflowRef.current(), 140);
-		return () => window.clearTimeout(t);
-	}, [layoutSignal]);
 
 	/**
 	 * Display a TOC target, including its `#anchor`.
@@ -1056,7 +1120,7 @@ export function EpubViewer({
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-			if ((e.target as HTMLElement)?.closest?.("iframe")) return;
+			if ((e.target as HTMLElement)?.closest?.("iframe, .overlay-panel, .secondary")) return;
 			if (readActiveRef.current) {
 				if (e.key === "Escape") {
 					e.preventDefault();

@@ -1,6 +1,8 @@
 /* ==========================================================================
    AgentReader — VS Code-inspired shell
    Layout: TitleBar / ActivityBar / SideBar / Editor(+tabs) / SecondaryBar / StatusBar
+   The reading page fills the editor; the text column is centered inside each
+   page, so panel toggles only change the in-page margins.
    ========================================================================== */
 
 :root {

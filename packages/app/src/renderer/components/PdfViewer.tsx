@@ -140,7 +140,7 @@ function fitScale(base: PageSize, stage: HTMLElement, mode: ZoomMode): number {
 function ignoreReaderKey(e: KeyboardEvent): boolean {
 	const target = e.target as HTMLElement | null;
 	if (target && typeof target.closest === "function") {
-		if (target.closest(".modal-backdrop, .sidebar, .secondary")) return true;
+		if (target.closest(".modal-backdrop, .sidebar, .secondary, .overlay-panel")) return true;
 		if (target.closest("input, textarea, select, [contenteditable='true'], [contenteditable='']")) return true;
 		if (e.key === " " && target.closest("button, a, [role='button'], [role='menuitem'], [role='option']")) return true;
 	}
