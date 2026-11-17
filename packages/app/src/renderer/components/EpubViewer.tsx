@@ -171,11 +171,25 @@ function captureLocation(rendition: Rendition | null, flow: FlowMode, located?: 
 	const manager = getManager(rendition);
 	if (!manager?.container) return null;
 	if (flow === "scrolled") {
-		const loc = located ?? (rendition?.currentLocation() as LocatedLike | undefined);
-		const href = loc?.start?.href ?? manager.views?.first?.()?.section?.href;
-		if (!href) return null;
-		const view = viewForHref(rendition, href);
 		const containerRect = manager.container.getBoundingClientRect();
+		// Use the section actually at the viewport top. `currentLocation()` can
+		// report the previous/titlepage section after continuous layout settles,
+		// and restoring that href on a resize makes the page jump elsewhere.
+		let view: ViewLike | null = null;
+		for (const candidate of manager.views?.all?.() ?? []) {
+			const pos = candidate.position?.();
+			if (pos && pos.top <= containerRect.top + 2 && pos.top + pos.height > containerRect.top + 2) {
+				view = candidate;
+				break;
+			}
+		}
+		if (!view) {
+			const loc = located ?? (rendition?.currentLocation() as LocatedLike | undefined);
+			const href = loc?.start?.href ?? manager.views?.first?.()?.section?.href;
+			if (href) view = viewForHref(rendition, href);
+		}
+		const href = view?.section?.href;
+		if (!href) return null;
 		const viewRect = view?.position?.();
 		const offset = viewRect ? Math.max(0, Math.round(containerRect.top - viewRect.top)) : 0;
 		return { href, offset, flow };
@@ -194,15 +208,23 @@ async function applyLocation(rendition: Rendition, loc: EpubLocation, flow: Flow
 	}
 	// display() is async about layout; give the container a beat to settle.
 	// Continuous mode also has to fill in neighbouring sections first.
-	await new Promise((r) => setTimeout(r, flow === "scrolled" ? 240 : 120));
+	await new Promise((r) => setTimeout(r, flow === "scrolled" ? 420 : 120));
 	const manager = getManager(rendition);
 	if (!manager?.scrollTo || !manager.container) return;
 	const offset = loc.flow && loc.flow !== flow ? 0 : Math.max(0, loc.offset);
 	if (flow === "scrolled") {
-		const view = viewForHref(rendition, loc.href);
+		let view = viewForHref(rendition, loc.href);
+		// After `resize()` the old views are gone; the new view may still be
+		// filling in when display() resolves. Looking it up too early used to
+		// fall back to the current scrollTop and add the offset twice, which is
+		// exactly the "sidebar close jumps the page" bug.
+		for (let attempt = 0; !view && attempt < 6; attempt++) {
+			await new Promise((r) => setTimeout(r, 120));
+			view = viewForHref(rendition, loc.href);
+		}
 		const containerRect = manager.container.getBoundingClientRect();
 		const viewRect = view?.position?.();
-		const base = viewRect ? manager.container.scrollTop + (viewRect.top - containerRect.top) : manager.container.scrollTop;
+		const base = viewRect ? manager.container.scrollTop + (viewRect.top - containerRect.top) : 0;
 		const maxOffset = Math.max(0, manager.container.scrollHeight - manager.container.clientHeight);
 		// A silent scrollTo can leave epub.js's `ignore` flag set when the
 		// position does not change, swallowing the next real scroll. Use a
@@ -603,12 +625,43 @@ export function EpubViewer({
 				// drag, window resize). Re-assert the column mode, then re-render the
 				// current section at the new width via href (not CFI, which drifts),
 				// restoring the scroll offset afterwards.
+				let lastWidth = ref.current.clientWidth;
+				let lastHeight = ref.current.clientHeight;
 				const reflow = () => {
 					if (disposed) return;
-					const at = captureLocation(rendition, flow);
-					if (!scrolled) {
-						try { setSpread(rendition, spreadModeRef.current); } catch {}
+					const el = ref.current;
+					if (!el) return;
+					const width = el.clientWidth;
+					const height = el.clientHeight;
+					// Height-only changes do not reflow continuous text; ignoring them
+					// avoids pointless display() calls that make the page jump.
+					if (scrolled ? Math.abs(width - lastWidth) < 1 : Math.abs(width - lastWidth) < 1 && Math.abs(height - lastHeight) < 1) {
+						return;
 					}
+					lastWidth = width;
+					lastHeight = height;
+					const at = captureLocation(rendition, flow);
+					if (scrolled) {
+						// display(href) alone reuses the old iframe width. `resize()` rebuilds
+						// it at the new width; restore by CFI so the same text stays at the
+						// top after the column width changes (a pixel offset would drift).
+						let cfi: string | undefined;
+						try {
+							cfi = (rendition.currentLocation() as LocatedLike | undefined)?.start?.cfi;
+						} catch {}
+						try {
+							(rendition as unknown as { resize: (w: number, h: number) => void }).resize(width, height);
+						} catch {}
+						if (cfi) {
+							void Promise.resolve(rendition.display(cfi)).catch(() => {
+								if (at) void applyLocation(rendition, at, flow);
+							});
+						} else if (at) {
+							void applyLocation(rendition, at, flow);
+						}
+						return;
+					}
+					try { setSpread(rendition, spreadModeRef.current); } catch {}
 					if (at) {
 						void applyLocation(rendition, at, flow);
 					} else {
