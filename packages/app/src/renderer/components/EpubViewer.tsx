@@ -39,7 +39,7 @@ type Props = {
 	onAnnotationCreate?: (a: Annotation) => void;
 	onAnnotationDelete?: (id: string) => void;
 	/** Jump to a chapter (from in-document search etc.). Token forces a re-jump. */
-	goto?: { chapter: number; href?: string; token: number } | null;
+	goto?: { chapter: number; href?: string; label?: string; token: number } | null;
 	/** Changes when surrounding chrome (sidebars/chat) toggles or resizes. */
 	layoutSignal?: string;
 	/** Flattened TOC for the shell's outline view (chapter is the locator). */
@@ -686,7 +686,7 @@ export function EpubViewer({
 	 * previous chapter's tail). Once the section is visible, the same display
 	 * resolves the anchor correctly; retry once if the anchor is not on screen.
 	 */
-	const displayTarget = useCallback(async (target: string) => {
+	const displayTarget = useCallback(async (target: string, label?: string) => {
 		const rendition = renditionRef.current;
 		if (!rendition) return;
 		try {
@@ -722,6 +722,28 @@ export function EpubViewer({
 				const sectionHref = target.split("#")[0];
 				const sectionIndex = (bookRef.current?.spine.get(sectionHref) as { index?: number } | null)?.index;
 				const containerRect = container.getBoundingClientRect();
+				const norm = (value: string) => value.replace(/\s+/g, "").replace(/[·•・]/g, "").trim();
+				const labelNorm = label ? norm(label) : "";
+				// A TOC entry can point inside the chapter (first subsection). Prefer
+				// the heading that actually carries this entry's title, so a chapter
+				// jump starts at the chapter title, not the first sub-heading.
+				const titleIn = (doc: Document | undefined): HTMLElement | null => {
+					if (!doc || !labelNorm) return null;
+					let partial: HTMLElement | null = null;
+					for (const el of Array.from(doc.querySelectorAll("h1,h2,h3,h4,h5,h6"))) {
+						const text = norm(el.textContent ?? "");
+						if (!text) continue;
+						if (text === labelNorm) return el as HTMLElement;
+						if (
+							!partial &&
+							((text.length >= 2 && labelNorm.startsWith(text)) ||
+								(labelNorm.length >= 2 && text.startsWith(labelNorm)))
+						) {
+							partial = el as HTMLElement;
+						}
+					}
+					return partial;
+				};
 
 				// Keep correcting for ~1.4s: continuous `fill()`/image layout can shift
 				// the container after the first snap, which is what makes a jump look
@@ -736,14 +758,13 @@ export function EpubViewer({
 					if (view && pos && pos.height >= 2) {
 						const doc = (view as unknown as { document?: Document }).document;
 						const anchor = id ? doc?.getElementById(id) : null;
-						if (!id || anchor) {
-							const localTop = anchor ? anchor.getBoundingClientRect().top : 0;
-							const top = Math.max(0, container.scrollTop + (pos.top + localTop - containerRect.top) - 12);
-							manager.ignore = false;
-							if (manager.scrollTo) manager.scrollTo(0, top, false);
-							else container.scrollTo({ top, behavior: "auto" });
-
-						}
+						const titleEl = titleIn(doc);
+						const targetEl = titleEl ?? anchor;
+						const localTop = targetEl ? targetEl.getBoundingClientRect().top : 0;
+						const top = Math.max(0, container.scrollTop + (pos.top + localTop - containerRect.top) - 12);
+						manager.ignore = false;
+						if (manager.scrollTo) manager.scrollTo(0, top, false);
+						else container.scrollTo({ top, behavior: "auto" });
 					}
 					await new Promise((r) => window.setTimeout(r, 60));
 				}
@@ -808,7 +829,7 @@ export function EpubViewer({
 		// Navigation always wins over the voice; otherwise read-aloud would keep
 		// playing the old section and auto-advance away from the jump.
 		stopReading();
-		void displayTarget(target);
+		void displayTarget(target, goto.label);
 	}, [displayTarget, goto, ready, stopReading]);
 
 	// Draw persisted highlights inside the book. epub.js keeps annotations per
@@ -1287,7 +1308,7 @@ export function EpubViewer({
 							e.target.value = "";
 							if (!href) return;
 							stopReading();
-							void displayTarget(href);
+							void displayTarget(href, e.target.selectedOptions[0]?.textContent ?? "");
 						}}
 						style={{ marginLeft: "auto", maxWidth: 180 }}
 						aria-label="目录"

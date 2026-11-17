@@ -15,7 +15,7 @@ type Props = {
 	onImport: () => void;
 	onOpenDoc: (id: string) => void;
 	onRemoveDoc: (doc: DocMeta) => void;
-	onJumpToPage: (page: number, href?: string) => void;
+	onJumpToPage: (page: number, href?: string, label?: string) => void;
 	/** Exact TOC target the user picked (EPUB entries can share one chapter). */
 	activeOutlineHref?: string | null;
 	onDeleteAnnotation: (id: string) => void;
@@ -336,7 +336,7 @@ export function SideBar({
 									style={{ paddingLeft: 10 + Math.min(6, item.depth) * 12 }}
 									disabled={!item.page}
 									title={item.page ? `跳到${isEpub ? `第 ${item.page} 章` : `第 ${item.page} 页`}` : `${item.title}（无页码）`}
-									onClick={() => item.page && onJumpToPage(item.page, item.href)}
+									onClick={() => item.page && onJumpToPage(item.page, item.href, item.title)}
 								>
 									<span className="outline-title">{item.title}</span>
 									{item.page && <span className="outline-page">{isEpub ? `第${item.page}章` : `P${item.page}`}</span>}

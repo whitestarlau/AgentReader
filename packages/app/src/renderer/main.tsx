@@ -134,7 +134,7 @@ function App() {
   const [anns, setAnns] = useState<Annotation[]>([]);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [page, setPage] = useState(1);
-  const [gotoChapter, setGotoChapter] = useState<{ chapter: number; href?: string; token: number } | null>(null);
+  const [gotoChapter, setGotoChapter] = useState<{ chapter: number; href?: string; label?: string; token: number } | null>(null);
   // Which outline row the user just jumped to. Several TOC entries can share a
   // spine chapter, so page equality alone highlights the first one (often the
   // previous chapter's tail) instead of the entry that was clicked.
@@ -333,7 +333,7 @@ function App() {
   // Jump to a page (PDF) or chapter (EPUB) from annotations/search/outline.
   // EPUB outline entries can carry an exact `href#anchor`; keep it so a chapter
   // that starts mid-file lands on its heading instead of the file start.
-  const jumpToLocator = (n: number, href?: string) => {
+  const jumpToLocator = (n: number, href?: string, label?: string) => {
     if (isEpub) {
       if (href) {
         const focus = { href, page: n, armed: false };
@@ -343,7 +343,7 @@ function App() {
         outlineFocusRef.current = null;
         setOutlineFocus(null);
       }
-      setGotoChapter({ chapter: n, href, token: Date.now() });
+      setGotoChapter({ chapter: n, href, label, token: Date.now() });
     } else {
       setPage(n);
     }
