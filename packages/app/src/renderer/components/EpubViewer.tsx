@@ -245,6 +245,8 @@ export function EpubViewer({
 	// Bumped whenever the user starts/stops a session. Async chapter advances
 	// must abort if this changed while they were awaiting display/timers.
 	const readSessionRef = useRef(0);
+	// Invalidates delayed TOC scroll corrections when another jump starts.
+	const tocNavRef = useRef(0);
 	const stopReading = useCallback(() => {
 		readSessionRef.current++;
 		readerRef.current?.stop();
@@ -687,6 +689,7 @@ export function EpubViewer({
 	 * resolves the anchor correctly; retry once if the anchor is not on screen.
 	 */
 	const displayTarget = useCallback(async (target: string, label?: string) => {
+		const navToken = ++tocNavRef.current;
 		const rendition = renditionRef.current;
 		if (!rendition) return;
 		try {
@@ -745,29 +748,33 @@ export function EpubViewer({
 					return partial;
 				};
 
-				// Keep correcting for ~1.4s: continuous `fill()`/image layout can shift
-				// the container after the first snap, which is what makes a jump look
-				// "completely wrong" only after it settles.
-				for (let attempt = 0; attempt < 24; attempt++) {
+				// Correct in a few spaced passes instead of fighting `fill()` every
+				// 60ms: the old tight loop visibly shook the page up and down.
+				const snap = () => {
 					const view = (manager?.views?.all?.() ?? []).find(
 						(v) =>
 							v.section?.href?.split("#")[0] === sectionHref ||
 							(typeof sectionIndex === "number" && v.section?.index === sectionIndex),
 					);
 					const pos = view?.position?.();
-					if (view && pos && pos.height >= 2) {
-						const doc = (view as unknown as { document?: Document }).document;
-						const anchor = id ? doc?.getElementById(id) : null;
-						const titleEl = titleIn(doc);
-						const targetEl = titleEl ?? anchor;
-						const localTop = targetEl ? targetEl.getBoundingClientRect().top : 0;
-						const top = Math.max(0, container.scrollTop + (pos.top + localTop - containerRect.top) - 12);
-						manager.ignore = false;
-						if (manager.scrollTo) manager.scrollTo(0, top, false);
-						else container.scrollTo({ top, behavior: "auto" });
-					}
-					await new Promise((r) => window.setTimeout(r, 60));
-				}
+					if (!view || !pos || pos.height < 2) return;
+					const doc = (view as unknown as { document?: Document }).document;
+					const anchor = id ? doc?.getElementById(id) : null;
+					const titleEl = titleIn(doc);
+					const targetEl = titleEl ?? anchor;
+					const localTop = targetEl ? targetEl.getBoundingClientRect().top : 0;
+					const top = Math.max(0, container.scrollTop + (pos.top + localTop - containerRect.top) - 12);
+					if (Math.abs(top - container.scrollTop) < 4) return;
+					// Silent: a normal scroll makes epub.js run `fill()` again, which
+					// prepends sections and yanks the page around after the jump.
+					if (manager.scrollTo) manager.scrollTo(0, top, true);
+					else container.scrollTo({ top, behavior: "auto" });
+				};
+				// One snap after continuous `fill()` has settled; repeated corrections
+				// are what made the page visibly twitch up and down.
+				await new Promise((r) => window.setTimeout(r, 600));
+				if (navToken !== tocNavRef.current) return;
+				snap();
 			}
 			if (manager) manager.ignore = false;
 			updateLocationRef.current(true);
