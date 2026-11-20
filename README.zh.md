@@ -17,6 +17,7 @@
 - **标注**：选中文本弹出「高亮 / 引用提问 / 复制」菜单，**双击选词、三击选中整段**（与浏览器一致）；修饰键拖拽矩形框选（macOS `⌥`、其它平台 `Alt`），归一化坐标持久化；EPUB 高亮以 epub.js CFI 锚定
 - **AI 对话**：侧边栏，选中文本或已有标注可按「引用」注入，`@` 联想引用章节 / 目录 / 页码 / 标注，分级上下文（选中/章节/全文RAG），流式输出
 - **导出**：当前对话导出为 Markdown / 单文件 HTML / JSON，可选择引用、思考、工具调用与工具结果
+- **朗读**：按句切分朗读，句级高亮跟读与自动翻页；引擎可切换 —— Edge 免费在线（含字级时间戳）、本地 sherpa-onnx 模型（MeloTTS 中英混排，离线可商用）、OpenAI 兼容 TTS 端点；多音色试听、语速调节、内容寻址音频缓存与引擎失败回退
 - **多提供商**：复刻 `pi-ai` 的 `Model/Context/StreamFn`，支持 OpenAI 兼容接口
 
 ## 技术栈
@@ -77,6 +78,8 @@ npm run package --workspace=@agentreader/app -- --win   # -> out/AgentReader-Set
 - `docs/plan.md` 规划文档
 - `docs/plan-v0.2.md` 提供商/多模型/Web Search/Skill 规划
 - `docs/export-design.md` 对话导出（Markdown / HTML / JSON）设计
+- `docs/tts-architecture.md` 朗读抽象层（引擎接口 / 缓存 / 回退）
+- `docs/tts-research.md`、`docs/research/` 朗读方案调研与实测
 - `docs/progress.md` 进度记录
 - `Reference/pi` 参考项目（已 gitignore，不提交）
 

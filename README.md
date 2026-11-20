@@ -17,6 +17,7 @@ A desktop AI document reader with PDF / EPUB import, reading, **highlight / rect
 - **Annotation**: selecting text opens a highlight / quote / copy menu; **double-click selects a word, triple-click the whole paragraph** (matching browser behavior); modifier-drag rectangle selection (macOS `⌥`, other platforms `Alt`), persisted as normalized coordinates; existing highlights can be quoted or deleted; EPUB highlights are anchored to epub.js CFIs
 - **AI chat**: sidebar, quotes the current selection or highlight on demand, `@` mention picker for chapters / sections / pages / annotations, graded context (selection / chapter / full-text RAG), streaming output
 - **Export**: export the current conversation as Markdown, standalone HTML, or JSON; choose citations / reasoning / tool calls / tool results
+- **Read aloud**: sentence-level TTS with highlight follow-along and auto page turn; switchable engines — Edge (free, online, word timestamps), local sherpa-onnx models (MeloTTS for mixed Chinese/English, offline and commercially licensed), OpenAI-compatible TTS endpoints; voice preview, speed control, content-addressed audio cache and engine fallback
 - **Multi-provider**: reimplements `pi-ai`'s `Model / Context / StreamFn`, OpenAI-compatible endpoints
 
 ## Tech stack
@@ -75,6 +76,8 @@ The unsigned installer triggers SmartScreen (More info → Run anyway); a code-s
 - `docs/plan.md` plan
 - `docs/plan-v0.2.md` providers / multi-model / web search / skills plan
 - `docs/export-design.md` conversation export (Markdown / HTML / JSON) design
+- `docs/tts-architecture.md` read-aloud abstraction (engine contract / cache / fallback)
+- `docs/tts-research.md`, `docs/research/` TTS survey and measurements
 - `docs/progress.md` progress log
 - `Reference/pi` reference project (gitignored, not committed)
 
