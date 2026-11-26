@@ -33,6 +33,8 @@ export type DocMeta = {
 	cloud?: boolean;
 	/** 阅读位置与进度分母（doc.json 里的字段，书架用；老数据可能缺失） */
 	lastPage?: number;
+	/** EPUB 的当前章节（reader-chapter.json）；PDF 只有 lastPage */
+	chapter?: number;
 	numPages?: number;
 	unit?: "page" | "chapter";
 	importedAt?: number;

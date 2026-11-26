@@ -106,6 +106,19 @@ export type BookOpResult =
 	| { ok: true; bytes: number; ext?: string }
 	| { ok: false; error: SyncFailure };
 
+/** 一本书的权威同步状态（主进程一次算好，界面不再自己拼三份数据源）。 */
+export type SyncLibraryEntry = {
+	docId: string;
+	/** 本地有原书文件 */
+	localOriginal: boolean;
+	/** 云端有原书文件 */
+	remoteOriginal: boolean;
+	/** 笔记（进度/标注/对话）至少推送过一次 */
+	notesSynced: boolean;
+};
+
+export type SyncBookOpResult = { ok: true } | { ok: false; error: SyncFailure };
+
 export type SyncResolveResult =
 	| { ok: true; status: SyncStatus }
 	| { ok: false; error: SyncFailure };

@@ -105,7 +105,6 @@ for (const book of BOOKS) {
 				originalPath: `/Users/me/Books/${book.title}.epub`,
 				...(book.chapter > 0
 					? {
-							lastPage: book.chapter,
 							positionUpdatedAt: Date.now() - Math.round(Math.random() * 3e7),
 							positionDevice: "demo",
 						}
@@ -118,6 +117,10 @@ for (const book of BOOKS) {
 		),
 	);
 	writeFileSync(join(dir, "annotations.json"), "[]");
+	// EPUB 的阅读位置在 reader-chapter.json（doc.json 的 lastPage 只服务 PDF）
+	if (book.chapter > 0) {
+		writeFileSync(join(dir, "reader-chapter.json"), JSON.stringify({ chapter: book.chapter, at: Date.now(), dev: "demo" }));
+	}
 
 	if (book.synced) {
 		writeFileSync(join(cloud, "books", `${book.title} [${docId}].epub`), bytes);

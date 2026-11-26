@@ -26,7 +26,7 @@ import { buildInfinicloudUserRequest, normalizeEndpoint, parseInfinicloudUser } 
 import { syncClock } from "./device.ts";
 import { clearPending, markDocDirty, markSettingsDirty, onDirty, takePending } from "./dirty.ts";
 import { createDocPort } from "./doc-port.ts";
-import { createEngine, type Engine, normalizeDoc, type SettingsPort } from "./engine.ts";
+import { createEngine, type Engine, normalizeDoc, type SettingsPort, STATE_DIR } from "./engine.ts";
 import {
 	syncBaseSettingsFile,
 	syncConflictsFile,
@@ -532,6 +532,50 @@ export function registerSyncIpc(): void {
 	ipcMain.handle("sync:status", () => currentStatus());
 	ipcMain.handle("sync:now", () => runSync());
 	ipcMain.handle("sync:conflicts", (): SyncStatusConflict[] => runtime().conflicts.read());
+	// 书库每本书的权威同步状态：本地有原书 / 云端有原书 / 笔记推过没有。
+	// 之前界面靠「远端书目 + 索引 + 待推送」三处自己拼，任一处时序落后就会显示错。
+	ipcMain.handle("sync:library-state", async () => {
+		const rt = runtime();
+		const localIds = new Set(rt.docs.list());
+		const indexIds = new Set(Object.keys(rt.storage.readIndex().docs));
+		const remoteIds = new Set<string>();
+		if (rt.books) {
+			try {
+				for (const book of await rt.books.remoteBooks()) remoteIds.add(book.docId);
+			} catch {}
+		}
+		const all = new Set([...localIds, ...remoteIds, ...indexIds]);
+		return [...all].map((docId) => ({
+			docId,
+			localOriginal: localIds.has(docId),
+			remoteOriginal: remoteIds.has(docId),
+			notesSynced: indexIds.has(docId),
+		}));
+	});
+	ipcMain.handle("sync:book:delete", async (_e, docId: string) => {
+		const rt = runtime();
+		if (!rt.books || !rt.backend) {
+			return {
+				ok: false,
+				error: { code: "server", title: "尚未配置同步", detail: "", retryable: false },
+			};
+		}
+		const id = String(docId ?? "");
+		try {
+			for (const book of (await rt.books.remoteBooks()).filter((entry) => entry.docId === id)) {
+				await rt.backend.del(book.path);
+			}
+			// 笔记也一起删：用户按下「从云端删除」就是想彻底清掉这本书
+			await rt.backend.del(`${STATE_DIR}/${id}.json`);
+			const index = rt.storage.readIndex();
+			delete index.docs[id];
+			rt.storage.writeIndex(index);
+			rt.remoteTitles.delete(id);
+			return { ok: true };
+		} catch (error) {
+			return { ok: false, error: toFailure(error) };
+		}
+	});
 	// 被同步引擎推过的书（index 里有记录）——书架据此显示「已同步」
 	ipcMain.handle("sync:doc-index", () => Object.keys(runtime().storage.readIndex().docs));
 	ipcMain.handle("sync:remote-library", async () => {

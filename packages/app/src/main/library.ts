@@ -25,7 +25,19 @@ export function registerLibraryIpc() {
 		if (!existsSync(root)) return [];
 		return readdirSync(root)
 			.filter((id) => existsSync(join(root, id, "doc.json")))
-			.map((id) => JSON.parse(readFileSync(join(root, id, "doc.json"), "utf-8")));
+			.map((id) => {
+				const meta = JSON.parse(readFileSync(join(root, id, "doc.json"), "utf-8"));
+				// EPUB 的阅读位置记在 reader-chapter.json（doc.json 的 lastPage 只服务 PDF），
+				// 书架的进度条要同时认这两种来源，否则 EPUB 永远显示「未开始」。
+				const chapterFile = join(root, id, "reader-chapter.json");
+				if (existsSync(chapterFile)) {
+					try {
+						const chapter = Number(JSON.parse(readFileSync(chapterFile, "utf-8"))?.chapter);
+						if (Number.isFinite(chapter) && chapter > 0) meta.chapter = Math.floor(chapter);
+					} catch {}
+				}
+				return meta;
+			});
 	});
 
 	ipcMain.handle("library:import", async () => {

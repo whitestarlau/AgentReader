@@ -14,6 +14,7 @@ import { SideBar } from "./components/shell/SideBar.tsx";
 import { EditorTabs } from "./components/shell/EditorTabs.tsx";
 import { StatusBar } from "./components/shell/StatusBar.tsx";
 import { Bookshelf } from "./components/shelf/Bookshelf.tsx";
+import { deriveShelfDocs } from "./shelf-state.ts";
 import { Resizer } from "./components/shell/Resizer.tsx";
 import type { ExportRequest, ExportResult } from "../shared/chat-export.ts";
 import type {
@@ -44,6 +45,8 @@ import type {
   BookOpResult,
   SyncConfigureInput,
   SyncConfigureResult,
+  SyncBookOpResult,
+  SyncLibraryEntry,
   SyncPresetInfo,
   SyncProbeResult,
   SyncResolveResult,
@@ -96,6 +99,8 @@ declare global {
       syncBooksList: () => Promise<BookListResult>;
       syncRemoteLibrary: () => Promise<Array<{ docId: string; title: string; ext: string; size: number; local: boolean }>>;
       syncDocIndex: () => Promise<string[]>;
+      syncLibraryState: () => Promise<SyncLibraryEntry[]>;
+      syncBookDelete: (docId: string) => Promise<SyncBookOpResult>;
       syncBookUpload: (docId: string) => Promise<BookOpResult>;
       syncBookDownload: (docId: string) => Promise<BookOpResult>;
       onSyncStatus: (cb: (status: SyncStatus) => void) => () => void;
@@ -179,8 +184,8 @@ function App() {
   const [settingsSection, setSettingsSection] = useState<SectionId | undefined>(undefined);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [remoteDocs, setRemoteDocs] = useState<DocMeta[]>([]);
-  const [remoteIds, setRemoteIds] = useState<string[]>([]);
-  const [syncedIds, setSyncedIds] = useState<string[]>([]);
+  const [libraryState, setLibraryState] = useState<SyncLibraryEntry[]>([]);
+  const [syncRefresh, setSyncRefresh] = useState(0);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   // 菜单「新建对话」信号：递增 token，ChatPanel 监听后新建。
   const [newChatToken, setNewChatToken] = useState(0);
@@ -212,41 +217,34 @@ function App() {
   useEffect(() => {
     if (!syncStatus?.configured) {
       setRemoteDocs([]);
-      setRemoteIds([]);
-      setSyncedIds([]);
+      setLibraryState([]);
       return;
     }
     let cancelled = false;
-    void window.api
-      .syncRemoteLibrary()
-      .then((books) => {
+    void Promise.all([window.api.syncRemoteLibrary(), window.api.syncLibraryState()])
+      .then(([books, states]) => {
         if (cancelled) return;
-        setRemoteIds(books.map((book) => book.docId));
         setRemoteDocs(
           books
             .filter((book) => !book.local)
             .map((book) => ({ id: book.docId, title: book.title, ext: book.ext, cloud: true })),
         );
+        setLibraryState(states);
       })
       .catch(() => {});
-    void window.api.syncDocIndex().then(setSyncedIds).catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [syncStatus?.configured, syncStatus?.lastSyncAt]);
+  }, [syncStatus?.configured, syncStatus?.lastSyncAt, syncRefresh]);
 
   /** 书库列表 = 本地书 + 只在云端的书（后者点开时先下载），并带上同步状态 */
-  const libraryDocs = useMemo(() => {
-    const pendingDocs = new Set(syncStatus?.pending.docs ?? []);
-    const remote = new Set(remoteIds);
-    const synced = new Set(syncedIds);
-    const withState = (doc: DocMeta): DocMeta & { remote?: boolean; pending?: boolean } => ({
-      ...doc,
-      remote: remote.has(doc.id) || synced.has(doc.id),
-      pending: pendingDocs.has(doc.id),
-    });
-    return [...docs.map(withState), ...remoteDocs.map(withState)];
-  }, [docs, remoteDocs, remoteIds, syncedIds, syncStatus?.pending.docs]);
+  const libraryDocs = useMemo(
+    () =>
+      deriveShelfDocs({
+        docs,
+        remoteOnlyDocs: remoteDocs,
+        libraryState,
+        pendingDocs: syncStatus?.pending.docs ?? [],
+      }),
+    [docs, remoteDocs, libraryState, syncStatus?.pending.docs],
+  );
   const loadSettings = useCallback(() => {
     window.api.getSettings().then((s) => {
       if (s.ocrLang) setOcrLang(s.ocrLang);
@@ -340,7 +338,19 @@ function App() {
     const list = await window.api.listLibrary();
     setDocs(list);
     setRemoteDocs((prev) => prev.filter((entry) => entry.id !== id));
+    setSyncRefresh((n) => n + 1);
     openDoc(id);
+  };
+
+  const deleteCloudDoc = async (doc: DocMeta) => {
+    if (!confirm(`从云端删除《${doc.title}》？\n原书与笔记都会被删除，本地文件不受影响。`)) return;
+    const result = await window.api.syncBookDelete(doc.id);
+    if (!result.ok) {
+      alert(`删除失败：${result.error.title}\n${result.error.detail}`);
+      return;
+    }
+    setRemoteDocs((prev) => prev.filter((entry) => entry.id !== doc.id));
+    setSyncRefresh((n) => n + 1);
   };
 
   const openDoc = (rawId: string) => {
@@ -581,6 +591,7 @@ function App() {
               onOpen={openDoc}
               onImport={importDoc}
               onRemove={removeDoc}
+              onDeleteCloud={deleteCloudDoc}
             />
           )}
         </main>
@@ -644,7 +655,12 @@ function App() {
         <Settings
           docId={selected}
           initialSection={settingsSection}
-          onClose={() => { setShowSettings(false); setSettingsSection(undefined); }}
+          onClose={() => {
+            setShowSettings(false);
+            setSettingsSection(undefined);
+            // 设置页里可能传过原书 / 改过同步配置，回来时刷新书架的同步状态
+            setSyncRefresh((n) => n + 1);
+          }}
           onSaved={() => { loadSettings(); loadAiConfig(); }}
         />
       )}

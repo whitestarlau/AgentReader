@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DocMeta } from "../../types.ts";
+import type { ShelfDoc } from "../../shelf-state.ts";
 import { Icon } from "../Icons.tsx";
 
 /**
@@ -9,13 +10,6 @@ import { Icon } from "../Icons.tsx";
  * 生成失败的书不报错，用 CSS 占位——书架不能因为一本书没有封面就打不开。
  */
 
-type ShelfDoc = DocMeta & {
-	/** 云端有这本书的原书 */
-	remote?: boolean;
-	/** 本地刚改过、还没推上去 */
-	pending?: boolean;
-};
-
 type SortKey = "recent" | "title" | "imported";
 
 const SORTS: Array<{ key: SortKey; label: string }> = [
@@ -24,18 +18,24 @@ const SORTS: Array<{ key: SortKey; label: string }> = [
 	{ key: "imported", label: "导入时间" },
 ];
 
-/** 「第 42 / 320 页」或「第 7 章」；没有分母时只显示当前位置。 */
+/** 当前位置：EPUB 用章节（reader-chapter.json），PDF 用页码。 */
+function currentPosition(doc: ShelfDoc): number {
+	if (doc.unit === "chapter") return doc.chapter ?? doc.lastPage ?? 0;
+	return doc.lastPage ?? 0;
+}
+
+/** 「第 42 / 320 页」或「第 7 / 24 章」；没有分母时只显示当前位置。 */
 function progressLabel(doc: ShelfDoc): string {
-	if (!doc.lastPage) return "未开始";
-	if (doc.unit === "chapter") {
-		return doc.numPages ? `第 ${doc.lastPage} / ${doc.numPages} 章` : `第 ${doc.lastPage} 章`;
-	}
-	return doc.numPages ? `第 ${doc.lastPage} / ${doc.numPages} 页` : `第 ${doc.lastPage} 页`;
+	const position = currentPosition(doc);
+	if (!position) return "未开始";
+	const unit = doc.unit === "chapter" ? "章" : "页";
+	return doc.numPages ? `第 ${position} / ${doc.numPages} ${unit}` : `第 ${position} ${unit}`;
 }
 
 function progressRatio(doc: ShelfDoc): number {
-	if (!doc.lastPage || !doc.numPages) return 0;
-	return Math.min(1, Math.max(0, doc.lastPage / doc.numPages));
+	const position = currentPosition(doc);
+	if (!position || !doc.numPages) return 0;
+	return Math.min(1, Math.max(0, position / doc.numPages));
 }
 
 /** 没有封面时的占位：用书名首字做视觉锚点，比一块灰底好认。 */
@@ -52,11 +52,14 @@ export function Bookshelf({
 	onOpen,
 	onImport,
 	onRemove,
+	onDeleteCloud,
 }: {
 	docs: ShelfDoc[];
 	onOpen: (docId: string) => void;
 	onImport: () => void;
 	onRemove: (doc: DocMeta) => void;
+	/** 只在云端的书：删除云端原书与笔记（本地没有文件可删） */
+	onDeleteCloud: (doc: DocMeta) => void;
 }) {
 	const [sort, setSort] = useState<SortKey>("recent");
 	const [covers, setCovers] = useState<Record<string, string>>({});
@@ -180,19 +183,18 @@ export function Bookshelf({
 							</div>
 						</div>
 
-						{!doc.cloud ? (
-							<button
-								type="button"
-								className="shelf-remove"
-								title="从本地书库移除（云端副本保留）"
-								onClick={(event) => {
-									event.stopPropagation();
-									onRemove(doc);
-								}}
-							>
-								<Icon name="trash" size={12} />
-							</button>
-						) : null}
+						<button
+							type="button"
+							className="shelf-remove"
+							title={doc.cloud ? "从云端删除（原书与笔记）" : "从本地书库移除（云端副本保留）"}
+							onClick={(event) => {
+								event.stopPropagation();
+								if (doc.cloud) onDeleteCloud(doc);
+								else onRemove(doc);
+							}}
+						>
+							<Icon name="trash" size={12} />
+						</button>
 					</article>
 				))}
 			</div>

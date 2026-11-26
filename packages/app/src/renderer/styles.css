@@ -3651,6 +3651,16 @@ body.resizing iframe {
 	color: #fff;
 }
 
+/* 按钮默认有 4px/12px 的内边距，在 22px 的方框里会把内容区压成 0，
+   图标因此被算成 0 宽 —— 看上去就是一个灰色方块。 */
+.shelf-remove {
+	padding: 0;
+}
+
+.shelf-remove svg {
+	flex: 0 0 auto;
+}
+
 .shelf-empty {
 	align-items: center;
 	justify-content: center;
