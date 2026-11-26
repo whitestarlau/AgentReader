@@ -12,9 +12,10 @@ import { join } from "node:path";
 import { dialog, ipcMain } from "electron";
 import { ensureCover } from "./covers.ts";
 import { clearChapterCache } from "./doc-state.ts";
-import { clearDocCaches } from "./doc-text.ts";
+import { clearDocCaches, clearDocTitleCache } from "./doc-text.ts";
 import { ensureLibrary, getDocDir, libraryRoot } from "./paths.ts";
 import { markDocDirty } from "./sync/dirty.ts";
+import { syncBaseDocFile } from "./sync/paths.ts";
 
 /** Import-based library management under `library/{hash}/`. */
 
@@ -78,6 +79,9 @@ export function registerLibraryIpc() {
 		// Release in-memory handles/caches before deleting the folder from disk.
 		clearDocCaches(docId);
 		clearChapterCache(docId);
+		clearDocTitleCache(docId);
+		// 基线跟着删：否则重新导入同一本书时会拿过期基线去三方合并
+		rmSync(syncBaseDocFile(docId), { force: true });
 		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 		return true;
 	});

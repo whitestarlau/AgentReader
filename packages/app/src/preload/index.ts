@@ -67,7 +67,8 @@ contextBridge.exposeInMainWorld("api", {
 	syncRemoteLibrary: () => ipcRenderer.invoke("sync:remote-library"),
 	syncDocIndex: () => ipcRenderer.invoke("sync:doc-index"),
 	syncLibraryState: () => ipcRenderer.invoke("sync:library-state"),
-	syncBookDelete: (docId: string) => ipcRenderer.invoke("sync:book:delete", docId),
+	syncBookDelete: (docId: string, scope?: "everywhere" | "local") =>
+		ipcRenderer.invoke("sync:book:delete", docId, scope),
 	syncBookUpload: (docId: string) => ipcRenderer.invoke("sync:book:upload", docId),
 	syncBookDownload: (docId: string) => ipcRenderer.invoke("sync:book:download", docId),
 	getSettings: () => ipcRenderer.invoke("settings:get"),

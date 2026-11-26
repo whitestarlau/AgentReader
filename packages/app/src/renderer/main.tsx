@@ -14,6 +14,7 @@ import { SideBar } from "./components/shell/SideBar.tsx";
 import { EditorTabs } from "./components/shell/EditorTabs.tsx";
 import { StatusBar } from "./components/shell/StatusBar.tsx";
 import { Bookshelf } from "./components/shelf/Bookshelf.tsx";
+import { DeleteBookDialog } from "./components/shelf/DeleteBookDialog.tsx";
 import { deriveShelfDocs } from "./shelf-state.ts";
 import { Resizer } from "./components/shell/Resizer.tsx";
 import type { ExportRequest, ExportResult } from "../shared/chat-export.ts";
@@ -100,7 +101,7 @@ declare global {
       syncRemoteLibrary: () => Promise<Array<{ docId: string; title: string; ext: string; size: number; local: boolean }>>;
       syncDocIndex: () => Promise<string[]>;
       syncLibraryState: () => Promise<SyncLibraryEntry[]>;
-      syncBookDelete: (docId: string) => Promise<SyncBookOpResult>;
+      syncBookDelete: (docId: string, scope?: "everywhere" | "local") => Promise<SyncBookOpResult>;
       syncBookUpload: (docId: string) => Promise<BookOpResult>;
       syncBookDownload: (docId: string) => Promise<BookOpResult>;
       onSyncStatus: (cb: (status: SyncStatus) => void) => () => void;
@@ -186,6 +187,8 @@ function App() {
   const [remoteDocs, setRemoteDocs] = useState<DocMeta[]>([]);
   const [libraryState, setLibraryState] = useState<SyncLibraryEntry[]>([]);
   const [syncRefresh, setSyncRefresh] = useState(0);
+  const [deleteTarget, setDeleteTarget] = useState<DocMeta | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   // 菜单「新建对话」信号：递增 token，ChatPanel 监听后新建。
   const [newChatToken, setNewChatToken] = useState(0);
@@ -342,17 +345,6 @@ function App() {
     openDoc(id);
   };
 
-  const deleteCloudDoc = async (doc: DocMeta) => {
-    if (!confirm(`从云端删除《${doc.title}》？\n原书与笔记都会被删除，本地文件不受影响。`)) return;
-    const result = await window.api.syncBookDelete(doc.id);
-    if (!result.ok) {
-      alert(`删除失败：${result.error.title}\n${result.error.detail}`);
-      return;
-    }
-    setRemoteDocs((prev) => prev.filter((entry) => entry.id !== doc.id));
-    setSyncRefresh((n) => n + 1);
-  };
-
   const openDoc = (rawId: string) => {
     const id = rawId;
     if (remoteDocs.some((entry) => entry.id === id)) {
@@ -396,25 +388,40 @@ function App() {
     if (selected === id) setSelected(next[idx] ?? next[idx - 1] ?? null);
   };
 
-  const removeDoc = async (d: DocMeta) => {
-    if (!confirm(`删除《${d.title}》？\n本地副本、标注、对话与 OCR 缓存将一并删除，不可恢复。`)) return;
+  const requestDelete = (doc: DocMeta) => setDeleteTarget(doc);
+
+  /** 统一删除入口：先问范围，再执行；无论哪种范围都要把三个列表刷新掉。 */
+  const confirmDelete = async (scope: "everywhere" | "local") => {
+    const target = deleteTarget;
+    if (!target) return;
+    setDeleting(true);
     try {
-      await window.api.removeDoc(d.id);
-    } catch (e) {
-      alert(`删除失败: ${e instanceof Error ? e.message : String(e)}`);
-      return;
-    }
-    setDocs((prev) => prev.filter((x) => x.id !== d.id));
-    setOpenDocs((prev) => prev.filter((x) => x !== d.id));
-    if (selectedRef.current === d.id) {
-      annsRef.current = [];
-      setAnns([]);
-      setSelection(null);
-      setPage(1);
-      setSelected(null);
+      if (scope === "everywhere") {
+        const result = await window.api.syncBookDelete(target.id, "everywhere");
+        if (!result.ok) {
+          alert(`删除失败：${result.error.title}\n${result.error.detail}`);
+          return;
+        }
+      } else {
+        await window.api.removeDoc(target.id);
+      }
+      setDocs((prev) => prev.filter((entry) => entry.id !== target.id));
+      setRemoteDocs((prev) => prev.filter((entry) => entry.id !== target.id));
+      setOpenDocs((prev) => prev.filter((id) => id !== target.id));
+      if (selectedRef.current === target.id) {
+        annsRef.current = [];
+        setAnns([]);
+        setSelection(null);
+        setSelected(null);
+      }
+      setSyncRefresh((n) => n + 1);
+    } catch (error) {
+      alert(`删除失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
     }
   };
-
   const selectView = (view: ActivityView) => {
     if (sidebarOpen && sidebarView === view) setSidebarOpen(false);
     else {
@@ -502,7 +509,7 @@ function App() {
               isEpub={isEpub}
               onImport={importDoc}
               onOpenDoc={openDoc}
-              onRemoveDoc={removeDoc}
+              onRemoveDoc={requestDelete}
               onJumpToPage={jumpToLocator}
               activeOutlineHref={outlineFocus?.href ?? null}
               onDeleteAnnotation={deleteAnn}
@@ -590,8 +597,8 @@ function App() {
               docs={libraryDocs}
               onOpen={openDoc}
               onImport={importDoc}
-              onRemove={removeDoc}
-              onDeleteCloud={deleteCloudDoc}
+              onRemove={requestDelete}
+              onDeleteCloud={requestDelete}
             />
           )}
         </main>
@@ -650,6 +657,15 @@ function App() {
         }
         onOpenSync={() => { setSettingsSection("sync"); setShowSettings(true); }}
       />
+
+      {deleteTarget && (
+        <DeleteBookDialog
+          doc={libraryDocs.find((entry) => entry.id === deleteTarget.id) ?? deleteTarget}
+          busy={deleting}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={confirmDelete}
+        />
+      )}
 
       {showSettings && (
         <Settings

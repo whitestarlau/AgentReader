@@ -51,6 +51,8 @@ export type EngineStorage = {
 	writeBase(state: SettingsState): void;
 	readDocBase?(docId: string): DocState | undefined;
 	writeDocBase?(docId: string, state: DocState): void;
+	/** 删除某本书的基线（删书时调用，避免下次重新导入拿到过期基线）。 */
+	deleteDocBase?(docId: string): void;
 	readIndex(): SyncIndex;
 	writeIndex(index: SyncIndex): void;
 };

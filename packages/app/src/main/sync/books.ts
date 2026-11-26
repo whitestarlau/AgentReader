@@ -36,7 +36,7 @@ export type BookSync = {
 	download(
 		docId: string,
 		write: (data: Buffer, ext: string) => void,
-	): Promise<{ bytes: number; ext: string }>;
+	): Promise<{ bytes: number; ext: string; title?: string }>;
 	remoteBooks(): Promise<RemoteBook[]>;
 };
 
@@ -100,7 +100,7 @@ export function createBookSync(deps: {
 }): BookSync {
 	const readFile = deps.readFile ?? ((path: string) => readFileSync(path));
 
-	const listRemote = async (): Promise<RemoteBook[]> => {
+	const listRemoteRaw = async (): Promise<RemoteBook[]> => {
 		const entries = await deps.backend.list(BOOKS_DIR);
 		const books: RemoteBook[] = [];
 		for (const entry of entries) {
@@ -109,16 +109,30 @@ export function createBookSync(deps: {
 			const parsed = docIdFromBookName(fileName);
 			if (!parsed) continue;
 			const ext = fileName.slice(fileName.lastIndexOf(".") + 1).toLowerCase();
-			books.push({
+			const book: RemoteBook = {
 				docId: parsed.docId,
 				ext,
 				size: entry.size,
 				path: entry.path,
 				name: fileName,
 				title: parsed.title,
-			});
+			};
+			books.push(book);
 		}
 		return books;
+	};
+
+	/**
+	 * 对外：同一本书在云端可能有多份（旧版本用纯 hash 存过，改名后又写了一份可读名字），
+	 * 按 docId 去重、优先保留带书名的那个，否则书架会画出两本一模一样的书。
+	 */
+	const listRemote = async (): Promise<RemoteBook[]> => {
+		const byDocId = new Map<string, RemoteBook>();
+		for (const book of await listRemoteRaw()) {
+			const existing = byDocId.get(book.docId);
+			if (!existing || (!existing.title && book.title)) byDocId.set(book.docId, book);
+		}
+		return [...byDocId.values()];
 	};
 
 	return {
@@ -147,7 +161,7 @@ export function createBookSync(deps: {
 			await deps.backend.put(target, content);
 
 			// 书名变了（或旧版用纯 hash 存过）：把旧文件删掉，避免云端留住两个副本
-			const stale = (await listRemote()).filter(
+			const stale = (await listRemoteRaw()).filter(
 				(book) => book.docId === docId && book.path !== target,
 			);
 			for (const book of stale) {
@@ -186,7 +200,7 @@ export function createBookSync(deps: {
 				);
 			}
 			write(data, remote.ext);
-			return { bytes: data.length, ext: remote.ext };
+			return { bytes: data.length, ext: remote.ext, title: remote.title };
 		},
 	};
 }

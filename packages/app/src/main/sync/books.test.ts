@@ -203,3 +203,29 @@ test("a book uploaded by the previous version (bare hash) is still found and mig
 	assert.equal(await backend.get(`books/${docId}.pdf`), null);
 	assert.ok(await backend.get(`books/整理后的书名 [${docId}].pdf`));
 });
+
+test("two cloud files for the same book collapse into one entry (readable name wins)", async (t) => {
+	const { sync, backend } = setup(t);
+	const data = book("SAME");
+	const docId = docIdOf(data);
+	// 旧版本留下的纯 hash 文件 + 改名后的可读文件，都指向同一本书
+	await backend.put(`books/${docId}.epub`, data);
+	await backend.put(`books/一本书 [${docId}].epub`, data);
+
+	const remote = await sync.remoteBooks();
+	assert.equal(remote.length, 1, "同一 docId 只应出现一次，否则书架会画出两本一样的书");
+	assert.equal(remote[0].title, "一本书");
+});
+
+test("download reports the book title from the cloud file name", async (t) => {
+	const { files, paths, titles, sync } = setup(t);
+	const data = book("TITLED");
+	const docId = docIdOf(data);
+	files.set("/local/x.epub", data);
+	paths.set(docId, "/local/x.epub");
+	titles.set(docId, "三体");
+	await sync.upload(docId);
+
+	const result = await sync.download(docId, () => {});
+	assert.equal(result.title, "三体", "下载方拿得到书名，才能写出可读的 doc.json");
+});

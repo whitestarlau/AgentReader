@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BrowserWindow, clipboard, dialog, ipcMain, safeStorage, session, shell } from "electron";
 import type {
@@ -12,7 +12,8 @@ import type {
 	SyncStatus,
 	SyncStatusConflict,
 } from "../../shared/sync-types.ts";
-import { getDocTitle } from "../doc-text.ts";
+import { clearChapterCache } from "../doc-state.ts";
+import { clearDocCaches, clearDocTitleCache, getDocTitle } from "../doc-text.ts";
 import { ensureLibrary, getDocDir, libraryRoot } from "../paths.ts";
 import { readRawSettings, writeRawSettings } from "../settings.ts";
 import { createBackend, registerBackendFactory, type SyncBackend, SyncError } from "./backend.ts";
@@ -23,6 +24,7 @@ import { type Clock, createClock } from "./clock.ts";
 import { type ConfigStore, createConfigStore, type SecretCodec } from "./config.ts";
 import { createConflictStore, toStoredConflicts } from "./conflicts.ts";
 import { buildInfinicloudUserRequest, normalizeEndpoint, parseInfinicloudUser } from "./connect.ts";
+import { deleteBook } from "./delete.ts";
 import { syncClock } from "./device.ts";
 import { clearPending, markDocDirty, markSettingsDirty, onDirty, takePending } from "./dirty.ts";
 import { createDocPort } from "./doc-port.ts";
@@ -137,6 +139,21 @@ let status: SyncStatus = {
 	pending: { settings: false, docs: [] },
 	conflicts: [],
 };
+
+/**
+ * 删除本机这本书的目录与相关缓存，并清掉同步基线。
+ * 基线必须清：留着它，下次重新导入同一本书时三方合并会拿一份过期基线比对。
+ */
+function removeLocalDoc(docId: string): boolean {
+	const dir = getDocDir(docId);
+	clearDocCaches(docId);
+	clearChapterCache(docId);
+	clearDocTitleCache(docId);
+	runtime().storage.deleteDocBase?.(docId);
+	if (!existsSync(dir)) return false;
+	rmSync(dir, { recursive: true, force: true });
+	return true;
+}
 
 /** 本机原书路径：library/{docId}/original.{ext}。 */
 function bookPathOf(docId: string): string | null {
@@ -552,26 +569,25 @@ export function registerSyncIpc(): void {
 			notesSynced: indexIds.has(docId),
 		}));
 	});
-	ipcMain.handle("sync:book:delete", async (_e, docId: string) => {
+	ipcMain.handle("sync:book:delete", async (_e, docId: string, scope?: "everywhere" | "local") => {
 		const rt = runtime();
-		if (!rt.books || !rt.backend) {
-			return {
-				ok: false,
-				error: { code: "server", title: "尚未配置同步", detail: "", retryable: false },
-			};
-		}
 		const id = String(docId ?? "");
 		try {
-			for (const book of (await rt.books.remoteBooks()).filter((entry) => entry.docId === id)) {
-				await rt.backend.del(book.path);
-			}
-			// 笔记也一起删：用户按下「从云端删除」就是想彻底清掉这本书
-			await rt.backend.del(`${STATE_DIR}/${id}.json`);
-			const index = rt.storage.readIndex();
-			delete index.docs[id];
-			rt.storage.writeIndex(index);
+			// 「删除」默认连云端一起删；只有用户明确选「仅移除本地文件」才保留云端
+			const result = await deleteBook({
+				docId: id,
+				scope: scope === "local" ? "local" : "everywhere",
+				backend: rt.backend,
+				books: rt.books,
+				storage: rt.storage,
+				removeLocal: () => removeLocalDoc(id),
+			});
 			rt.remoteTitles.delete(id);
-			return { ok: true };
+			return {
+				ok: true,
+				removedRemote: result.removedRemote.length,
+				removedLocal: result.removedLocal,
+			};
 		} catch (error) {
 			return { ok: false, error: toFailure(error) };
 		}
@@ -643,6 +659,14 @@ export function registerSyncIpc(): void {
 		}
 		const id = String(docId ?? "");
 		try {
+			// 云端 state 里的标题最准（文件名可能被用户改过）；其次用文件名里的书名
+			let remoteTitle: string | undefined;
+			if (rt.backend) {
+				try {
+					const stateBuffer = await rt.backend.get(`${STATE_DIR}/${id}.json`);
+					if (stateBuffer) remoteTitle = normalizeDoc(stateBuffer, id).title || undefined;
+				} catch {}
+			}
 			const result = await rt.books.download(id, (data, ext) => {
 				// 云端才有的书：在这里补一个完整的书库条目，之后与本地导入的书完全等价
 				const dir = getDocDir(id);
@@ -650,12 +674,13 @@ export function registerSyncIpc(): void {
 				writeFileSync(join(dir, `original.${ext}`), data);
 				const metaPath = join(dir, "doc.json");
 				if (!existsSync(metaPath)) {
+					const fallbackTitle = remoteTitle || result.title || `${id}.${ext}`;
 					writeFileSync(
 						metaPath,
 						JSON.stringify(
 							{
 								id,
-								title: `${id}.${ext}`,
+								title: fallbackTitle,
 								ext,
 								hash: id,
 								importedAt: Date.now(),

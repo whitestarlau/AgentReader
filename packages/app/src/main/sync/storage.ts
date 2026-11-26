@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { EngineStorage, SyncIndex } from "./engine.ts";
 import type { SettingsState } from "./types.ts";
@@ -19,7 +19,14 @@ function writeAtomic(file: string, text: string): void {
 
 const emptyIndex = (): SyncIndex => ({ settingsRev: 0, docs: {} });
 
-export function createFileStorage(opts: { baseFile: string; indexFile: string }): EngineStorage {
+export function createFileStorage(opts: {
+	baseFile: string;
+	indexFile: string;
+	/** `base/{docId}.json` 的路径；删书时用来清基线（默认与 baseFile 同目录） */
+	docBaseFile?: (docId: string) => string;
+}): EngineStorage {
+	const docBaseFile =
+		opts.docBaseFile ?? ((docId: string) => opts.baseFile.replace(/[^/]+$/, `${docId}.json`));
 	return {
 		readBase() {
 			if (!existsSync(opts.baseFile)) return undefined;
@@ -38,6 +45,9 @@ export function createFileStorage(opts: { baseFile: string; indexFile: string })
 		},
 		writeBase(state) {
 			writeAtomic(opts.baseFile, JSON.stringify(state, null, 2));
+		},
+		deleteDocBase(docId) {
+			rmSync(docBaseFile(docId), { force: true });
 		},
 		readIndex() {
 			if (!existsSync(opts.indexFile)) return emptyIndex();

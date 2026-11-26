@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DocMeta } from "../../types.ts";
 import type {
 	RemoteBookInfo,
@@ -63,6 +63,8 @@ export function SyncSection() {
 	const [error, setError] = useState<string | null>(null);
 	const [localDocs, setLocalDocs] = useState<DocMeta[]>([]);
 	const [remoteBooks, setRemoteBooks] = useState<RemoteBookInfo[]>([]);
+	/** 每本书的权威同步状态（本地有没有原书），避免用旧的本地列表去过滤云端列表 */
+	const [bookState, setBookState] = useState<Map<string, boolean>>(new Map());
 	const [bookBusy, setBookBusy] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -71,11 +73,23 @@ export function SyncSection() {
 		return window.api.onSyncStatus(setStatus);
 	}, []);
 
+	/** 三个来源一起刷新：本地书库、云端原书、每本书的权威状态。 */
+	const refreshBooks = useCallback(async () => {
+		const [list, remote, states] = await Promise.all([
+			window.api.listLibrary(),
+			window.api.syncBooksList(),
+			window.api.syncLibraryState(),
+		]);
+		setLocalDocs(list);
+		setRemoteBooks(remote.remote);
+		setBookState(new Map(states.map((entry) => [entry.docId, entry.localOriginal])));
+	}, []);
+
+	// 每次进入设置页都重新拉一次：别的地方（书架删除、另一台设备）可能已经改过书库
 	useEffect(() => {
 		if (!status?.configured) return;
-		void window.api.listLibrary().then(setLocalDocs);
-		void window.api.syncBooksList().then((result) => setRemoteBooks(result.remote));
-	}, [status?.configured]);
+		void refreshBooks();
+	}, [status?.configured, refreshBooks]);
 
 	async function uploadBook(docId: string) {
 		setBookBusy(docId);
@@ -83,8 +97,7 @@ export function SyncSection() {
 		try {
 			const result = await window.api.syncBookUpload(docId);
 			if (!result.ok) setError(result.error.detail || result.error.title);
-			const list = await window.api.syncBooksList();
-			setRemoteBooks(list.remote);
+			await refreshBooks();
 		} finally {
 			setBookBusy(null);
 		}
@@ -96,9 +109,7 @@ export function SyncSection() {
 		try {
 			const result = await window.api.syncBookDownload(docId);
 			if (!result.ok) setError(result.error.detail || result.error.title);
-			setLocalDocs(await window.api.listLibrary());
-			const list = await window.api.syncBooksList();
-			setRemoteBooks(list.remote);
+			await refreshBooks();
 		} finally {
 			setBookBusy(null);
 		}
@@ -357,7 +368,7 @@ export function SyncSection() {
 								</div>
 								<ul style={{ listStyle: "none", padding: 0, margin: "6px 0 0", maxHeight: 220, overflowY: "auto" }}>
 									{localDocs.map((docMeta) => {
-										const uploaded = remoteBooks.some((book) => book.docId === docMeta.id);
+										const uploaded = bookState.has(docMeta.id) && remoteBooks.some((book) => book.docId === docMeta.id);
 										return (
 											<li key={docMeta.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
 												<span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -375,7 +386,7 @@ export function SyncSection() {
 										);
 									})}
 									{remoteBooks
-										.filter((book) => !localDocs.some((docMeta) => docMeta.id === book.docId))
+										.filter((book) => !bookState.get(book.docId))
 										.map((book) => (
 											<li key={book.docId} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
 												<span style={{ flex: 1 }}>
