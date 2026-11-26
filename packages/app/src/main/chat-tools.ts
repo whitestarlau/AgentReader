@@ -1,14 +1,14 @@
 import type { AgentTool } from "@agentreader/agent";
 import type { BrowserWindow } from "electron";
 import type { WebSearchRuntime } from "./ai.ts";
-import type { DocText } from "./doc-text.ts";
 import { searchDocText } from "./doc-search.ts";
+import type { DocText } from "./doc-text.ts";
 import { requestPermission } from "./permissions.ts";
 import {
-	type SkillInfo,
 	readSkillBody,
 	readTrusted,
 	runSkillCommand,
+	type SkillInfo,
 	writeTrusted,
 } from "./skills.ts";
 import { searchWeb } from "./web-search.ts";
@@ -27,7 +27,16 @@ export function buildChatTools(opts: {
 	win: BrowserWindow | null;
 	convId: string;
 }): AgentTool[] {
-	const { docText, webSearch, useNativeSearch, enabledSkills, executableSkills, trustedSkills, win, convId } = opts;
+	const {
+		docText,
+		webSearch,
+		useNativeSearch,
+		enabledSkills,
+		executableSkills,
+		trustedSkills,
+		win,
+		convId,
+	} = opts;
 	const unit = docText.unit;
 	const chapterLabel = (n: number) => docText.chapterLabels?.[n - 1]?.trim() || "";
 
@@ -60,7 +69,9 @@ export function buildChatTools(opts: {
 						description: "读取指定页的文本",
 						parameters: {
 							type: "object",
-							properties: { page: { type: "number", description: `页码（1..${docText.numPages}）` } },
+							properties: {
+								page: { type: "number", description: `页码（1..${docText.numPages}）` },
+							},
 							required: ["page"],
 						},
 						execute: async (params: unknown) => {
@@ -171,7 +182,11 @@ export function buildChatTools(opts: {
 						},
 						execute: async (params: unknown) => {
 							const { text } = params as { text: string };
-							const needle = String(text ?? "").trim().replace(/\s+/g, " ").toLowerCase().slice(0, 60);
+							const needle = String(text ?? "")
+								.trim()
+								.replace(/\s+/g, " ")
+								.toLowerCase()
+								.slice(0, 60);
 							if (!needle) return JSON.stringify({ hint: "未提供文本" });
 							for (let n = 1; n <= docText.numPages; n++) {
 								const body = (await docText.getPage(n)).replace(/\s+/g, " ").toLowerCase();

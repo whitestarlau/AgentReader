@@ -249,7 +249,10 @@ function decodeXmlEntities(s: string): string {
 }
 
 function stripTags(s: string): string {
-	return s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+	return s
+		.replace(/<[^>]+>/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
 }
 
 export async function getDocText(docId: string): Promise<DocText> {
@@ -273,7 +276,9 @@ export async function getDocText(docId: string): Promise<DocText> {
 			// Dublin Core metadata from the OPF (title/creator/publisher/date/language).
 			// The `dc:` prefix is optional; read each tag independently for robustness.
 			const opfTag = (tag: string) => {
-				const m = opfText.match(new RegExp(`<(?:dc:)?${tag}\\b[^>]*>([\\s\\S]*?)</(?:dc:)?${tag}>`, "i"));
+				const m = opfText.match(
+					new RegExp(`<(?:dc:)?${tag}\\b[^>]*>([\\s\\S]*?)</(?:dc:)?${tag}>`, "i"),
+				);
 				return m ? stripTags(decodeXmlEntities(m[1])) : "";
 			};
 
@@ -323,7 +328,8 @@ export async function getDocText(docId: string): Promise<DocText> {
 			const spineTocId = opfText.match(/<spine\b[^>]*\btoc="([^"]+)"/)?.[1];
 			const ncxItem = [...itemMeta.values()].find((it) => it.type === "application/x-dtbncx+xml");
 			const navDocItem = [...itemMeta.values()].find((it) => /\bnav\b/.test(it.properties));
-			const navHref = (spineTocId && itemMeta.get(spineTocId)?.href) || ncxItem?.href || navDocItem?.href;
+			const navHref =
+				(spineTocId && itemMeta.get(spineTocId)?.href) || ncxItem?.href || navDocItem?.href;
 
 			// Navigation entries as { label, src } in reading order. For NCX we pair
 			// each navLabel with the next content src; nested navPoints are emitted
@@ -344,7 +350,8 @@ export async function getDocText(docId: string): Promise<DocText> {
 					}
 				} else {
 					const navBlock =
-						navText.match(/<nav\b[^>]*\b(?:epub:)?type="toc"[^>]*>[\s\S]*?<\/nav>/i)?.[0] ?? navText;
+						navText.match(/<nav\b[^>]*\b(?:epub:)?type="toc"[^>]*>[\s\S]*?<\/nav>/i)?.[0] ??
+						navText;
 					for (const m of navBlock.matchAll(/<a\b[^>]*\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)) {
 						const label = stripTags(decodeXmlEntities(m[2]));
 						if (label) navItems.push({ label, src: m[1] });
@@ -354,7 +361,9 @@ export async function getDocText(docId: string): Promise<DocText> {
 				// label. A spine file may contain several sections; the earliest wins.
 				for (const it of navItems) {
 					let src = it.src.split("#")[0];
-					try { src = decodeURIComponent(src); } catch {}
+					try {
+						src = decodeURIComponent(src);
+					} catch {}
 					const full = normalizeZipPath(navDirPrefix + src);
 					if (!navLabelByFull.has(full)) navLabelByFull.set(full, it.label);
 				}
@@ -364,7 +373,12 @@ export async function getDocText(docId: string): Promise<DocText> {
 				const nav = navLabelByFull.get(full);
 				if (nav) return nav;
 				if (fallbackLabels[i]) return fallbackLabels[i];
-				return spineHrefs[i].split("/").pop()?.replace(/\.[^.]+$/, "") || `第 ${i + 1} 章`;
+				return (
+					spineHrefs[i]
+						.split("/")
+						.pop()
+						?.replace(/\.[^.]+$/, "") || `第 ${i + 1} 章`
+				);
 			});
 
 			const result: DocText = {
@@ -459,24 +473,35 @@ export function clearDocCaches(docId: string) {
 
 export function registerDocTextIpc() {
 	ipcMain.handle("doc:ocr:get", (_e, docId: string) => readOcr(docId));
-	ipcMain.handle("doc:ocr:save", (_e, docId: string, page: number, text: string) => writeOcr(docId, page, text));
+	ipcMain.handle("doc:ocr:save", (_e, docId: string, page: number, text: string) =>
+		writeOcr(docId, page, text),
+	);
 
 	// Outline used by the renderer (e.g. the chat "@" mention picker): chapter
 	// labels for EPUB, or just the unit/page count for PDF. Reuses the cached
 	// getDocText() so it stays consistent with the AI tools.
 	ipcMain.handle("doc:outline", async (_e, docId: string) => {
 		const d = await getDocText(docId).catch(() => null);
-		if (!d) return { unit: "page" as const, numPages: 0, chapterLabels: [] as string[], toc: [] as { label: string; href: string }[] };
+		if (!d)
+			return {
+				unit: "page" as const,
+				numPages: 0,
+				chapterLabels: [] as string[],
+				toc: [] as { label: string; href: string }[],
+			};
 		return { unit: d.unit, numPages: d.numPages, chapterLabels: d.chapterLabels ?? [], toc: d.toc };
 	});
 
 	// Full-text search over the current document (shared with the AI's
 	// search_document tool). Used by the sidebar's in-document search.
-	ipcMain.handle("doc:search", async (_e, docId: string, query: string, opts?: DocSearchOptions) => {
-		const d = await getDocText(docId).catch(() => null);
-		if (!d) return { unit: "page" as const, query: String(query ?? ""), total: 0, hits: [] };
-		return searchDocText(d, String(query ?? ""), opts ?? {});
-	});
+	ipcMain.handle(
+		"doc:search",
+		async (_e, docId: string, query: string, opts?: DocSearchOptions) => {
+			const d = await getDocText(docId).catch(() => null);
+			if (!d) return { unit: "page" as const, query: String(query ?? ""), total: 0, hits: [] };
+			return searchDocText(d, String(query ?? ""), opts ?? {});
+		},
+	);
 
 	ipcMain.handle("doc:path", (_e, docId: string) => {
 		const dir = getDocDir(docId);

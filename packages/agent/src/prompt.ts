@@ -87,9 +87,9 @@ export function buildDocumentSystemPrompt(input: DocumentPromptInput): string {
 	// pages — the chapter is the only stable position anchor.
 	const currentHint =
 		isChapter && input.readerChapter
-			? `用户当前正在阅读第 ${input.readerChapter} 章${input.readerChapter && input.chapterLabels?.[input.readerChapter - 1] ? `（${input.chapterLabels[input.readerChapter - 1]}）` : ""}。该章原文开头: ${
-					(input.currentText || "（未取到文本）").slice(0, 800)
-				}`
+			? `用户当前正在阅读第 ${input.readerChapter} 章${input.readerChapter && input.chapterLabels?.[input.readerChapter - 1] ? `（${input.chapterLabels[input.readerChapter - 1]}）` : ""}。该章原文开头: ${(
+					input.currentText || "（未取到文本）"
+				).slice(0, 800)}`
 			: input.currentText
 				? `用户当前看到的文本: ${input.currentText.slice(0, 800)}`
 				: "";
