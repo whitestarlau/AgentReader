@@ -50,9 +50,21 @@ type PdfTextItem = {
 	hasEOL?: boolean;
 };
 
+/** pdf.js 的视口：只用到宽高（封面渲染要按它缩放到目标宽度）。 */
+type PdfViewportLike = { width: number; height: number };
+
+type PdfPageLike = {
+	getTextContent: () => Promise<{ items: PdfTextItem[] }>;
+	getViewport?: (opts: { scale: number }) => PdfViewportLike;
+	/** 渲染到 2D 上下文（书架封面用） */
+	render?: (opts: { canvasContext: CanvasRenderingContext2D; viewport: PdfViewportLike }) => {
+		promise: Promise<void>;
+	};
+};
+
 type PdfDocLike = {
 	numPages: number;
-	getPage: (n: number) => Promise<{ getTextContent: () => Promise<{ items: PdfTextItem[] }> }>;
+	getPage: (n: number) => Promise<PdfPageLike>;
 	/** PDF Info dictionary (Title/Author/...); optional so stub docs still work. */
 	getMetadata?: () => Promise<{ info?: Record<string, unknown> }>;
 	destroy?: () => Promise<void>;
@@ -87,7 +99,7 @@ function resolvePdfWorker(): string | null {
 	return pdfWorkerFile;
 }
 
-function getPdfDoc(docId: string): Promise<PdfDocLike> {
+export function getPdfDoc(docId: string): Promise<PdfDocLike> {
 	const cached = pdfDocCache.get(docId);
 	if (cached) return cached;
 	const p = (async () => {
@@ -543,6 +555,16 @@ export function registerDocTextIpc() {
 				chapterLabels: [] as string[],
 				toc: [] as { label: string; href: string }[],
 			};
+		// 写回 doc.json：书架的进度条需要「分母」，而这里正好已经算出来了
+		try {
+			const metaPath = join(getDocDir(docId), "doc.json");
+			const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
+			if (meta.numPages !== d.numPages || meta.unit !== d.unit) {
+				meta.numPages = d.numPages;
+				meta.unit = d.unit;
+				writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+			}
+		} catch {}
 		return { unit: d.unit, numPages: d.numPages, chapterLabels: d.chapterLabels ?? [], toc: d.toc };
 	});
 

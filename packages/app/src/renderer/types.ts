@@ -31,6 +31,13 @@ export type DocMeta = {
 	ext?: string;
 	/** 只在云端有原书：点开时需要先下载 */
 	cloud?: boolean;
+	/** 阅读位置与进度分母（doc.json 里的字段，书架用；老数据可能缺失） */
+	lastPage?: number;
+	numPages?: number;
+	unit?: "page" | "chapter";
+	importedAt?: number;
+	/** 最后一次翻页/跳章的时间（doc.json 的 positionUpdatedAt），书架按它排「最近阅读」 */
+	positionUpdatedAt?: number;
 };
 
 export type DocSearchHit = { locator: number; label: string; count: number; snippets: string[] };

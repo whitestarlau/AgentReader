@@ -10,8 +10,11 @@ A desktop AI document reader with PDF / EPUB import, reading, **highlight / rect
 
 ![EPUB dual-column reading with AI chat sidebar](docs/images/screenshot-epub-chat.png)
 
+![Bookshelf with covers, reading progress and sync badges](docs/images/screenshot-shelf.jpg)
+
 ## Features
 
+- **Bookshelf**: cover-grid library (PDF first page rendered, EPUB cover extracted), reading progress bar per book, and per-book sync badges (cloud-only / pending / synced); sort by last read, title or import time
 - **Library**: import-based management under `library/{hash}/`, one folder per document (original file + `doc.json` + `annotations.json` + `chats.jsonl`)
 - **Reading**: PDF.js `canvas + textLayer` with continuous scroll / paged modes, fit-width / fit-page / pointer zoom, PDF bookmark outline, and exact resume (including the offset within a page); EPUB supports paged (single/double column) and continuous scrolling modes
 - **Annotation**: selecting text opens a highlight / quote / copy menu; **double-click selects a word, triple-click the whole paragraph** (matching browser behavior); modifier-drag rectangle selection (macOS `⌥`, other platforms `Alt`), persisted as normalized coordinates; existing highlights can be quoted or deleted; EPUB highlights are anchored to epub.js CFIs

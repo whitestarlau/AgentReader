@@ -23,7 +23,7 @@ export default defineConfig({
 						rollupOptions: {
 							// `ws` is a Node library (with optional native speedups); keep it
 							// out of the bundle and ship it as a dependency instead.
-							external: ["ws"],
+							external: ["ws", "@napi-rs/canvas"],
 							output: { entryFileNames: "main.js" },
 						},
 					},

@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { dialog, ipcMain } from "electron";
+import { ensureCover } from "./covers.ts";
 import { clearChapterCache } from "./doc-state.ts";
 import { clearDocCaches } from "./doc-text.ts";
 import { ensureLibrary, getDocDir, libraryRoot } from "./paths.ts";
@@ -56,6 +57,9 @@ export function registerLibraryIpc() {
 		markDocDirty(docId);
 		return meta;
 	});
+
+	/** 书架封面：按需生成（PDF 渲染首页 / EPUB 解封面图），生成失败返回 null */
+	ipcMain.handle("library:cover", async (_e, docId: string) => ensureCover(String(docId ?? "")));
 
 	ipcMain.handle("library:remove", async (_e, docId: string) => {
 		const dir = getDocDir(docId);

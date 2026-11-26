@@ -10,8 +10,11 @@
 
 ![EPUB 双栏阅读 + AI 对话侧栏](docs/images/screenshot-epub-chat.png)
 
+![书架：封面、阅读进度与同步状态](docs/images/screenshot-shelf.jpg)
+
 ## 功能
 
+- **书架**：封面网格（PDF 渲染首页、EPUB 提取封面图），每本显示阅读进度条与同步状态（云端 / 待同步 / 已同步）；可按最近阅读、书名、导入时间排序
 - **图书馆**：导入式管理 `library/{hash}/`，每文档独立文件夹（原文件 + `doc.json` + `annotations.json` + `chats.jsonl`）
 - **阅读**：PDF.js `canvas+textLayer`，连续滚动 / 单页翻页双模式，适应宽度 / 适应页面 / 指针缩放，PDF 书签目录，精确恢复上次阅读位置（页内偏移）；EPUB 支持翻页（单/双栏）与连续滑动两种模式
 - **标注**：选中文本弹出「高亮 / 引用提问 / 复制」菜单，**双击选词、三击选中整段**（与浏览器一致）；修饰键拖拽矩形框选（macOS `⌥`、其它平台 `Alt`），归一化坐标持久化；EPUB 高亮以 epub.js CFI 锚定

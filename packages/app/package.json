@@ -15,14 +15,17 @@
 		"package": "npm run build && electron-builder --config electron-builder.json",
 		"package:dir": "npm run build && electron-builder --config electron-builder.json --dir",
 		"typecheck": "tsc --noEmit",
-		"test": "node --experimental-strip-types --test src/shared/chat-export.test.ts src/main/export/render.test.ts src/main/tts/segment.test.ts src/main/tts/pipeline.test.ts src/main/tts/registry.test.ts src/main/tts/cache.test.ts src/main/tts/providers/mock.test.ts src/main/tts/providers/openai-compatible.test.ts src/main/tts/wav.test.ts src/main/tts/providers/sherpa.test.ts src/main/tts/models.test.ts src/main/tts/voices.test.ts src/main/tts/edge-token.test.ts src/renderer/read-aloud.test.ts src/renderer/readable.test.ts src/renderer/toc.test.ts src/main/sync/clock.test.ts src/main/sync/backend.test.ts src/main/sync/config.test.ts src/main/sync/sanitize.test.ts src/main/sync/merge-settings.test.ts src/main/sync/engine.test.ts src/main/sync/dirty.test.ts src/main/sync/settings-port.test.ts src/main/sync/storage.test.ts src/main/sync/connect.test.ts src/main/sync/doc-port.test.ts src/main/sync/conflicts.test.ts src/main/sync/books.test.ts src/main/sync/resolve.test.ts src/main/sync/backends/webdav-xml.test.ts src/main/sync/backends/webdav.test.ts",
+		"test": "node --experimental-strip-types --test src/shared/chat-export.test.ts src/main/export/render.test.ts src/main/tts/segment.test.ts src/main/tts/pipeline.test.ts src/main/tts/registry.test.ts src/main/tts/cache.test.ts src/main/tts/providers/mock.test.ts src/main/tts/providers/openai-compatible.test.ts src/main/tts/wav.test.ts src/main/tts/providers/sherpa.test.ts src/main/tts/models.test.ts src/main/tts/voices.test.ts src/main/tts/edge-token.test.ts src/renderer/read-aloud.test.ts src/renderer/readable.test.ts src/renderer/toc.test.ts src/main/epub-cover.test.ts src/main/cover-image.test.ts src/main/sync/clock.test.ts src/main/sync/backend.test.ts src/main/sync/config.test.ts src/main/sync/sanitize.test.ts src/main/sync/merge-settings.test.ts src/main/sync/engine.test.ts src/main/sync/dirty.test.ts src/main/sync/settings-port.test.ts src/main/sync/storage.test.ts src/main/sync/connect.test.ts src/main/sync/doc-port.test.ts src/main/sync/conflicts.test.ts src/main/sync/books.test.ts src/main/sync/resolve.test.ts src/main/sync/backends/webdav-xml.test.ts src/main/sync/backends/webdav.test.ts",
 		"check": "biome check --write --error-on-warnings .",
 		"selftest:webdav": "node --experimental-strip-types scripts/webdav-selftest.ts",
-		"test:electron": "electron scripts/electron-tts-smoke.cjs --no-sandbox --disable-gpu"
+		"test:electron": "electron scripts/electron-tts-smoke.cjs --no-sandbox --disable-gpu",
+		"demo:shelf": "node scripts/demo-library.mjs /tmp/ar-shelf-demo",
+		"screenshot:shelf": "electron scripts/screenshot-shelf.cjs --no-sandbox --disable-gpu --user-data-dir=/tmp/ar-shelf-demo/userdata --out /tmp/shelf.png --wait 5000 && sips -Z 1280 --setProperty format jpeg --setProperty formatOptions 72 /tmp/shelf.png --out ../../docs/images/screenshot-shelf.jpg"
 	},
 	"dependencies": {
 		"@agentreader/agent": "0.1.0",
 		"@agentreader/ai": "0.1.0",
+		"@napi-rs/canvas": "^0.1.100",
 		"pdfjs-dist": "5.4.394",
 		"react": "19.1.1",
 		"react-dom": "19.1.1",

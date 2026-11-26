@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("api", {
 	listLibrary: () => ipcRenderer.invoke("library:list"),
 	importDoc: () => ipcRenderer.invoke("library:import"),
 	removeDoc: (docId: string) => ipcRenderer.invoke("library:remove", docId),
+	docCover: (docId: string) => ipcRenderer.invoke("library:cover", docId),
 	getAnnotations: (docId: string) => ipcRenderer.invoke("doc:annotations:get", docId),
 	saveAnnotations: (docId: string, data: unknown) =>
 		ipcRenderer.invoke("doc:annotations:save", docId, data),
@@ -64,6 +65,7 @@ contextBridge.exposeInMainWorld("api", {
 	syncResolve: (id: string, choice: string) => ipcRenderer.invoke("sync:resolve", id, choice),
 	syncBooksList: () => ipcRenderer.invoke("sync:books:list"),
 	syncRemoteLibrary: () => ipcRenderer.invoke("sync:remote-library"),
+	syncDocIndex: () => ipcRenderer.invoke("sync:doc-index"),
 	syncBookUpload: (docId: string) => ipcRenderer.invoke("sync:book:upload", docId),
 	syncBookDownload: (docId: string) => ipcRenderer.invoke("sync:book:download", docId),
 	getSettings: () => ipcRenderer.invoke("settings:get"),

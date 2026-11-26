@@ -3454,3 +3454,222 @@ body.resizing iframe {
 	background: var(--vscode-hover);
 	color: var(--vscode-fg);
 }
+
+/* ==========================================================================
+   书架（Library shelf）
+   封面 2:3，卡片网格；进度条与同步徽标压在封面上，避免占标题行。
+   ========================================================================== */
+
+.shelf {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow: auto;
+	background: var(--vscode-editor);
+	padding: 24px 28px 40px;
+}
+
+.shelf-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 20px;
+}
+
+.shelf-title {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+}
+
+.shelf-title h2 {
+	margin: 0;
+	font-size: 19px;
+	font-weight: 600;
+	color: var(--vscode-fg-bright);
+}
+
+.shelf-count {
+	font-size: 12px;
+	color: var(--vscode-fg-dim);
+}
+
+.shelf-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.shelf-grid {
+	display: grid;
+	/* 用 auto-fill + 最小宽度：窗口变窄时自动减少列数，而不是把封面压扁 */
+	grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+	gap: 22px 18px;
+}
+
+.shelf-card {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+
+.shelf-cover {
+	position: relative;
+	display: block;
+	width: 100%;
+	aspect-ratio: 2 / 3;
+	padding: 0;
+	border: 1px solid var(--vscode-border-soft);
+	border-radius: 5px;
+	overflow: hidden;
+	background: var(--vscode-sidebar);
+	cursor: pointer;
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+	transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+.shelf-cover:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
+	border-color: var(--vscode-accent);
+}
+
+.shelf-cover img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+}
+
+.shelf-cover-fallback {
+	width: 100%;
+	height: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 40px;
+	font-weight: 600;
+	color: rgba(255, 255, 255, 0.72);
+}
+
+.shelf-badge {
+	position: absolute;
+	left: 6px;
+	bottom: 6px;
+	padding: 2px 6px;
+	border-radius: 3px;
+	font-size: 10px;
+	line-height: 1.5;
+	letter-spacing: 0.3px;
+	backdrop-filter: blur(4px);
+	color: #fff;
+}
+
+.shelf-badge.cloud {
+	background: rgba(0, 122, 204, 0.85);
+}
+
+.shelf-badge.pending {
+	background: rgba(209, 154, 32, 0.9);
+}
+
+.shelf-badge.synced {
+	background: rgba(46, 125, 70, 0.8);
+}
+
+.shelf-meta {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	min-width: 0;
+}
+
+.shelf-name {
+	font-size: 12.5px;
+	line-height: 1.35;
+	color: var(--vscode-fg);
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.shelf-progress {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.shelf-progress-bar {
+	flex: 1;
+	height: 3px;
+	border-radius: 2px;
+	background: var(--vscode-border-soft);
+	overflow: hidden;
+}
+
+.shelf-progress-bar span {
+	display: block;
+	height: 100%;
+	background: var(--vscode-accent);
+}
+
+.shelf-progress-text {
+	font-size: 10.5px;
+	color: var(--vscode-fg-dim);
+	white-space: nowrap;
+}
+
+.shelf-remove {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	width: 22px;
+	height: 22px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	border-radius: 3px;
+	background: rgba(0, 0, 0, 0.55);
+	color: #ddd;
+	opacity: 0;
+	cursor: pointer;
+	transition: opacity 0.12s ease;
+}
+
+.shelf-card:hover .shelf-remove {
+	opacity: 1;
+}
+
+.shelf-remove:hover {
+	background: rgba(190, 60, 60, 0.9);
+	color: #fff;
+}
+
+.shelf-empty {
+	align-items: center;
+	justify-content: center;
+}
+
+.shelf-empty-inner {
+	max-width: 380px;
+	text-align: center;
+	color: var(--vscode-fg-dim);
+}
+
+.shelf-empty-inner h2 {
+	margin: 14px 0 6px;
+	font-size: 17px;
+	color: var(--vscode-fg);
+}
+
+.shelf-empty-inner p {
+	margin: 0 0 18px;
+	font-size: 12.5px;
+	line-height: 1.6;
+}

@@ -59,6 +59,7 @@ type Runtime = {
 	conflicts: ReturnType<typeof createConflictStore>;
 	books: BookSync | null;
 	backend: SyncBackend | null;
+	storage: ReturnType<typeof createFileStorage>;
 	/** 云端书的标题缓存：read state 一次就够，不必每次重读 */
 	remoteTitles: Map<string, string>;
 };
@@ -158,6 +159,10 @@ function buildRuntime(): Runtime {
 		writeStamps: (record) => writeJson(syncStampsFile(), record),
 	});
 
+	const storage = createFileStorage({
+		baseFile: syncBaseSettingsFile(),
+		indexFile: syncIndexFile(),
+	});
 	const conflicts = createConflictStore(syncConflictsFile());
 
 	// 书库侧的真实读写口：把 library/{docId}/ 下的五个文件映射成一份 DocState
@@ -188,7 +193,7 @@ function buildRuntime(): Runtime {
 			backend,
 			settings: port,
 			docs,
-			storage: createFileStorage({ baseFile: syncBaseSettingsFile(), indexFile: syncIndexFile() }),
+			storage,
 		});
 		books = createBookSync({ backend, pathOf: bookPathOf, titleOf: (docId) => getDocTitle(docId) });
 		backendRef = backend;
@@ -219,6 +224,7 @@ function buildRuntime(): Runtime {
 		conflicts,
 		books,
 		backend: backendRef,
+		storage,
 		remoteTitles: new Map(),
 	};
 }
@@ -226,6 +232,20 @@ function buildRuntime(): Runtime {
 function runtime(): Runtime {
 	if (!runtimeCache) runtimeCache = buildRuntime();
 	return runtimeCache;
+}
+
+/**
+ * 对外暴露状态前先确保运行时已装配。
+ *
+ * 踩过的坑：`sync:status` 曾经直接返回模块里的初始 status，结果应用刚启动时
+ * 渲染进程拿到的是「未配置」——状态栏的同步灯永远不亮，书架的同步徽标也永远不出现。
+ * 用户只有先触发一次别的同步 IPC（比如打开设置页）才会恢复正常。
+ */
+function currentStatus(): SyncStatus {
+	try {
+		runtime();
+	} catch {}
+	return statusSnapshot();
 }
 
 function statusSnapshot(): SyncStatus {
@@ -389,7 +409,7 @@ async function configure(input: ConfigureInput): Promise<SyncConfigureResult> {
 	runtimeCache = null;
 	runtime();
 	await runSync();
-	return { ok: true, status: statusSnapshot() };
+	return { ok: true, status: currentStatus() };
 }
 
 async function testConnection(input: ConfigureInput): Promise<SyncConfigureResult> {
@@ -402,7 +422,7 @@ async function testConnection(input: ConfigureInput): Promise<SyncConfigureResul
 		});
 		const result = await backend.test();
 		if (!result.ok) return { ok: false, error: result.error };
-		return { ok: true, status: statusSnapshot() };
+		return { ok: true, status: currentStatus() };
 	} catch (error) {
 		return { ok: false, error: toFailure(error) };
 	}
@@ -509,9 +529,11 @@ export function registerSyncIpc(): void {
 		createWebdavBackend({ config, presetId: config.presetId }),
 	);
 
-	ipcMain.handle("sync:status", () => statusSnapshot());
+	ipcMain.handle("sync:status", () => currentStatus());
 	ipcMain.handle("sync:now", () => runSync());
 	ipcMain.handle("sync:conflicts", (): SyncStatusConflict[] => runtime().conflicts.read());
+	// 被同步引擎推过的书（index 里有记录）——书架据此显示「已同步」
+	ipcMain.handle("sync:doc-index", () => Object.keys(runtime().storage.readIndex().docs));
 	ipcMain.handle("sync:remote-library", async () => {
 		const rt = runtime();
 		if (!rt.books || !rt.backend) return [];
@@ -632,7 +654,7 @@ export function registerSyncIpc(): void {
 		runtime();
 		status = { ...status, state: "off", configured: false, backend: null, lastError: undefined };
 		broadcast();
-		return statusSnapshot();
+		return currentStatus();
 	});
 	ipcMain.handle("sync:presets", (): SyncPresetInfo[] =>
 		WEBDAV_PRESETS.map((preset) => ({

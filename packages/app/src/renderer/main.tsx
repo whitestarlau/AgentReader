@@ -13,7 +13,7 @@ import { ActivityBar } from "./components/shell/ActivityBar.tsx";
 import { SideBar } from "./components/shell/SideBar.tsx";
 import { EditorTabs } from "./components/shell/EditorTabs.tsx";
 import { StatusBar } from "./components/shell/StatusBar.tsx";
-import { Welcome } from "./components/shell/Welcome.tsx";
+import { Bookshelf } from "./components/shelf/Bookshelf.tsx";
 import { Resizer } from "./components/shell/Resizer.tsx";
 import type { ExportRequest, ExportResult } from "../shared/chat-export.ts";
 import type {
@@ -59,6 +59,7 @@ declare global {
       listLibrary: () => Promise<DocMeta[]>;
       importDoc: () => Promise<DocMeta | null>;
       removeDoc: (id: string) => Promise<boolean>;
+      docCover: (docId: string) => Promise<string | null>;
       getAnnotations: (id: string) => Promise<Annotation[]>;
       saveAnnotations: (id: string, data: unknown) => Promise<void>;
       getOcr: (id: string) => Promise<Record<string, string>>;
@@ -94,6 +95,7 @@ declare global {
       syncResolve: (id: string, choice: "local" | "remote") => Promise<SyncResolveResult>;
       syncBooksList: () => Promise<BookListResult>;
       syncRemoteLibrary: () => Promise<Array<{ docId: string; title: string; ext: string; size: number; local: boolean }>>;
+      syncDocIndex: () => Promise<string[]>;
       syncBookUpload: (docId: string) => Promise<BookOpResult>;
       syncBookDownload: (docId: string) => Promise<BookOpResult>;
       onSyncStatus: (cb: (status: SyncStatus) => void) => () => void;
@@ -177,6 +179,8 @@ function App() {
   const [settingsSection, setSettingsSection] = useState<SectionId | undefined>(undefined);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [remoteDocs, setRemoteDocs] = useState<DocMeta[]>([]);
+  const [remoteIds, setRemoteIds] = useState<string[]>([]);
+  const [syncedIds, setSyncedIds] = useState<string[]>([]);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   // 菜单「新建对话」信号：递增 token，ChatPanel 监听后新建。
   const [newChatToken, setNewChatToken] = useState(0);
@@ -208,6 +212,8 @@ function App() {
   useEffect(() => {
     if (!syncStatus?.configured) {
       setRemoteDocs([]);
+      setRemoteIds([]);
+      setSyncedIds([]);
       return;
     }
     let cancelled = false;
@@ -215,6 +221,7 @@ function App() {
       .syncRemoteLibrary()
       .then((books) => {
         if (cancelled) return;
+        setRemoteIds(books.map((book) => book.docId));
         setRemoteDocs(
           books
             .filter((book) => !book.local)
@@ -222,13 +229,24 @@ function App() {
         );
       })
       .catch(() => {});
+    void window.api.syncDocIndex().then(setSyncedIds).catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [syncStatus?.configured, syncStatus?.lastSyncAt]);
 
-  /** 书库列表 = 本地书 + 只在云端的书（后者点开时先下载） */
-  const libraryDocs = useMemo(() => [...docs, ...remoteDocs], [docs, remoteDocs]);
+  /** 书库列表 = 本地书 + 只在云端的书（后者点开时先下载），并带上同步状态 */
+  const libraryDocs = useMemo(() => {
+    const pendingDocs = new Set(syncStatus?.pending.docs ?? []);
+    const remote = new Set(remoteIds);
+    const synced = new Set(syncedIds);
+    const withState = (doc: DocMeta): DocMeta & { remote?: boolean; pending?: boolean } => ({
+      ...doc,
+      remote: remote.has(doc.id) || synced.has(doc.id),
+      pending: pendingDocs.has(doc.id),
+    });
+    return [...docs.map(withState), ...remoteDocs.map(withState)];
+  }, [docs, remoteDocs, remoteIds, syncedIds, syncStatus?.pending.docs]);
   const loadSettings = useCallback(() => {
     window.api.getSettings().then((s) => {
       if (s.ocrLang) setOcrLang(s.ocrLang);
@@ -495,6 +513,14 @@ function App() {
             onClose={closeTab}
             actions={
               <>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={() => setSelected(null)}
+                  title="返回书架"
+                >
+                  <Icon name="library" size={15} />
+                </button>
                 <button type="button" className="icon-btn" onClick={importDoc} title="导入文档">
                   <Icon name="plus" size={15} />
                 </button>
@@ -550,7 +576,12 @@ function App() {
               />
             )
           ) : (
-            <Welcome docs={docs} onOpenDoc={openDoc} onImport={importDoc} onOpenSettings={() => setShowSettings(true)} />
+            <Bookshelf
+              docs={libraryDocs}
+              onOpen={openDoc}
+              onImport={importDoc}
+              onRemove={removeDoc}
+            />
           )}
         </main>
 
