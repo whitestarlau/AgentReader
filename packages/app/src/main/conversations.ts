@@ -1,8 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { ipcMain } from "electron";
 import { getDocDir } from "./paths.ts";
+import { markDocDirty } from "./sync/dirty.ts";
 import { editTranscript } from "./transcript.ts";
 
 /**
@@ -48,6 +57,7 @@ export function ensureConversations(docId: string) {
 
 export function saveConversations(docId: string, list: unknown) {
 	writeFileSync(conversationsFile(docId), JSON.stringify(list, null, 2));
+	markDocDirty(docId);
 }
 
 /** Append one transcript entry with a stable id; returns the stored entry id. */
@@ -60,6 +70,7 @@ export function appendChatEntry(
 	mkdirSync(join(getDocDir(docId), "chats"), { recursive: true });
 	const full = { id: randomUUID(), timestamp: Date.now(), ...entry };
 	appendFileSync(p, `${JSON.stringify(full)}\n`);
+	markDocDirty(docId);
 	const list = ensureConversations(docId);
 	const conv = list.find((c: { id: string }) => c.id === convId);
 	if (conv) {

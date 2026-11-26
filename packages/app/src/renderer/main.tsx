@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { PdfViewer } from "./components/PdfViewer.tsx";
 import { EpubViewer } from "./components/EpubViewer.tsx";
@@ -6,7 +6,7 @@ import { ChatPanel } from "./components/ChatPanel.tsx";
 import { type Annotation } from "./components/AnnotationLayer.tsx";
 import { type Selection, SELECTION_LABEL } from "./selection.ts";
 import { loadReadingPage } from "./reading.ts";
-import { Settings } from "./components/Settings.tsx";
+import { Settings, type SectionId } from "./components/Settings.tsx";
 import { Icon } from "./components/Icons.tsx";
 import { TitleBar } from "./components/shell/TitleBar.tsx";
 import { ActivityBar } from "./components/shell/ActivityBar.tsx";
@@ -39,6 +39,18 @@ import type {
   SkillTrustPayload,
   WebSearchTestResult,
 } from "./types.ts";
+import type {
+  BookListResult,
+  BookOpResult,
+  SyncConfigureInput,
+  SyncConfigureResult,
+  SyncPresetInfo,
+  SyncProbeResult,
+  SyncResolveResult,
+  SyncRunResult,
+  SyncStatus,
+  SyncStatusConflict,
+} from "../shared/sync-types.ts";
 import "./styles.css";
 
 declare global {
@@ -67,6 +79,24 @@ declare global {
       deleteConversation: (docId: string, convId: string) => Promise<unknown>;
       renameConversation: (docId: string, convId: string, title: string) => Promise<unknown>;
       exportChat: (req: ExportRequest) => Promise<ExportResult>;
+      syncStatus: () => Promise<SyncStatus>;
+      syncNow: () => Promise<SyncRunResult>;
+      syncConfigure: (input: SyncConfigureInput) => Promise<SyncConfigureResult>;
+      syncTest: (input: SyncConfigureInput) => Promise<SyncConfigureResult>;
+      syncDisconnect: () => Promise<SyncStatus>;
+      syncPickDirectory: () => Promise<string | null>;
+      syncPresets: () => Promise<SyncPresetInfo[]>;
+      syncProbe: (input: { presetId: string; account: string; secret: string }) => Promise<SyncProbeResult>;
+      syncOpenExternal: (url: string) => Promise<boolean>;
+      syncReadClipboard: () => Promise<string | null>;
+      syncOpenLogin: (presetId: string, url: string) => Promise<boolean>;
+      syncConflicts: () => Promise<SyncStatusConflict[]>;
+      syncResolve: (id: string, choice: "local" | "remote") => Promise<SyncResolveResult>;
+      syncBooksList: () => Promise<BookListResult>;
+      syncRemoteLibrary: () => Promise<Array<{ docId: string; title: string; ext: string; size: number; local: boolean }>>;
+      syncBookUpload: (docId: string) => Promise<BookOpResult>;
+      syncBookDownload: (docId: string) => Promise<BookOpResult>;
+      onSyncStatus: (cb: (status: SyncStatus) => void) => () => void;
       getSettings: () => Promise<Record<string, string>>;
       saveSettings: (s: unknown) => Promise<void>;
       getAiConfig: () => Promise<AiConfig>;
@@ -144,6 +174,9 @@ function App() {
   const [zoom, setZoom] = useState(1.2);
   const [ocrJob, setOcrJob] = useState<{ running: boolean; page: number; total: number; progress: number } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SectionId | undefined>(undefined);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [remoteDocs, setRemoteDocs] = useState<DocMeta[]>([]);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   // 菜单「新建对话」信号：递增 token，ChatPanel 监听后新建。
   const [newChatToken, setNewChatToken] = useState(0);
@@ -164,6 +197,38 @@ function App() {
   docsRef.current = docs;
 
   useEffect(() => { window.api.listLibrary().then(setDocs); }, []);
+
+  // 状态栏的同步灯：订阅主进程推送，首次挂载主动拉一次
+  useEffect(() => {
+    void window.api.syncStatus().then(setSyncStatus).catch(() => {});
+    return window.api.onSyncStatus(setSyncStatus);
+  }, []);
+
+  // 云端书目：只在「已配置且刚同步完」时刷新，避免每次渲染都打请求
+  useEffect(() => {
+    if (!syncStatus?.configured) {
+      setRemoteDocs([]);
+      return;
+    }
+    let cancelled = false;
+    void window.api
+      .syncRemoteLibrary()
+      .then((books) => {
+        if (cancelled) return;
+        setRemoteDocs(
+          books
+            .filter((book) => !book.local)
+            .map((book) => ({ id: book.docId, title: book.title, ext: book.ext, cloud: true })),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [syncStatus?.configured, syncStatus?.lastSyncAt]);
+
+  /** 书库列表 = 本地书 + 只在云端的书（后者点开时先下载） */
+  const libraryDocs = useMemo(() => [...docs, ...remoteDocs], [docs, remoteDocs]);
   const loadSettings = useCallback(() => {
     window.api.getSettings().then((s) => {
       if (s.ocrLang) setOcrLang(s.ocrLang);
@@ -248,7 +313,28 @@ function App() {
     }
   };
 
-  const openDoc = (id: string) => {
+  const openCloudDoc = async (id: string) => {
+    const result = await window.api.syncBookDownload(id);
+    if (!result.ok) {
+      setSyncStatus(await window.api.syncStatus().catch(() => syncStatus));
+      return;
+    }
+    const list = await window.api.listLibrary();
+    setDocs(list);
+    setRemoteDocs((prev) => prev.filter((entry) => entry.id !== id));
+    openDoc(id);
+  };
+
+  const openDoc = (rawId: string) => {
+    const id = rawId;
+    if (remoteDocs.some((entry) => entry.id === id)) {
+      void openCloudDoc(id);
+      return;
+    }
+    return openDocLocal(id);
+  };
+
+  const openDocLocal = (id: string) => {
     setOpenDocs((prev) => (prev.includes(id) ? prev : [...prev, id]));
     setSelected(id);
     // Reflect the stored reading position right away (the viewer restores it too).
@@ -380,7 +466,7 @@ function App() {
             <SideBar
               view={sidebarView}
               width={sidebarWidth}
-              docs={docs}
+              docs={libraryDocs}
               selectedId={selected}
               annotations={anns}
               outline={outline}
@@ -510,9 +596,27 @@ function App() {
         onSelectModel={(ref) => { window.api.setModel(ref).then(loadAiConfig).catch(() => {}); }}
         chatOpen={chatOpen}
         onToggleChat={() => setChatOpen((v) => !v)}
+        sync={
+          syncStatus
+            ? {
+                configured: syncStatus.configured,
+                state: syncStatus.state,
+                conflicts: syncStatus.conflicts.length,
+                pending: (syncStatus.pending.settings ? 1 : 0) + syncStatus.pending.docs.length,
+              }
+            : undefined
+        }
+        onOpenSync={() => { setSettingsSection("sync"); setShowSettings(true); }}
       />
 
-      {showSettings && <Settings docId={selected} onClose={() => setShowSettings(false)} onSaved={() => { loadSettings(); loadAiConfig(); }} />}
+      {showSettings && (
+        <Settings
+          docId={selected}
+          initialSection={settingsSection}
+          onClose={() => { setShowSettings(false); setSettingsSection(undefined); }}
+          onSaved={() => { loadSettings(); loadAiConfig(); }}
+        />
+      )}
 
       {permission && (
         <div className="modal-backdrop">

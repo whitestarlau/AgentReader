@@ -6,6 +6,14 @@ import { Icon } from "../Icons.tsx";
 
 type OcrStatus = { page: number; total: number; progress: number } | null;
 
+/** 状态栏只关心「要不要让用户注意」，不重复设置页里的细节 */
+export type SyncIndicator = {
+	configured: boolean;
+	state: "off" | "idle" | "syncing" | "error";
+	conflicts: number;
+	pending: number;
+};
+
 type Props = {
 	doc: DocMeta | null;
 	page: number;
@@ -18,6 +26,8 @@ type Props = {
 	onSelectModel: (ref: string) => void;
 	chatOpen: boolean;
 	onToggleChat: () => void;
+	sync?: SyncIndicator;
+	onOpenSync?: () => void;
 };
 
 export function StatusBar({
@@ -32,6 +42,8 @@ export function StatusBar({
 	onSelectModel,
 	chatOpen,
 	onToggleChat,
+	sync,
+	onOpenSync,
 }: Props) {
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const pickerRef = useRef<HTMLSpanElement>(null);
@@ -92,6 +104,34 @@ export function StatusBar({
 			)}
 
 			<span className="status-spacer" />
+		{sync?.configured ? (
+			<button
+				type="button"
+				className="status-item clickable"
+				style={{ background: "none", border: "none", color: "inherit", font: "inherit", borderRadius: 0 }}
+				onClick={onOpenSync}
+				title={
+					sync.conflicts > 0
+						? `${sync.conflicts} 条同步冲突待处理`
+						: sync.state === "syncing"
+							? "正在同步"
+							: sync.state === "error"
+								? "同步出错，点击查看"
+								: "云同步"
+				}
+			>
+				<Icon name="cloud" size={12} />
+				{sync.conflicts > 0
+					? `${sync.conflicts} 条冲突`
+					: sync.state === "syncing"
+						? "同步中…"
+						: sync.state === "error"
+							? "同步出错"
+							: sync.pending > 0
+								? "待同步"
+								: "已同步"}
+			</button>
+		) : null}
 
 			<span className="status-model" ref={pickerRef}>
 				<button

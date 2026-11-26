@@ -13,6 +13,7 @@ import { dialog, ipcMain } from "electron";
 import { clearChapterCache } from "./doc-state.ts";
 import { clearDocCaches } from "./doc-text.ts";
 import { ensureLibrary, getDocDir, libraryRoot } from "./paths.ts";
+import { markDocDirty } from "./sync/dirty.ts";
 
 /** Import-based library management under `library/{hash}/`. */
 
@@ -52,6 +53,7 @@ export function registerLibraryIpc() {
 		writeFileSync(join(dir, "doc.json"), JSON.stringify(meta, null, 2));
 		if (!existsSync(join(dir, "annotations.json")))
 			writeFileSync(join(dir, "annotations.json"), "[]");
+		markDocDirty(docId);
 		return meta;
 	});
 

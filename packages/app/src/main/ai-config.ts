@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_MODELS_TEMPLATE, type ModelsFile, parseModelsFile } from "@agentreader/ai";
 import { app } from "electron";
+import { markSettingsDirty } from "./sync/dirty.ts";
 
 export function configPath(): string {
 	return join(app.getPath("userData"), "models.json");
@@ -132,6 +133,7 @@ export function readCustomProviders(): Record<string, CustomProvider> {
 
 export function writeCustomProviders(data: Record<string, CustomProvider>): void {
 	writeFileSync(customProvidersPath(), JSON.stringify(data, null, 2));
+	markSettingsDirty();
 }
 
 /** GUI-set per-model overrides (context window / max output), keyed provider → model. */
@@ -183,6 +185,7 @@ export function writeModelOverrides(
 	data: Record<string, Record<string, ModelOverrideEntry>>,
 ): void {
 	writeFileSync(modelOverridesPath(), JSON.stringify(data, null, 2));
+	markSettingsDirty();
 }
 
 /**

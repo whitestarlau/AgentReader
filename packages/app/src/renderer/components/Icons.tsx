@@ -26,9 +26,16 @@ export type IconName =
 	| "download"
 	| "stop"
 	| "play"
-	| "pause";
+	| "pause"
+	| "cloud";
 
 const PATHS: Record<IconName, ReactNode> = {
+	cloud: (
+		<>
+			<path d="M5 12.4a3.1 3.1 0 0 1 .3-6.2 4.2 4.2 0 0 1 8 .9 2.9 2.9 0 0 1-.5 5.3" />
+			<path d="M8 14.6V8.9M6 10.7 8 8.7l2 2" />
+		</>
+	),
 	library: (
 		<>
 			<path d="M2.6 2.6h3.6a2 2 0 0 1 1.8 1.1 2 2 0 0 1 1.8-1.1h3.6v10.2h-3.6a2 2 0 0 0-1.8 1.1 2 2 0 0 0-1.8-1.1H2.6z" />

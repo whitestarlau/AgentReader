@@ -78,6 +78,9 @@ The unsigned installer triggers SmartScreen (More info → Run anyway); a code-s
 - `docs/export-design.md` conversation export (Markdown / HTML / JSON) design
 - `docs/tts-architecture.md` read-aloud abstraction (engine contract / cache / fallback)
 - `docs/tts-research.md`, `docs/research/` TTS survey and measurements
+- `docs/sync-research.md` cloud sync survey (free drives / GitHub / settings sync) and architecture proposal
+- `docs/sync-webdav-plan.md` WebDAV-first plan: provider presets, in-app connect wizard, InfiniCLOUD endpoint probe
+- `docs/sync-implementation-plan.md` sync implementation plan: task breakdown, write-site audit, test matrix, milestones
 - `docs/progress.md` progress log
 - `Reference/pi` reference project (gitignored, not committed)
 

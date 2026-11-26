@@ -2,6 +2,46 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ipcMain } from "electron";
 import { getDocDir } from "./paths.ts";
+import { syncClock } from "./sync/device.ts";
+import { markDocDirty } from "./sync/dirty.ts";
+
+/**
+ * 给标注补 `updatedAt` / `deviceId`。
+ *
+ * 只给「内容真的变了」的标注发新戳：否则每次保存都会把所有标注刷成刚改过，
+ * 另一台机器一同步就会把它们全部判成「双方都改」，冲突面板直接爆炸。
+ */
+function stripStamp(row: Record<string, unknown>): string {
+	const { updatedAt: _updatedAt, deviceId: _deviceId, ...rest } = row;
+	return JSON.stringify(rest);
+}
+
+function stampAnnotations(docId: string, next: unknown): unknown {
+	const file = join(getDocDir(docId), "annotations.json");
+	let previous: Record<string, unknown>[] = [];
+	try {
+		const parsed = JSON.parse(readFileSync(file, "utf-8"));
+		if (Array.isArray(parsed)) {
+			previous = parsed.filter(
+				(row): row is Record<string, unknown> => typeof row === "object" && row !== null,
+			);
+		}
+	} catch {}
+	const byId = new Map<string, Record<string, unknown>>();
+	for (const row of previous) {
+		if (typeof row.id === "string") byId.set(row.id, row);
+	}
+	if (!Array.isArray(next)) return next;
+	const clock = syncClock();
+	return next.map((row) => {
+		if (typeof row !== "object" || row === null) return row;
+		const record = row as Record<string, unknown>;
+		const before = typeof record.id === "string" ? byId.get(record.id) : undefined;
+		if (before && stripStamp(before) === stripStamp(record)) return before;
+		const stamp = clock.next();
+		return { ...record, updatedAt: stamp.at, deviceId: stamp.dev };
+	});
+}
 
 /**
  * Small per-document state that lives beside the original file: annotations,
@@ -18,7 +58,9 @@ export function registerAnnotationIpc() {
 	});
 
 	ipcMain.handle("doc:annotations:save", (_e, docId: string, annotations: unknown) => {
-		writeFileSync(join(getDocDir(docId), "annotations.json"), JSON.stringify(annotations, null, 2));
+		const stamped = stampAnnotations(docId, annotations);
+		writeFileSync(join(getDocDir(docId), "annotations.json"), JSON.stringify(stamped, null, 2));
+		markDocDirty(docId);
 	});
 }
 
@@ -55,7 +97,12 @@ export function registerChapterIpc() {
 		const n = Math.max(1, Math.floor(Number(chapter) || 1));
 		chapterCache.set(docId, n);
 		try {
-			writeFileSync(chapterFile(docId), JSON.stringify({ chapter: n }));
+			const stamp = syncClock().next();
+			writeFileSync(
+				chapterFile(docId),
+				JSON.stringify({ chapter: n, at: stamp.at, dev: stamp.dev }),
+			);
+			markDocDirty(docId);
 		} catch {}
 	});
 }
@@ -75,15 +122,31 @@ export function registerReadingIpc() {
 		}
 	});
 
-	ipcMain.handle("reading:save", (_e, docId: string, patch: { page?: number; location?: string }) => {
-		try {
-			const p = join(getDocDir(docId), "doc.json");
-			const meta = JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
-			if (typeof patch.page === "number" && patch.page > 0) meta.lastPage = patch.page;
-			if (typeof patch.location === "string" && patch.location) meta.lastLocation = patch.location;
-			writeFileSync(p, JSON.stringify(meta, null, 2));
-		} catch {}
-	});
+	ipcMain.handle(
+		"reading:save",
+		(_e, docId: string, patch: { page?: number; location?: string }) => {
+			try {
+				const p = join(getDocDir(docId), "doc.json");
+				const meta = JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
+				const changed =
+					(typeof patch.page === "number" && patch.page > 0 && meta.lastPage !== patch.page) ||
+					(typeof patch.location === "string" &&
+						patch.location.length > 0 &&
+						meta.lastLocation !== patch.location);
+				if (typeof patch.page === "number" && patch.page > 0) meta.lastPage = patch.page;
+				if (typeof patch.location === "string" && patch.location)
+					meta.lastLocation = patch.location;
+				if (changed) {
+					// 位置与标题共用时间戳会让「只改标题」也把阅读位置判新，所以单独一套戳
+					const stamp = syncClock().next();
+					meta.positionUpdatedAt = stamp.at;
+					meta.positionDevice = stamp.dev;
+				}
+				writeFileSync(p, JSON.stringify(meta, null, 2));
+				if (changed) markDocDirty(docId);
+			} catch {}
+		},
+	);
 }
 
 export function registerDocStateIpc() {

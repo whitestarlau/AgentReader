@@ -15,6 +15,7 @@ import { installAppMenu } from "./menu.ts";
 import { registerPermissionIpc } from "./permissions.ts";
 import { readSettings } from "./settings.ts";
 import { registerSkillsIpc } from "./skills-ipc.ts";
+import { registerSyncIpc } from "./sync/index.ts";
 import { registerTtsIpc } from "./tts/index.ts";
 
 /**
@@ -37,6 +38,7 @@ registerSkillsIpc();
 registerTtsIpc();
 registerPermissionIpc();
 registerChatIpc();
+registerSyncIpc();
 
 /**
  * 沉浸式标题栏：内容延伸到标题栏区域，同时保留系统原生窗口按钮。

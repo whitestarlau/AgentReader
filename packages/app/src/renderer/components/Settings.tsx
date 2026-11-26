@@ -15,6 +15,7 @@ import type {
 } from "../../shared/tts.ts";
 import { formatTokens } from "../tokens.ts";
 import { Icon, type IconName } from "./Icons.tsx";
+import { SyncSection } from "./sync/SyncSection.tsx";
 
 function errorText(e: unknown): string {
 	const raw = e instanceof Error ? e.message : String(e);
@@ -71,7 +72,16 @@ function contextSourceLabel(
 	}
 }
 
-type SectionId = "models" | "custom" | "websearch" | "skills" | "agent" | "reading" | "tts" | "config";
+export type SectionId =
+	| "models"
+	| "custom"
+	| "websearch"
+	| "skills"
+	| "agent"
+	| "reading"
+	| "sync"
+	| "tts"
+	| "config";
 
 type SectionDef = { id: SectionId; label: string; icon: IconName; desc: string };
 
@@ -126,6 +136,17 @@ const SECTION_GROUPS: { title: string; items: SectionDef[] }[] = [
 				label: "朗读",
 				icon: "download",
 				desc: "下载本地朗读模型、查看可用引擎。模型由应用自动解包和管理。",
+			},
+		],
+	},
+	{
+		title: "同步",
+		items: [
+			{
+				id: "sync",
+				label: "云同步",
+				icon: "cloud",
+				desc: "用你自己的云盘同步阅读进度、笔记与应用设置。数据不经过任何服务器。",
 			},
 		],
 	},
@@ -230,10 +251,13 @@ export function Settings({
 	docId,
 	onClose,
 	onSaved,
+	initialSection,
 }: {
 	docId?: string | null;
 	onClose: () => void;
 	onSaved?: () => void;
+	/** 从状态栏「同步」灯点进来时直接落到对应分区 */
+	initialSection?: SectionId;
 }) {
 	const [ai, setAi] = useState<AiConfig | null>(null);
 	const [custom, setCustom] = useState<Record<string, CustomProvider>>({});
@@ -266,7 +290,7 @@ export function Settings({
 	const [voiceGroups, setVoiceGroups] = useState<TtsVoiceGroup[]>([]);
 	const [voiceChoice, setVoiceChoice] = useState<Record<string, string>>({});
 	const [ttsPreviewing, setTtsPreviewing] = useState<string | null>(null);
-	const [section, setSection] = useState<SectionId>("models");
+	const [section, setSection] = useState<SectionId>(initialSection ?? "models");
 	const contentRef = useRef<HTMLDivElement | null>(null);
 
 	const load = useCallback(async () => {
@@ -1399,6 +1423,8 @@ export function Settings({
 									</Card>
 								</>
 							)}
+
+							{section === "sync" && <SyncSection />}
 
 							{section === "config" && (
 								<Card

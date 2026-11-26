@@ -29,6 +29,7 @@ import { type DocText, getDocText } from "./doc-text.ts";
 import { getDocDir } from "./paths.ts";
 import { readSettings } from "./settings.ts";
 import { loadSkills, readDocSkills, readTrusted } from "./skills.ts";
+import { markDocDirty } from "./sync/dirty.ts";
 
 /** The streaming chat turn: model resolution, tools, agent loop, persistence. */
 
@@ -303,6 +304,8 @@ export function registerChatIpc() {
 			};
 			const persistAssistant = () => {
 				if (!full && timeline.length === 0 && !notice) return;
+				// 助手回复是直接 append 写盘的（绕过 conversations.ts），漏了这里对话就永不同步
+				markDocDirty(docId);
 				appendFileSync(
 					chatFile(docId, convId),
 					`${JSON.stringify({

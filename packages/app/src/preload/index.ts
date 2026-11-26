@@ -43,6 +43,29 @@ contextBridge.exposeInMainWorld("api", {
 	renameConversation: (docId: string, convId: string, title: string) =>
 		ipcRenderer.invoke("conversations:rename", docId, convId, title),
 	exportChat: (req: unknown) => ipcRenderer.invoke("chat:export", req),
+	syncStatus: () => ipcRenderer.invoke("sync:status"),
+	syncNow: () => ipcRenderer.invoke("sync:now"),
+	syncConfigure: (input: unknown) => ipcRenderer.invoke("sync:configure", input),
+	syncTest: (input: unknown) => ipcRenderer.invoke("sync:test", input),
+	syncDisconnect: () => ipcRenderer.invoke("sync:disconnect"),
+	syncPickDirectory: () => ipcRenderer.invoke("sync:pick-directory"),
+	onSyncStatus: (cb: (status: unknown) => void) => {
+		const handler = (_e: unknown, status: unknown) => cb(status);
+		ipcRenderer.on("sync:status", handler);
+		return () => ipcRenderer.removeListener("sync:status", handler);
+	},
+	syncPresets: () => ipcRenderer.invoke("sync:presets"),
+	syncProbe: (input: unknown) => ipcRenderer.invoke("sync:probe", input),
+	syncOpenExternal: (url: string) => ipcRenderer.invoke("sync:open-external", url),
+	syncReadClipboard: () => ipcRenderer.invoke("sync:read-clipboard"),
+	syncOpenLogin: (presetId: string, url: string) =>
+		ipcRenderer.invoke("sync:open-login", presetId, url),
+	syncConflicts: () => ipcRenderer.invoke("sync:conflicts"),
+	syncResolve: (id: string, choice: string) => ipcRenderer.invoke("sync:resolve", id, choice),
+	syncBooksList: () => ipcRenderer.invoke("sync:books:list"),
+	syncRemoteLibrary: () => ipcRenderer.invoke("sync:remote-library"),
+	syncBookUpload: (docId: string) => ipcRenderer.invoke("sync:book:upload", docId),
+	syncBookDownload: (docId: string) => ipcRenderer.invoke("sync:book:download", docId),
 	getSettings: () => ipcRenderer.invoke("settings:get"),
 	saveSettings: (s: unknown) => ipcRenderer.invoke("settings:save", s),
 	getAiConfig: () => ipcRenderer.invoke("ai:config"),

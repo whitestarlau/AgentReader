@@ -80,6 +80,9 @@ npm run package --workspace=@agentreader/app -- --win   # -> out/AgentReader-Set
 - `docs/export-design.md` 对话导出（Markdown / HTML / JSON）设计
 - `docs/tts-architecture.md` 朗读抽象层（引擎接口 / 缓存 / 回退）
 - `docs/tts-research.md`、`docs/research/` 朗读方案调研与实测
+- `docs/sync-research.md` 云同步（免费网盘 / GitHub / 设置同步）调研与架构建议
+- `docs/sync-webdav-plan.md` WebDAV 先行方案：服务预设、应用内连接向导、InfiniCLOUD 端点反查
+- `docs/sync-implementation-plan.md` 同步实施计划：任务分解、写盘审计、测试矩阵、里程碑
 - `docs/progress.md` 进度记录
 - `Reference/pi` 参考项目（已 gitignore，不提交）
 

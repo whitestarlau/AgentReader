@@ -25,7 +25,13 @@ export type PermissionRequest = {
 	timeoutMs: number;
 };
 
-export type DocMeta = { id: string; title: string; ext?: string };
+export type DocMeta = {
+	id: string;
+	title: string;
+	ext?: string;
+	/** 只在云端有原书：点开时需要先下载 */
+	cloud?: boolean;
+};
 
 export type DocSearchHit = { locator: number; label: string; count: number; snippets: string[] };
 

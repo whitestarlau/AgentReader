@@ -171,22 +171,27 @@ export function SideBar({
 											role="button"
 											tabIndex={0}
 										>
-											<Icon name={d.ext === "epub" ? "book" : "file"} size={14} />
-											<span className="row-label" title={d.title}>
+											<Icon
+												name={d.cloud ? "cloud" : d.ext === "epub" ? "book" : "file"}
+												size={14}
+											/>
+											<span className="row-label" title={d.cloud ? `${d.title}（云端，点击后下载）` : d.title}>
 												{d.title}
 											</span>
-											<span className="row-sub">{d.ext ?? "pdf"}</span>
-											<button
-												type="button"
-												className="row-action danger"
-												title="删除文档（含标注、对话与 OCR 缓存）"
-												onClick={(e) => {
-													e.stopPropagation();
-													onRemoveDoc(d);
-												}}
-											>
-												<Icon name="trash" size={13} />
-											</button>
+											<span className="row-sub">{d.cloud ? "云端" : (d.ext ?? "pdf")}</span>
+											{d.cloud ? null : (
+												<button
+													type="button"
+													className="row-action danger"
+													title="删除文档（含标注、对话与 OCR 缓存）"
+													onClick={(e) => {
+														e.stopPropagation();
+														onRemoveDoc(d);
+													}}
+												>
+													<Icon name="trash" size={13} />
+												</button>
+											)}
 										</div>
 									))}
 								</div>
