@@ -393,6 +393,16 @@ writeRawSettings(next);
 
 `index.json` 只保留「每本书上次看到的 `rev` 与 `etag`」，用于跳过没变化的书（省 GET）。
 
+### 4.1.2 原书的云端文件名
+
+远端原书是 `books/{书名} [{docId}].{ext}`，而不是 `books/{docId}.{ext}`。
+
+- **为什么带 docId**：它是内容 hash，是「两台设备不靠服务端也能对上同一本书」的唯一依据；纯书名无法保证唯一，改名/重导入也会失配。
+- **为什么带书名**：云端是用户自己的网盘，`ab12cd34ef567890.pdf` 这种名字在网页端完全没法认。
+- **书名从哪来**：`getDocTitle()`（`doc-text.ts`）只读元数据 —— EPUB 解 `container.xml → OPF` 的 `dc:title`，PDF 读 Info 字典的 `Title`（不用 Producer/Creator，那记的是排版软件），拿不到才退回本地文件名。**不**复用 `getDocText()`，因为它会把整本正文抽出来。
+- **兼容与迁移**：`docIdFromBookName()` 同时解析 `书名 [hash].ext` 与旧版的 `hash.ext`；再次上传同名书时，若云端还是旧名字会自动写成新名字并删掉旧文件。
+- **清理规则**：去掉控制字符、路径分隔符与 Windows 非法字符（`\ / : * ? " < > |`）、折叠空白、去掉首尾的点与空格、限长 80 字；清理后为空则退回 `docId`。
+
 ### 4.2 基线只在 pull 成功后推进
 
 `base/{docId}.json` 是三方合并的地基。推进时机错了，整套合并就退化成「覆盖式同步」。

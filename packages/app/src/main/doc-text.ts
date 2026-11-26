@@ -255,6 +255,60 @@ function stripTags(s: string): string {
 		.trim();
 }
 
+/**
+ * 只读元数据取书名（EPUB 的 `dc:title`、PDF 的 Info `Title`），不回退到全文解析。
+ *
+ * 为什么单独开一个函数：`getDocText()` 会把整本正文抽出来（RAG 用），为了给文件起个名
+ * 去跑那一套，对 200MB 的 PDF 是不可接受的。这里只解 container.xml / OPF 的头部，
+ * 或者 PDF 的 metadata 字典，都是一次轻量读。
+ */
+const docTitleCache = new Map<string, string>();
+
+export async function getDocTitle(docId: string): Promise<string | undefined> {
+	const cached = docTitleCache.get(docId);
+	if (cached) return cached;
+
+	const dir = getDocDir(docId);
+	let ext = "pdf";
+	let fallback: string | undefined;
+	try {
+		const meta = JSON.parse(readFileSync(join(dir, "doc.json"), "utf-8")) as {
+			ext?: string;
+			title?: string;
+		};
+		if (typeof meta.ext === "string") ext = meta.ext;
+		if (typeof meta.title === "string" && meta.title.trim()) fallback = meta.title.trim();
+	} catch {}
+
+	let title: string | undefined;
+	try {
+		if (ext === "epub") {
+			const JSZip = (await import("jszip")).default;
+			const zip = await JSZip.loadAsync(readFileSync(join(dir, `original.${ext}`)));
+			const containerXml = await zip.file("META-INF/container.xml")?.async("string");
+			const opfPath = containerXml?.match(/full-path="([^"]+)"/)?.[1] ?? "OEBPS/content.opf";
+			const opfText = (await zip.file(opfPath)?.async("string")) ?? "";
+			const match = opfText.match(/<(?:dc:)?title\b[^>]*>([\s\S]*?)<\/(?:dc:)?title>/i);
+			if (match) title = stripTags(decodeXmlEntities(match[1])).trim() || undefined;
+		} else {
+			const doc = await getPdfDoc(docId);
+			const info = ((await doc.getMetadata?.())?.info ?? {}) as Record<string, unknown>;
+			// 只用 Title：Producer / Creator 记的是排版软件，不是书
+			if (typeof info.Title === "string" && info.Title.trim()) title = info.Title.trim();
+		}
+	} catch {}
+
+	const result = title || fallback;
+	if (result) docTitleCache.set(docId, result);
+	return result;
+}
+
+/** 清掉标题缓存（文件被替换/删除时调用）。 */
+export function clearDocTitleCache(docId?: string): void {
+	if (docId) docTitleCache.delete(docId);
+	else docTitleCache.clear();
+}
+
 export async function getDocText(docId: string): Promise<DocText> {
 	const cached = docTextCache.get(docId);
 	if (cached !== undefined) return cached;

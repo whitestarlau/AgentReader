@@ -238,12 +238,14 @@ AgentReader/                      ← 同步根（用户可自定义子目录名
   manifest.json                   ← 索引：schema 版本 + 每本书的 rev/size/是否有原书 + 设置的 rev
   state/{docId}.json              ← 一本书的全部 L1 状态（位置 + 标注 + 章节 + 对话索引）
   chats/{docId}/{convId}.jsonl    ← 对话正文（追加式，天然可合并）
-  books/{docId}.pdf|epub          ← 可选，原书
+  books/{书名} [{docId}].pdf|epub ← 可选，原书（书名可读，方括号里是内容 hash）
   settings/state.json             ← L0 配置（净化后），见 §4
   settings/creds.enc              ← 可选，E2E 加密的凭据库，见 §4.6
 ```
 
 为什么不「本地文件原样镜像到云端」：一是文件数多（请求数爆炸，坚果云扛不住）；二是本地结构会演进（比如 `chats.jsonl` 拆成 `chats/*.jsonl` 已经发生过一次），远端格式应当与本地文件布局解耦，只与数据语义绑定。
+
+**原书的文件命名**：`书籍元数据里的书名 [docId].扩展名`（如 `深入理解计算机系统 [ab12cd34ef567890].pdf`）。纯 `docId` 可读性太差、纯书名会撞车，所以两者都留：hash 保证「换设备/重新导入/云端被改名」都还能对上同一本书，书名保证用户在网盘网页里一眼能认出。`docId` 只在文件名里，不影响内容寻址本身。
 
 **映射到 Gist 时**：一个私有 gist 就是同步根，上面每个文件对应一个 gist 文件，`/` 用 `|` 编码进文件名（沿用第一代 VSCode 扩展的写法：`chats|{docId}|{convId}.jsonl`）。所以一个 gist 的文件数上限（300）就是我们的书数上限——按「一本 L1 状态 + 若干对话」算，够用几百本，超了就提示改用仓库或 S3。注意 gist **放不下原书**（1MB 读取截断），原书要走仓库或 S3 后端；这也是为什么后端接口要能声明 `caps.maxObjectSize`。
 

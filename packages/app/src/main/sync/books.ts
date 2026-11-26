@@ -20,7 +20,16 @@ import { type SyncBackend, SyncError } from "./backend.ts";
  *    同名不同内容的文件，都在这一步被拒，而不是等 PDF.js 打开时报错。
  */
 
-export type RemoteBook = { docId: string; ext: string; size: number; path: string };
+export type RemoteBook = {
+	docId: string;
+	ext: string;
+	size: number;
+	path: string;
+	/** 云端文件名（含书名，便于界面直接展示） */
+	name: string;
+	/** 从文件名里解析出的书名（旧格式没有） */
+	title?: string;
+};
 
 export type BookSync = {
 	upload(docId: string): Promise<{ bytes: number }>;
@@ -38,7 +47,47 @@ export function docIdOf(content: Buffer): string {
 	return createHash("sha256").update(content).digest("hex").slice(0, 16);
 }
 
-const bookPath = (docId: string, ext: string) => `${BOOKS_DIR}/${docId}.${ext}`;
+const MAX_NAME_LENGTH = 80;
+
+/**
+ * 云端文件名：`书名 [docId].pdf`。
+ *
+ * 为什么名字里还要带 docId：它是内容 hash，是「两台设备不看服务端也能对上同一本书」的
+ * 唯一依据（换设备、重新导入、云端被改名都不影响识别）。纯书名会撞车，纯 hash 不可读，
+ * 所以两者都留。
+ *
+ * 清理规则按最保守的来：去掉路径分隔符与 Windows 非法字符、折叠空白、去掉首尾的点与空格
+ * （Windows 不允许以点结尾）、限长；清理后为空就退回 docId。
+ */
+export function cloudBookName(title: string | undefined, docId: string, ext: string): string {
+	// 控制字符用码点过滤而不是正则：正则里出现控制字符既难读，也容易被 lint 判为笔误
+	const withoutControls = Array.from(title ?? "")
+		.filter((char) => {
+			const code = char.codePointAt(0) ?? 0;
+			return code >= 0x20 && code !== 0x7f;
+		})
+		.join("");
+	const cleaned = withoutControls
+		.replace(/[\\/:*?"<>|]/g, " ")
+		.replace(/\s+/g, " ")
+		.trim()
+		.replace(/^[.\s]+|[.\s]+$/g, "");
+	const safe = cleaned.slice(0, MAX_NAME_LENGTH).trim();
+	const stem = safe ? `${safe} [${docId}]` : docId;
+	return `${stem}.${ext}`;
+}
+
+/** 从云端文件名里取回 docId：新格式认方括号，旧格式（纯 hash）也继续支持。 */
+export function docIdFromBookName(fileName: string): { docId: string; title?: string } | null {
+	const match = /^(.+?)\.([a-z0-9]+)$/i.exec(fileName);
+	if (!match) return null;
+	const stem = match[1];
+	const bracketed = /^(.*?)\s*\[([0-9a-f]{16})\]$/i.exec(stem);
+	if (bracketed)
+		return { docId: bracketed[2].toLowerCase(), title: bracketed[1].trim() || undefined };
+	if (/^[0-9a-f]{16}$/i.test(stem)) return { docId: stem.toLowerCase() };
+	return null;
+}
 
 export function createBookSync(deps: {
 	backend: SyncBackend;
@@ -46,6 +95,8 @@ export function createBookSync(deps: {
 	pathOf: (docId: string) => string | null;
 	/** 读取本地文件（可注入，便于单测） */
 	readFile?: (path: string) => Buffer;
+	/** 书名（优先取书籍元数据，其次本地文件名）；用于生成可读的云端文件名 */
+	titleOf?: (docId: string) => Promise<string | undefined> | string | undefined;
 }): BookSync {
 	const readFile = deps.readFile ?? ((path: string) => readFileSync(path));
 
@@ -54,9 +105,18 @@ export function createBookSync(deps: {
 		const books: RemoteBook[] = [];
 		for (const entry of entries) {
 			if (entry.isDir) continue;
-			const match = /^books\/([0-9a-f]{8,64})\.([a-z0-9]+)$/i.exec(entry.path);
-			if (!match) continue;
-			books.push({ docId: match[1], ext: match[2], size: entry.size, path: entry.path });
+			const fileName = entry.path.slice(entry.path.lastIndexOf("/") + 1);
+			const parsed = docIdFromBookName(fileName);
+			if (!parsed) continue;
+			const ext = fileName.slice(fileName.lastIndexOf(".") + 1).toLowerCase();
+			books.push({
+				docId: parsed.docId,
+				ext,
+				size: entry.size,
+				path: entry.path,
+				name: fileName,
+				title: parsed.title,
+			});
 		}
 		return books;
 	};
@@ -82,8 +142,19 @@ export function createBookSync(deps: {
 			}
 
 			const ext = (path.split(".").pop() ?? "pdf").toLowerCase();
-			const target = bookPath(docId, ext);
+			const title = deps.titleOf ? await deps.titleOf(docId) : undefined;
+			const target = `${BOOKS_DIR}/${cloudBookName(title, docId, ext)}`;
 			await deps.backend.put(target, content);
+
+			// 书名变了（或旧版用纯 hash 存过）：把旧文件删掉，避免云端留住两个副本
+			const stale = (await listRemote()).filter(
+				(book) => book.docId === docId && book.path !== target,
+			);
+			for (const book of stale) {
+				try {
+					await deps.backend.del(book.path);
+				} catch {}
+			}
 
 			// 上传后核对体积：服务方静默截断比报错更危险
 			const remote = (await listRemote()).find((book) => book.docId === docId);

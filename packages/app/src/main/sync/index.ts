@@ -12,6 +12,7 @@ import type {
 	SyncStatus,
 	SyncStatusConflict,
 } from "../../shared/sync-types.ts";
+import { getDocTitle } from "../doc-text.ts";
 import { ensureLibrary, getDocDir, libraryRoot } from "../paths.ts";
 import { readRawSettings, writeRawSettings } from "../settings.ts";
 import { createBackend, registerBackendFactory, type SyncBackend, SyncError } from "./backend.ts";
@@ -189,7 +190,7 @@ function buildRuntime(): Runtime {
 			docs,
 			storage: createFileStorage({ baseFile: syncBaseSettingsFile(), indexFile: syncIndexFile() }),
 		});
-		books = createBookSync({ backend, pathOf: bookPathOf });
+		books = createBookSync({ backend, pathOf: bookPathOf, titleOf: (docId) => getDocTitle(docId) });
 		backendRef = backend;
 	}
 

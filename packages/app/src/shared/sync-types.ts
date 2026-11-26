@@ -91,7 +91,14 @@ export type SyncConfigureResult =
 
 export type SyncRunResult = { ok: true; report: SyncRunReport } | { ok: false; error: SyncFailure };
 
-export type RemoteBookInfo = { docId: string; ext: string; size: number };
+export type RemoteBookInfo = {
+	docId: string;
+	ext: string;
+	size: number;
+	/** 云端文件名里的书名（旧版本存下的纯 hash 文件没有） */
+	title?: string;
+	name?: string;
+};
 
 export type BookListResult = { ok: boolean; remote: RemoteBookInfo[]; error?: SyncFailure };
 

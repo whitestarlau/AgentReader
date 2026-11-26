@@ -379,7 +379,8 @@ export function SyncSection() {
 										.map((book) => (
 											<li key={book.docId} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
 												<span style={{ flex: 1 }}>
-													云端书 {book.docId.slice(0, 8)} · {book.ext} · {(book.size / 1024 ** 2).toFixed(1)}MB
+													{book.title ?? `云端书 ${book.docId.slice(0, 8)}`} · {book.ext} ·{" "}
+													{(book.size / 1024 ** 2).toFixed(1)}MB
 												</span>
 												<button
 													type="button"
