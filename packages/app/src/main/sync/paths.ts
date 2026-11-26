@@ -26,6 +26,11 @@ export function syncIndexFile(): string {
 	return join(syncRoot(), "index.json");
 }
 
+/** 本机记录的删除墓碑（云端 `deleted/` 是权威来源，这里留一份便于排查与撤除）。 */
+export function syncTombstonesFile(): string {
+	return join(syncRoot(), "tombstones.json");
+}
+
 /** 待用户裁决的冲突（每次同步后整体重写）。 */
 export function syncConflictsFile(): string {
 	return join(syncRoot(), "conflicts.json");

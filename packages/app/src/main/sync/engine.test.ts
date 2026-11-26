@@ -6,8 +6,10 @@ import test from "node:test";
 import type { SyncBackend } from "./backend.ts";
 import { createLocalFolderBackend } from "./backends/local-folder.ts";
 import { createClock } from "./clock.ts";
+import { deleteBook } from "./delete.ts";
 import { createEngine, type EngineStorage, type SettingsPort, type SyncIndex } from "./engine.ts";
 import { type DocState, emptyDocState } from "./merge-records.ts";
+import { createTombstoneStore } from "./tombstones.ts";
 import type { SettingsState, Stamp } from "./types.ts";
 
 /**
@@ -22,6 +24,8 @@ function machine(name: string, remoteRoot: string, initial: Record<string, strin
 	let base: SettingsState | undefined;
 	const docBases = new Map<string, DocState>();
 	const docs = new Map<string, DocState>();
+	const removed: string[] = [];
+	const tombstones = createTombstoneStore(join(remoteRoot, "..", `tombstones-${name}.json`));
 	let index: SyncIndex = { settingsRev: 0, docs: {} };
 
 	const settings: SettingsPort & {
@@ -76,9 +80,13 @@ function machine(name: string, remoteRoot: string, initial: Record<string, strin
 			write: (docId, state) => {
 				docs.set(docId, state);
 			},
+			remove: (docId) => {
+				docs.delete(docId);
+				removed.push(docId);
+			},
 		},
 	});
-	return { engine, settings, docs };
+	return { engine, settings, docs, storage, tombstones, removed };
 }
 
 /**
@@ -196,8 +204,8 @@ test("an unchanged machine costs a single GET and does not push", async (t) => {
 	const report = await a.engine.sync();
 	assert.equal(report.pushed, false);
 	assert.equal(report.pulled, false);
-	// 设置一次 GET + 书库一次 list；没有任何 PUT
-	assert.equal(report.requests, 2, "没有变化时不应产生任何写入请求");
+	// 设置一次 GET + 书库一次 list + 墓碑一次 list；没有任何 PUT
+	assert.equal(report.requests, 3, "没有变化时不应产生任何写入请求");
 });
 
 test("a deletion propagates to the other machine", async (t) => {
@@ -391,6 +399,84 @@ test("D3: pushing a book and pulling it back costs the expected number of reques
 	assert.ok(first.requests >= 4, `首次推送至少要 4 次请求，实际 ${first.requests}`);
 
 	const second = await a.engine.sync();
-	assert.ok(second.requests <= 3, `没有变化时只应有设置 GET + 书库 list，实际 ${second.requests}`);
+	assert.ok(
+		second.requests <= 4,
+		`没有变化时只应有设置 GET + 书库 list + 墓碑 list，实际 ${second.requests}`,
+	);
 	assert.equal(second.pushed, false);
+});
+
+test("D4: 一台机器删除后，另一台下次同步会把本地副本也删掉", async (t) => {
+	const cloud = remote(t);
+	const a = machine("A", cloud);
+	const b = machine("B", cloud);
+
+	const shared: DocState = {
+		...emptyDocState("doc1", "一本书", "pdf"),
+		annotations: [{ id: "an1", page: 3, text: "标注", updatedAt: 10, deviceId: "A" }],
+		position: { page: 5, location: null, at: 10, dev: "A" },
+	};
+	a.docs.set("doc1", shared);
+	await a.engine.sync({ dirtyDocs: ["doc1"] });
+	b.docs.set("doc1", shared);
+	await b.engine.sync();
+	assert.ok(b.docs.get("doc1"), "先确认 B 已经有这本书");
+
+	// A 执行「删除本地与云端」：云端原书 + 笔记状态 + 墓碑
+	await deleteBook({
+		docId: "doc1",
+		scope: "everywhere",
+		backend: createLocalFolderBackend({ root: cloud }),
+		books: null,
+		storage: a.storage,
+		removeLocal: () => {
+			a.docs.delete("doc1");
+			return true;
+		},
+		tombstones: a.tombstones,
+		stamp: { at: 1_000, dev: "A" },
+	});
+
+	const report = await b.engine.sync();
+	assert.deepEqual(report.removedDocs, ["doc1"], "B 应当报告删掉了这本书");
+	assert.equal(b.docs.get("doc1"), undefined, "B 的本地副本也要消失");
+	assert.deepEqual(b.removed, ["doc1"]);
+});
+
+test("D5: 删除之后另一台机器又读过，就不该被墓碑抹掉", async (t) => {
+	const cloud = remote(t);
+	const a = machine("A", cloud);
+	const b = machine("B", cloud);
+
+	const shared: DocState = {
+		...emptyDocState("doc1", "一本书", "pdf"),
+		position: { page: 5, location: null, at: 10, dev: "A" },
+	};
+	a.docs.set("doc1", shared);
+	await a.engine.sync({ dirtyDocs: ["doc1"] });
+	b.docs.set("doc1", shared);
+	await b.engine.sync();
+
+	await deleteBook({
+		docId: "doc1",
+		scope: "everywhere",
+		backend: createLocalFolderBackend({ root: cloud }),
+		books: null,
+		storage: a.storage,
+		removeLocal: () => {
+			a.docs.delete("doc1");
+			return true;
+		},
+		tombstones: a.tombstones,
+		stamp: { at: 1_000, dev: "A" },
+	});
+
+	// B 在删除之后继续读到了第 42 页
+	const before = b.docs.get("doc1");
+	assert.ok(before);
+	b.docs.set("doc1", { ...before, position: { page: 42, location: null, at: 2_000, dev: "B" } });
+
+	const report = await b.engine.sync({ dirtyDocs: ["doc1"] });
+	assert.deepEqual(report.removedDocs, [], "不该删掉有更新改动的书");
+	assert.equal(b.docs.get("doc1")?.position.page, 42);
 });

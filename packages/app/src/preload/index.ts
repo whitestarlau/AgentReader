@@ -50,6 +50,11 @@ contextBridge.exposeInMainWorld("api", {
 	syncTest: (input: unknown) => ipcRenderer.invoke("sync:test", input),
 	syncDisconnect: () => ipcRenderer.invoke("sync:disconnect"),
 	syncPickDirectory: () => ipcRenderer.invoke("sync:pick-directory"),
+	onLibraryChanged: (cb: () => void) => {
+		const handler = () => cb();
+		ipcRenderer.on("library:changed", handler);
+		return () => ipcRenderer.removeListener("library:changed", handler);
+	},
 	onSyncStatus: (cb: (status: unknown) => void) => {
 		const handler = (_e: unknown, status: unknown) => cb(status);
 		ipcRenderer.on("sync:status", handler);

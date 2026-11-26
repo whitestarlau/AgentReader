@@ -105,6 +105,7 @@ declare global {
       syncBookUpload: (docId: string) => Promise<BookOpResult>;
       syncBookDownload: (docId: string) => Promise<BookOpResult>;
       onSyncStatus: (cb: (status: SyncStatus) => void) => () => void;
+      onLibraryChanged: (cb: () => void) => () => void;
       getSettings: () => Promise<Record<string, string>>;
       saveSettings: (s: unknown) => Promise<void>;
       getAiConfig: () => Promise<AiConfig>;
@@ -215,6 +216,16 @@ function App() {
     void window.api.syncStatus().then(setSyncStatus).catch(() => {});
     return window.api.onSyncStatus(setSyncStatus);
   }, []);
+
+  // 别的设备删了书，主进程会通知这里刷新书架
+  useEffect(
+    () =>
+      window.api.onLibraryChanged(() => {
+        void window.api.listLibrary().then(setDocs);
+        setSyncRefresh((n) => n + 1);
+      }),
+    [],
+  );
 
   // 云端书目：只在「已配置且刚同步完」时刷新，避免每次渲染都打请求
   useEffect(() => {

@@ -35,11 +35,13 @@ import {
 	syncIndexFile,
 	syncRoot,
 	syncStampsFile,
+	syncTombstonesFile,
 } from "./paths.ts";
 import { getWebdavPreset, WEBDAV_PRESETS } from "./presets.ts";
 import { applyDocChoice, applySettingsChoice } from "./resolve.ts";
 import { createSettingsPort, type StampRecord } from "./settings-port.ts";
 import { createFileStorage } from "./storage.ts";
+import { createTombstoneStore } from "./tombstones.ts";
 import type { FailureCode } from "./types.ts";
 
 /**
@@ -62,6 +64,7 @@ type Runtime = {
 	books: BookSync | null;
 	backend: SyncBackend | null;
 	storage: ReturnType<typeof createFileStorage>;
+	tombstones: ReturnType<typeof createTombstoneStore>;
 	/** 云端书的标题缓存：read state 一次就够，不必每次重读 */
 	remoteTitles: Map<string, string>;
 };
@@ -181,6 +184,7 @@ function buildRuntime(): Runtime {
 		indexFile: syncIndexFile(),
 	});
 	const conflicts = createConflictStore(syncConflictsFile());
+	const tombstones = createTombstoneStore(syncTombstonesFile());
 
 	// 书库侧的真实读写口：把 library/{docId}/ 下的五个文件映射成一份 DocState
 	const docs = createDocPort({
@@ -242,6 +246,7 @@ function buildRuntime(): Runtime {
 		books,
 		backend: backendRef,
 		storage,
+		tombstones,
 		remoteTitles: new Map(),
 	};
 }
@@ -325,6 +330,11 @@ async function runSync(): Promise<SyncOutcome> {
 			conflicts: rt.conflicts.read(),
 		};
 		rt.store.patch({ lastSyncAt: status.lastSyncAt });
+		if (report.removedDocs.length > 0) {
+			// 别的设备删过这些书，本地刚跟着删掉：让书架重新拉列表
+			const win = BrowserWindow.getAllWindows()[0];
+			if (win && !win.isDestroyed()) win.webContents.send("library:changed");
+		}
 		return { ok: true, report };
 	} catch (error) {
 		const failure = toFailure(error);
@@ -581,6 +591,8 @@ export function registerSyncIpc(): void {
 				books: rt.books,
 				storage: rt.storage,
 				removeLocal: () => removeLocalDoc(id),
+				tombstones: rt.tombstones,
+				stamp: syncClock().next(),
 			});
 			rt.remoteTitles.delete(id);
 			return {

@@ -8,6 +8,7 @@ import {
 } from "./merge-records.ts";
 import { mergeSettings } from "./merge-settings.ts";
 import { applyMergedSettings, sanitizeSettingsState } from "./sanitize.ts";
+import { localIsNewerThan, TOMBSTONE_DIR, type TombstoneMap } from "./tombstones.ts";
 import type { Conflict, SettingsState, Stamp } from "./types.ts";
 
 /**
@@ -37,6 +38,8 @@ export type DocPort = {
 	list(): string[];
 	read(docId: string): DocState | null;
 	write(docId: string, state: DocState): void;
+	/** 按墓碑删除本机这本书（云端删除后的传播） */
+	remove?(docId: string): void;
 };
 
 export type DocIndexEntry = { rev: number; etag?: string };
@@ -63,6 +66,8 @@ export type SyncReport = {
 	conflicts: Conflict[];
 	/** 书库层的冲突（标注 / 对话 / 位置），与设置冲突分开，方便界面分组呈现 */
 	docConflicts: DocConflict[];
+	/** 被云端墓碑删掉的本地书（另一台设备删过），界面据此刷新书架 */
+	removedDocs: string[];
 	/** 本次同步发起的后端调用次数，用于核对坚果云 600/30min 的配额。 */
 	requests: number;
 };
@@ -225,16 +230,39 @@ export function createEngine(deps: {
 		pulled: boolean;
 		pushed: boolean;
 		docConflicts: DocConflict[];
+		removedDocs: string[];
 	}> {
 		const port = deps.docs;
 		if (!port || !deps.storage.readDocBase || !deps.storage.writeDocBase) {
-			return { pulled: false, pushed: false, docConflicts: [] };
+			return { pulled: false, pushed: false, docConflicts: [], removedDocs: [] };
 		}
 
 		const dirty = new Set(dirtyDocs);
 		let pulled = false;
 		let pushed = false;
 		const docConflicts: DocConflict[] = [];
+		const removedDocs: string[] = [];
+
+		// 云端墓碑：别的设备删过这本书。本地若没有更新的改动，就跟着删。
+		const tombstones: TombstoneMap = {};
+		try {
+			for (const entry of await call(() => deps.backend.list(TOMBSTONE_DIR))) {
+				if (entry.isDir) continue;
+				const match = /^deleted\/([^/]+)\.json$/.exec(entry.path);
+				if (!match) continue;
+				const docId = decodeURIComponent(match[1]);
+				const buffer = await call(() => deps.backend.get(entry.path));
+				if (!buffer) continue;
+				try {
+					const stamp = JSON.parse(buffer.toString("utf-8")) as { at?: unknown; dev?: unknown };
+					if (typeof stamp.at === "number" && typeof stamp.dev === "string") {
+						tombstones[docId] = { at: stamp.at, dev: stamp.dev };
+					}
+				} catch {}
+			}
+		} catch {
+			// 墓碑目录不存在是常态（还没人删过东西），不当作错误
+		}
 
 		// 远端目录清单就是索引：一次 list 拿到全部书的 (size, mtime, etag)，
 		// 比额外维护一份 manifest.json 少一个「可能落后」的状态源。
@@ -246,8 +274,26 @@ export function createEngine(deps: {
 				remoteEntries.set(decodeURIComponent(match[1]), { path: entry.path, etag: entry.etag });
 		}
 
-		const ids = new Set([...port.list(), ...remoteEntries.keys()]);
 		const index = deps.storage.readIndex();
+		for (const [docId, tombstone] of Object.entries(tombstones)) {
+			const local = port.read(docId);
+			if (!local) continue;
+			if (localIsNewerThan(localStamps(local), tombstone)) {
+				// 删除之后用户又在别的设备上读过/标注过：保留本地，并撤掉云端墓碑，
+				// 否则这本书会在每台设备上被反复「删除」
+				try {
+					await call(() => deps.backend.del(`${TOMBSTONE_DIR}/${docId}.json`));
+				} catch {}
+				continue;
+			}
+			port.remove?.(docId);
+			deps.storage.deleteDocBase?.(docId);
+			delete index.docs[docId];
+			removedDocs.push(docId);
+			pulled = true;
+		}
+
+		const ids = new Set([...port.list(), ...remoteEntries.keys()]);
 
 		for (const docId of ids) {
 			const local = port.read(docId);
@@ -307,7 +353,7 @@ export function createEngine(deps: {
 		}
 
 		deps.storage.writeIndex({ ...index });
-		return { pulled, pushed, docConflicts };
+		return { pulled, pushed, docConflicts, removedDocs };
 	}
 
 	return {
@@ -320,10 +366,24 @@ export function createEngine(deps: {
 				pushed: settings.pushed || docs.pushed,
 				conflicts: settings.conflicts,
 				docConflicts: docs.docConflicts,
+				removedDocs: docs.removedDocs,
 				requests,
 			};
 		},
 	};
+}
+
+/** 一本书本机最后一次改动的时间戳（用于和墓碑比较）。 */
+function localStamps(state: DocState): number[] {
+	const stamps: number[] = [state.position.at, state.chapter.at];
+	const recordAt = (row: Record<string, unknown>) => {
+		const at = typeof row.updatedAt === "number" ? row.updatedAt : row.timestamp;
+		if (typeof at === "number") stamps.push(at);
+	};
+	for (const row of state.annotations) recordAt(row);
+	for (const row of state.conversations) recordAt(row);
+	for (const rows of Object.values(state.chats)) for (const row of rows) recordAt(row);
+	return stamps;
 }
 
 /** 远端 `state/{docId}.json` 的解析：坏字段一律降级为空状态，绝不让一本书卡住整轮同步。 */

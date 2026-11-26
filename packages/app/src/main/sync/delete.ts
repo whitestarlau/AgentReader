@@ -1,6 +1,8 @@
 import { type SyncBackend, SyncError } from "./backend.ts";
 import type { BookSync } from "./books.ts";
 import { type EngineStorage, STATE_DIR } from "./engine.ts";
+import { TOMBSTONE_DIR, type TombstoneStore } from "./tombstones.ts";
+import type { Stamp } from "./types.ts";
 
 /**
  * 删除一本书。
@@ -28,6 +30,9 @@ export async function deleteBook(opts: {
 	storage: EngineStorage;
 	/** 删除本机书库目录（由调用方处理 fs 与各类缓存） */
 	removeLocal: () => boolean;
+	/** 墓碑：让别的设备也跟着删（否则它下次同步会把书推回来） */
+	tombstones?: Pick<TombstoneStore, "add">;
+	stamp?: Stamp;
 }): Promise<DeleteResult> {
 	const deleted: string[] = [];
 	let removedLocal = false;
@@ -45,6 +50,14 @@ export async function deleteBook(opts: {
 		const statePath = `${STATE_DIR}/${opts.docId}.json`;
 		await opts.backend.del(statePath);
 		deleted.push(statePath);
+
+		// 墓碑要最后写：前面的删除全部成功之后才宣告「这本书被删了」，
+		// 否则别的设备会先按墓碑删掉本地书，而云端删除其实半途失败了。
+		if (opts.stamp) {
+			const marker = JSON.stringify({ at: opts.stamp.at, dev: opts.stamp.dev });
+			await opts.backend.put(`${TOMBSTONE_DIR}/${opts.docId}.json`, Buffer.from(marker, "utf-8"));
+			opts.tombstones?.add(opts.docId, opts.stamp);
+		}
 	}
 
 	removedLocal = opts.removeLocal();

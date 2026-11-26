@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DocPort } from "./engine.ts";
 import type { DocState } from "./merge-records.ts";
@@ -112,6 +112,12 @@ export function createDocPort(opts: {
 				conversations,
 				chats,
 			} satisfies DocState;
+		},
+
+		remove(docId) {
+			// 按云端墓碑删除本机副本：目录整个删掉，缓存由调用方清理
+			const dir = opts.dirOf(docId);
+			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 		},
 
 		write(docId, state) {
