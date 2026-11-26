@@ -15,6 +15,7 @@ import { EditorTabs } from "./components/shell/EditorTabs.tsx";
 import { StatusBar } from "./components/shell/StatusBar.tsx";
 import { Bookshelf } from "./components/shelf/Bookshelf.tsx";
 import { DeleteBookDialog } from "./components/shelf/DeleteBookDialog.tsx";
+import { decideOpen } from "./open-doc.ts";
 import { deriveShelfDocs } from "./shelf-state.ts";
 import { Resizer } from "./components/shell/Resizer.tsx";
 import type { ExportRequest, ExportResult } from "../shared/chat-export.ts";
@@ -343,26 +344,40 @@ function App() {
     }
   };
 
+  /**
+   * 下载云端书并打开。
+   *
+   * 注意最后一步必须直接 `openDocLocal`：如果回头再调 `openDoc`，它读到的仍是点击那一刻
+   * 的 `remoteDocs` 闭包（状态还没提交），会判定「还在云端」→ 再下载一次 → 无限循环。
+   * 同时用 ref 挡住并发重复下载（连点两下也只下一次）。
+   */
+  const downloadingRef = useRef(new Set<string>());
   const openCloudDoc = async (id: string) => {
-    const result = await window.api.syncBookDownload(id);
-    if (!result.ok) {
-      setSyncStatus(await window.api.syncStatus().catch(() => syncStatus));
-      return;
+    if (downloadingRef.current.has(id)) return;
+    downloadingRef.current.add(id);
+    try {
+      const result = await window.api.syncBookDownload(id);
+      if (!result.ok) {
+        setSyncStatus(await window.api.syncStatus().catch(() => syncStatus));
+        return;
+      }
+      const list = await window.api.listLibrary();
+      setDocs(list);
+      setRemoteDocs((prev) => prev.filter((entry) => entry.id !== id));
+      setSyncRefresh((n) => n + 1);
+      openDocLocal(id);
+    } finally {
+      downloadingRef.current.delete(id);
     }
-    const list = await window.api.listLibrary();
-    setDocs(list);
-    setRemoteDocs((prev) => prev.filter((entry) => entry.id !== id));
-    setSyncRefresh((n) => n + 1);
-    openDoc(id);
   };
 
-  const openDoc = (rawId: string) => {
-    const id = rawId;
-    if (remoteDocs.some((entry) => entry.id === id)) {
+  const openDoc = (id: string) => {
+    // 本地优先：本地已有就绝不下载，避免「打开云端书」变成反复下载
+    if (decideOpen({ docId: id, localDocs: docs, cloudDocs: remoteDocs }) === "download") {
       void openCloudDoc(id);
       return;
     }
-    return openDocLocal(id);
+    openDocLocal(id);
   };
 
   const openDocLocal = (id: string) => {

@@ -442,6 +442,33 @@ writeRawSettings(next);
 
 代价：每轮同步多一次 `list("deleted")` 请求（预算测试已从 2 → 3）。
 
+### 4.1.5 一次真实的流量事故：打开云端书变成无限下载
+
+现象：用户上传只用了 50MB，下载却到 1.8GB。
+
+根因是渲染层的一段递归：
+
+```ts
+const openCloudDoc = async (id) => {
+  await download(id);
+  openDoc(id);              // ← 又回到判断
+};
+const openDoc = (id) => {
+  if (remoteDocs.some(d => d.id === id)) return void openCloudDoc(id);  // ← 闭包里的旧状态
+  ...
+};
+```
+
+`openDoc` 读到的 `remoteDocs` 是**点击那一刻**捕获的闭包；React 的 `setRemoteDocs` 还没提交，
+所以下载完成后它仍然认为「这本书在云端」→ 再下载一整本 → 无限循环。一本书 50MB，下 36 次就是 1.8GB。
+
+三条修复（缺一不可）：
+1. **本地优先**：`decideOpen()` 先看本地书库，本地有就绝不下载（纯函数，3 个用例，含「两处都有时必须走本地」）；
+2. **下载后直接开本地**：`openCloudDoc` 末尾调 `openDocLocal`，不再回头走云端判断；并用 ref 挡住并发重复点击；
+3. **服务端兜底**：`sync:book:download` 发现本地已有且 `sha256` 与 docId 一致时直接返回 `alreadyLocal`，一个字节都不传。
+
+另外加了**下载护栏**：同一本书 10 分钟内下载超过 3 次直接报错，避免任何未预见的循环再次烧流量。
+
 ### 4.2 基线只在 pull 成功后推进
 
 `base/{docId}.json` 是三方合并的地基。推进时机错了，整套合并就退化成「覆盖式同步」。

@@ -19,7 +19,7 @@ import { readRawSettings, writeRawSettings } from "../settings.ts";
 import { createBackend, registerBackendFactory, type SyncBackend, SyncError } from "./backend.ts";
 import { createLocalFolderBackend } from "./backends/local-folder.ts";
 import { createWebdavBackend } from "./backends/webdav.ts";
-import { type BookSync, createBookSync } from "./books.ts";
+import { type BookSync, createBookSync, docIdOf } from "./books.ts";
 import { type Clock, createClock } from "./clock.ts";
 import { type ConfigStore, createConfigStore, type SecretCodec } from "./config.ts";
 import { createConflictStore, toStoredConflicts } from "./conflicts.ts";
@@ -131,6 +131,14 @@ function writeJson(file: string, data: unknown): void {
 }
 
 let runtimeCache: Runtime | null = null;
+/**
+ * 下载护栏：同一本书在 10 分钟内被下载超过 3 次，说明打开流程/app 逻辑出问题了
+ * （曾经真的发生过：一个闭包 bug 让「打开云端书」无限递归，一本书被下载几十次，
+ * 免费网盘的下载流量直接被打穿）。这里宁可报错让人看见，也不让它继续烧流量。
+ */
+const downloadGuard = new Map<string, { count: number; since: number }>();
+const DOWNLOAD_GUARD_WINDOW_MS = 10 * 60 * 1000;
+const DOWNLOAD_GUARD_LIMIT = 3;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let status: SyncStatus = {
 	configured: false,
@@ -671,6 +679,37 @@ export function registerSyncIpc(): void {
 		}
 		const id = String(docId ?? "");
 		try {
+			// 兜底：本地已经有这本书且内容校验通过，直接返回，绝不再下一次整本书。
+			// 界面侧的「本地优先」判断是主防线，这里是第二道——流量是按 GB 计费的，不能只靠一处。
+			const existingPath = bookPathOf(id);
+			if (existingPath) {
+				const existing = readFileSync(existingPath);
+				if (docIdOf(existing) === id) {
+					// 没走网络，不算一次下载
+					return { ok: true, bytes: existing.length, alreadyLocal: true };
+				}
+			}
+
+			const guard = downloadGuard.get(id);
+			const now = Date.now();
+			const attempts = guard && now - guard.since < DOWNLOAD_GUARD_WINDOW_MS ? guard.count : 0;
+			if (attempts >= DOWNLOAD_GUARD_LIMIT) {
+				return {
+					ok: false,
+					error: {
+						code: "rate-limited",
+						title: "重复下载被拦截",
+						detail:
+							"这本书在 10 分钟内已被下载多次，为避免继续消耗网盘流量已暂停。请重启应用后再试；如果反复出现请反馈。",
+						retryable: false,
+					},
+				};
+			}
+			downloadGuard.set(id, {
+				count: attempts + 1,
+				since: guard && now - guard.since < DOWNLOAD_GUARD_WINDOW_MS ? guard.since : now,
+			});
+
 			// 云端 state 里的标题最准（文件名可能被用户改过）；其次用文件名里的书名
 			let remoteTitle: string | undefined;
 			if (rt.backend) {
