@@ -19,6 +19,7 @@ import { decideOpen } from "./open-doc.ts";
 import { deriveShelfDocs } from "./shelf-state.ts";
 import { Resizer } from "./components/shell/Resizer.tsx";
 import type { ExportRequest, ExportResult } from "../shared/chat-export.ts";
+import type { UpdateState } from "../shared/update.ts";
 import type {
   TtsInfo,
   TtsModelProgress,
@@ -107,6 +108,16 @@ declare global {
       syncBookDownload: (docId: string) => Promise<BookOpResult>;
       onSyncStatus: (cb: (status: SyncStatus) => void) => () => void;
       onLibraryChanged: (cb: () => void) => () => void;
+      updateState: () => Promise<UpdateState>;
+      updateCheck: () => Promise<UpdateState>;
+      updateDownload: (opts?: { install?: boolean; force?: boolean }) => Promise<UpdateState>;
+      updateInstall: () => Promise<UpdateState>;
+      updateCancel: () => Promise<UpdateState>;
+      updateSkip: () => Promise<UpdateState>;
+      updatePrefs: (patch: { autoCheck?: boolean; includePrerelease?: boolean; autoDownload?: boolean }) => Promise<UpdateState>;
+      updateOpenRelease: () => Promise<boolean>;
+      updateReveal: () => Promise<boolean>;
+      onUpdateState: (cb: (state: UpdateState) => void) => () => void;
       getSettings: () => Promise<Record<string, string>>;
       saveSettings: (s: unknown) => Promise<void>;
       getAiConfig: () => Promise<AiConfig>;
@@ -186,6 +197,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SectionId | undefined>(undefined);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [updateState, setUpdateState] = useState<UpdateState | null>(null);
   const [remoteDocs, setRemoteDocs] = useState<DocMeta[]>([]);
   const [libraryState, setLibraryState] = useState<SyncLibraryEntry[]>([]);
   const [syncRefresh, setSyncRefresh] = useState(0);
@@ -216,6 +228,12 @@ function App() {
   useEffect(() => {
     void window.api.syncStatus().then(setSyncStatus).catch(() => {});
     return window.api.onSyncStatus(setSyncStatus);
+  }, []);
+
+  // 更新状态：只在主进程判断，这里订阅推送；首次挂载拉一次，避免错过启动检查。
+  useEffect(() => {
+    void window.api.updateState().then(setUpdateState).catch(() => {});
+    return window.api.onUpdateState(setUpdateState);
   }, []);
 
   // 别的设备删了书，主进程会通知这里刷新书架
@@ -260,6 +278,37 @@ function App() {
       }),
     [docs, remoteDocs, libraryState, syncStatus?.pending.docs],
   );
+
+  // 状态栏的更新入口：只在「有新版 / 下载中 / 待重启」时出现；用户跳过的不打扰。
+  const updateIndicator = useMemo(() => {
+    const state = updateState;
+    if (!state) return undefined;
+    if (state.phase === "ready") {
+      return {
+        phase: "ready" as const,
+        version: state.info?.version ?? null,
+        skipped: false,
+        percent: state.progress?.percent ?? null,
+      };
+    }
+    if (state.phase === "downloading") {
+      return {
+        phase: "downloading" as const,
+        version: state.info?.version ?? null,
+        skipped: false,
+        percent: state.progress?.percent ?? null,
+      };
+    }
+    if (state.phase === "available" && !state.skipped) {
+      return {
+        phase: "available" as const,
+        version: state.info?.version ?? null,
+        skipped: false,
+        percent: null,
+      };
+    }
+    return undefined;
+  }, [updateState]);
   const loadSettings = useCallback(() => {
     window.api.getSettings().then((s) => {
       if (s.ocrLang) setOcrLang(s.ocrLang);
@@ -394,7 +443,11 @@ function App() {
   useEffect(() => {
     menuHandlerRef.current = (cmd: string) => {
       if (cmd === "settings") setShowSettings(true);
-      else if (cmd === "import") void importDoc();
+      else if (cmd === "check-update") {
+        setSettingsSection("update");
+        setShowSettings(true);
+        void window.api.updateCheck().then(setUpdateState).catch(() => {});
+      } else if (cmd === "import") void importDoc();
       else if (cmd === "toggle-sidebar") setSidebarOpen((v) => !v);
       else if (cmd === "toggle-chat") setChatOpen((v) => !v);
       else if (cmd === "new-chat") setNewChatToken(Date.now());
@@ -656,6 +709,8 @@ function App() {
 
       <StatusBar
         doc={selectedDoc}
+        update={updateIndicator}
+        onOpenUpdate={() => { setSettingsSection("update"); setShowSettings(true); }}
         page={page}
         total={total}
         zoom={zoom}

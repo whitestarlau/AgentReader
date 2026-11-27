@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, type MenuItemConstructorOptions, shell } from "electron";
 import { APP_NAME } from "./identity.ts";
+import { checkForUpdates } from "./update/index.ts";
 
 /**
  * 应用菜单。此前从未设置过，Electron 用的内置默认菜单在中文界面下完全不对：
@@ -19,11 +20,19 @@ export type MenuCommand =
 	| "new-chat"
 	| "export-chat"
 	| "toggle-sidebar"
-	| "toggle-chat";
+	| "toggle-chat"
+	| "check-update";
 
 function sendCommand(cmd: MenuCommand) {
 	const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
 	win?.webContents.send("app:menu", cmd);
+}
+
+/** 「检查更新」优先交给渲染层打开设置页；没有窗口（macOS 关窗后）则直接在主进程检查。 */
+function checkUpdate() {
+	const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+	if (win) sendCommand("check-update");
+	else checkForUpdates();
 }
 
 export function installAppMenu() {
@@ -34,6 +43,7 @@ export function installAppMenu() {
 		label: APP_NAME,
 		submenu: [
 			{ label: `关于 ${APP_NAME}`, click: () => app.showAboutPanel() },
+			{ label: "检查更新…", click: checkUpdate },
 			{ type: "separator" },
 			{ label: "设置…", accelerator: "CmdOrCtrl+,", click: () => sendCommand("settings") },
 			{ type: "separator" },
@@ -133,6 +143,8 @@ export function installAppMenu() {
 				? []
 				: ([
 						{ label: `关于 ${APP_NAME}`, click: () => app.showAboutPanel() },
+						{ label: "检查更新…", click: checkUpdate },
+						{ type: "separator" },
 					] as MenuItemConstructorOptions[])),
 			{ label: "打开数据目录", click: () => void shell.openPath(app.getPath("userData")) },
 		],

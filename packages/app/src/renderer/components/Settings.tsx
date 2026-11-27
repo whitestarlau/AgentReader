@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
 	AiConfig,
 	CustomProvider,
@@ -13,9 +13,12 @@ import type {
 	TtsModelProgress,
 	TtsVoiceGroup,
 } from "../../shared/tts.ts";
+import { formatBytes } from "../format.ts";
 import { formatTokens } from "../tokens.ts";
 import { Icon, type IconName } from "./Icons.tsx";
+import { Card, Field, Switch } from "./SettingsControls.tsx";
 import { SyncSection } from "./sync/SyncSection.tsx";
+import { UpdateSection } from "./UpdateSection.tsx";
 
 function errorText(e: unknown): string {
 	const raw = e instanceof Error ? e.message : String(e);
@@ -42,14 +45,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 			},
 		);
 	});
-}
-
-/** Bytes → "167 MB" for model sizes (not tokens, so a separate helper). */
-function formatBytes(n: number): string {
-	if (!n) return "0 B";
-	if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
-	if (n >= 1024 ** 2) return `${Math.round(n / 1024 ** 2)} MB`;
-	return `${Math.round(n / 1024)} KB`;
 }
 
 const EMPTY_FORM = { id: "", name: "", baseUrl: "", models: "", key: "" };
@@ -81,6 +76,7 @@ export type SectionId =
 	| "reading"
 	| "sync"
 	| "tts"
+	| "update"
 	| "config";
 
 type SectionDef = { id: SectionId; label: string; icon: IconName; desc: string };
@@ -151,6 +147,17 @@ const SECTION_GROUPS: { title: string; items: SectionDef[] }[] = [
 		],
 	},
 	{
+		title: "关于",
+		items: [
+			{
+				id: "update",
+				label: "软件更新",
+				icon: "download",
+				desc: "从 GitHub Releases 检查、下载并覆盖安装新版本。",
+			},
+		],
+	},
+	{
 		title: "高级",
 		items: [
 			{
@@ -164,88 +171,6 @@ const SECTION_GROUPS: { title: string; items: SectionDef[] }[] = [
 ];
 
 const SECTIONS: SectionDef[] = SECTION_GROUPS.flatMap((g) => g.items);
-
-/** A bordered group of related settings. */
-function Card({
-	title,
-	desc,
-	actions,
-	children,
-	className,
-}: {
-	title?: ReactNode;
-	desc?: ReactNode;
-	actions?: ReactNode;
-	children: ReactNode;
-	className?: string;
-}) {
-	return (
-		<section className={className ? `settings-card ${className}` : "settings-card"}>
-			{title || actions ? (
-				<header className="settings-card-head">
-					<div className="settings-card-heading">
-						{title ? <h4>{title}</h4> : null}
-						{desc ? <div className="settings-card-desc">{desc}</div> : null}
-					</div>
-					{actions ? <div className="settings-card-actions">{actions}</div> : null}
-				</header>
-			) : null}
-			{children}
-		</section>
-	);
-}
-
-/** One labelled setting row: label on the left, control on the right. */
-function Field({
-	label,
-	hint,
-	controlHint,
-	children,
-	stack,
-}: {
-	label: ReactNode;
-	hint?: ReactNode;
-	controlHint?: ReactNode;
-	children: ReactNode;
-	stack?: boolean;
-}) {
-	return (
-		<div className={stack ? "settings-field stack" : "settings-field"}>
-			<div className="settings-label">
-				<span className="settings-label-text">{label}</span>
-				{hint ? <span className="settings-label-hint">{hint}</span> : null}
-			</div>
-			<div className="settings-control">
-				{children}
-				{controlHint ? <div className="settings-hint">{controlHint}</div> : null}
-			</div>
-		</div>
-	);
-}
-
-function Switch({
-	checked,
-	onChange,
-	disabled,
-	label,
-}: {
-	checked: boolean;
-	onChange: (next: boolean) => void;
-	disabled?: boolean;
-	label: string;
-}) {
-	return (
-		<input
-			type="checkbox"
-			role="switch"
-			className="settings-switch"
-			aria-label={label}
-			checked={checked}
-			disabled={disabled}
-			onChange={(e) => onChange(e.target.checked)}
-		/>
-	);
-}
 
 export function Settings({
 	docId,
@@ -292,6 +217,11 @@ export function Settings({
 	const [ttsPreviewing, setTtsPreviewing] = useState<string | null>(null);
 	const [section, setSection] = useState<SectionId>(initialSection ?? "models");
 	const contentRef = useRef<HTMLDivElement | null>(null);
+
+	// 设置页已经打开时，菜单/状态栏再次要求跳到某个分区（例如「检查更新」）也要生效。
+	useEffect(() => {
+		if (initialSection) setSection(initialSection);
+	}, [initialSection]);
 
 	const load = useCallback(async () => {
 		const [config, settings, customs, skillsData, docSkills, trust, rt] = await Promise.all([
@@ -1425,6 +1355,8 @@ export function Settings({
 							)}
 
 							{section === "sync" && <SyncSection />}
+
+							{section === "update" && <UpdateSection />}
 
 							{section === "config" && (
 								<Card

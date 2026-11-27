@@ -76,6 +76,25 @@ contextBridge.exposeInMainWorld("api", {
 		ipcRenderer.invoke("sync:book:delete", docId, scope),
 	syncBookUpload: (docId: string) => ipcRenderer.invoke("sync:book:upload", docId),
 	syncBookDownload: (docId: string) => ipcRenderer.invoke("sync:book:download", docId),
+	updateState: () => ipcRenderer.invoke("update:state"),
+	updateCheck: () => ipcRenderer.invoke("update:check"),
+	updateDownload: (opts?: { install?: boolean; force?: boolean }) =>
+		ipcRenderer.invoke("update:download", opts),
+	updateInstall: () => ipcRenderer.invoke("update:install"),
+	updateCancel: () => ipcRenderer.invoke("update:cancel"),
+	updateSkip: () => ipcRenderer.invoke("update:skip"),
+	updatePrefs: (patch: {
+		autoCheck?: boolean;
+		includePrerelease?: boolean;
+		autoDownload?: boolean;
+	}) => ipcRenderer.invoke("update:prefs", patch),
+	updateOpenRelease: () => ipcRenderer.invoke("update:open-release"),
+	updateReveal: () => ipcRenderer.invoke("update:reveal"),
+	onUpdateState: (cb: (state: unknown) => void) => {
+		const handler = (_e: unknown, state: unknown) => cb(state);
+		ipcRenderer.on("update:state", handler);
+		return () => ipcRenderer.removeListener("update:state", handler);
+	},
 	getSettings: () => ipcRenderer.invoke("settings:get"),
 	saveSettings: (s: unknown) => ipcRenderer.invoke("settings:save", s),
 	getAiConfig: () => ipcRenderer.invoke("ai:config"),

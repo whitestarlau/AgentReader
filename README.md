@@ -22,6 +22,7 @@ A desktop AI document reader with PDF / EPUB import, reading, **highlight / rect
 - **Export**: export the current conversation as Markdown, standalone HTML, or JSON; choose citations / reasoning / tool calls / tool results
 - **Read aloud**: sentence-level TTS with highlight follow-along and auto page turn; switchable engines — Edge (free, online, word timestamps), local sherpa-onnx models (MeloTTS for mixed Chinese/English, offline and commercially licensed), OpenAI-compatible TTS endpoints; voice preview, speed control, content-addressed audio cache and engine fallback
 - **Multi-provider**: reimplements `pi-ai`'s `Model / Context / StreamFn`, OpenAI-compatible endpoints
+- **Updates**: checks GitHub Releases for the current platform, verifies the asset's SHA-256, then downloads and replaces the app in place; status-bar badge and a settings panel (see `docs/update.md`)
 
 ## Tech stack
 

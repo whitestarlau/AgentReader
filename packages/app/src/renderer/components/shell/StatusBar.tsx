@@ -14,6 +14,14 @@ export type SyncIndicator = {
 	pending: number;
 };
 
+/** 状态栏只显示「值得注意」的更新状态，细节在设置页。 */
+export type UpdateIndicator = {
+	phase: "available" | "downloading" | "ready";
+	version: string | null;
+	skipped: boolean;
+	percent: number | null;
+};
+
 type Props = {
 	doc: DocMeta | null;
 	page: number;
@@ -28,6 +36,8 @@ type Props = {
 	onToggleChat: () => void;
 	sync?: SyncIndicator;
 	onOpenSync?: () => void;
+	update?: UpdateIndicator;
+	onOpenUpdate?: () => void;
 };
 
 export function StatusBar({
@@ -44,6 +54,8 @@ export function StatusBar({
 	onToggleChat,
 	sync,
 	onOpenSync,
+	update,
+	onOpenUpdate,
 }: Props) {
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const pickerRef = useRef<HTMLSpanElement>(null);
@@ -104,6 +116,30 @@ export function StatusBar({
 			)}
 
 			<span className="status-spacer" />
+
+			{update ? (
+				<button
+					type="button"
+					className="status-item clickable"
+					style={{ background: "none", border: "none", color: "inherit", font: "inherit", borderRadius: 0 }}
+					onClick={onOpenUpdate}
+					title={
+						update.phase === "ready"
+							? "新版本已下载，点击完成安装"
+							: update.phase === "downloading"
+								? "正在下载新版本"
+								: `发现新版本 v${update.version ?? ""}`
+					}
+				>
+					<Icon name="download" size={12} />
+					{update.phase === "ready"
+						? "可重启更新"
+						: update.phase === "downloading"
+							? `下载中 ${Math.floor(update.percent ?? 0)}%`
+							: `可更新 v${update.version ?? ""}`}
+				</button>
+			) : null}
+
 		{sync?.configured ? (
 			<button
 				type="button"

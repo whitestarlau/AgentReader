@@ -17,6 +17,7 @@ import { readSettings } from "./settings.ts";
 import { registerSkillsIpc } from "./skills-ipc.ts";
 import { registerSyncIpc } from "./sync/index.ts";
 import { registerTtsIpc } from "./tts/index.ts";
+import { registerUpdateIpc, startUpdateScheduler } from "./update/index.ts";
 
 /**
  * Main-process entry point: app lifecycle, the window, and wiring up every IPC
@@ -39,6 +40,7 @@ registerTtsIpc();
 registerPermissionIpc();
 registerChatIpc();
 registerSyncIpc();
+registerUpdateIpc();
 
 /**
  * 沉浸式标题栏：内容延伸到标题栏区域，同时保留系统原生窗口按钮。
@@ -114,6 +116,8 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
 		const created = ensureConfig({ baseUrl: legacy.baseUrl, model: legacy.model });
 		if (created && legacy.apiKey) setProviderKey("legacy", legacy.apiKey);
 		createWindow();
+		// 打包版启动 10 秒后检查一次，之后每 6 小时一次；开发态需要显式开启。
+		startUpdateScheduler();
 	});
 
 	app.on("window-all-closed", () => {

@@ -3683,3 +3683,150 @@ body.resizing iframe {
 	font-size: 12.5px;
 	line-height: 1.6;
 }
+
+/* --------------------------------------------------------------- updates */
+.update-current {
+	gap: 4px;
+}
+.update-version {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	color: var(--vscode-fg-bright);
+}
+.update-version strong {
+	font-size: 14px;
+}
+.update-meta {
+	font-size: 11px;
+	line-height: 1.5;
+	color: var(--vscode-fg-dim);
+	word-break: break-all;
+}
+.update-status {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	padding: 10px 16px;
+	border-top: 1px solid #2f2f31;
+	font-size: 12px;
+}
+.update-status.ok {
+	color: #89d185;
+}
+.update-spinner {
+	width: 10px;
+	height: 10px;
+	flex: 0 0 auto;
+	border: 2px solid rgba(255, 255, 255, 0.18);
+	border-top-color: #6cb6ff;
+	border-radius: 50%;
+	animation: update-spin 0.8s linear infinite;
+}
+@keyframes update-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+.update-error {
+	padding: 10px 16px;
+	border-top: 1px solid #2f2f31;
+	background: rgba(244, 135, 113, 0.06);
+	color: #f48771;
+	font-size: 12px;
+	line-height: 1.55;
+}
+.update-error-message {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+}
+.update-error .status-dot,
+.update-error svg {
+	flex: 0 0 auto;
+	margin-top: 2px;
+}
+.update-error .button-row {
+	margin-top: 8px;
+}
+.update-release {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px 16px;
+	border-top: 1px solid #2f2f31;
+}
+.update-release-head {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+}
+.update-release-title {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--vscode-fg-bright);
+}
+.update-badge {
+	padding: 1px 6px;
+	border: 1px solid rgba(255, 183, 77, 0.4);
+	border-radius: 3px;
+	background: rgba(255, 183, 77, 0.15);
+	color: #e0a458;
+	font-size: 10px;
+	font-weight: 500;
+}
+.update-badge.muted {
+	border-color: #3c3c3c;
+	background: rgba(255, 255, 255, 0.06);
+	color: var(--vscode-fg-dim);
+}
+.update-notes {
+	max-height: 260px;
+	overflow: auto;
+	padding: 10px 12px;
+	border: 1px solid #333335;
+	border-radius: 6px;
+	background: #1e1e1e;
+	font-size: 12px;
+	line-height: 1.6;
+}
+.update-warn {
+	padding: 0;
+}
+.update-progress {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.update-progress-bar {
+	flex: 1;
+	height: 4px;
+	border-radius: 2px;
+	background: rgba(255, 255, 255, 0.08);
+	overflow: hidden;
+}
+.update-progress-bar span {
+	display: block;
+	height: 100%;
+	background: #6cb6ff;
+	transition: width 0.2s linear;
+}
+.update-progress-label {
+	font-size: 10.5px;
+	color: var(--vscode-fg-dim);
+	white-space: nowrap;
+}
+.update-footnote {
+	padding: 10px 16px 12px;
+	border-top: 1px solid #2f2f31;
+}
+.update-footnote code {
+	padding: 1px 4px;
+	border-radius: 3px;
+	background: rgba(255, 255, 255, 0.07);
+	font-size: 11px;
+}
