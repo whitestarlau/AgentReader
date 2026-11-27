@@ -74,7 +74,6 @@ type Props = {
 	onTotalChange?: (total: number) => void;
 	/** Flattened PDF bookmarks, reported to the shell's outline view. */
 	onOutlineChange?: (items: OutlineItem[]) => void;
-	onOpenOutline?: () => void;
 };
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
@@ -197,7 +196,6 @@ export function PdfViewer({
 	onOcrJob,
 	onTotalChange,
 	onOutlineChange,
-	onOpenOutline,
 }: Props) {
 	const areaRef = useRef<HTMLDivElement>(null);
 	const stageRef = useRef<HTMLDivElement>(null);
@@ -1588,11 +1586,6 @@ export function PdfViewer({
 				)}
 
 				<span style={{ flex: 1 }} />
-				{outline.length > 0 && onOpenOutline && (
-					<button type="button" className="icon-btn" onClick={onOpenOutline} title="打开目录侧栏" aria-label="打开目录侧栏">
-						<Icon name="toc" size={14} />
-					</button>
-				)}
 			</div>
 
 			<div className="pdf-reading-progress" aria-hidden="true">

@@ -456,10 +456,6 @@ function App() {
     }
   };
 
-  const openOutline = () => {
-    setSidebarView("outline");
-    setSidebarOpen(true);
-  };
 
   // Drop the outline focus once navigation moves to another chapter. Arm it
   // only after the jump's own page update, otherwise setting it from the old
@@ -599,7 +595,6 @@ function App() {
                 onOcrJob={setOcrJob}
                 onTotalChange={setTotal}
                 onOutlineChange={setOutline}
-                onOpenOutline={openOutline}
                 onAnnotationCreate={(a) => {
                   addAnn(a);
                   if (a.text) setSelection({ text: a.text, page: a.page, kind: a.type === "highlight" ? "highlight" : "rect" });

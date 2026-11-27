@@ -291,7 +291,6 @@ export function EpubViewer({
 	// Reflow entry point installed by the load effect; the ResizeObserver below
 	// is the single layout-change trigger.
 	const reflowRef = useRef<() => void>(() => {});
-	const [toc, setToc] = useState<{ label: string; href: string }[]>([]);
 	const [atStart, setAtStart] = useState(true);
 	const [atEnd, setAtEnd] = useState(false);
 	const [spreadMode, setSpreadMode] = useState<SpreadMode>(readSpreadMode);
@@ -494,7 +493,6 @@ export function EpubViewer({
 			console.log("[epub] ready", book);
 			bookRef.current = book;
 			const rawToc = (book.navigation as { toc?: FlipBookTocNode[] } | undefined)?.toc ?? [];
-			setToc(rawToc.map((t) => ({ label: String(t.label ?? ""), href: String(t.href ?? "") })));
 			// Flatten the (nested) TOC and resolve each entry to the spine index
 			// used by the chapter-based locator. Same list feeds the shell's
 			// outline sidebar as the PDF bookmarks do. `href` keeps its fragment:
@@ -1603,29 +1601,6 @@ export function EpubViewer({
 					/>{" "}
 					朗读
 				</button>
-				{toc.length > 0 && (
-					<select
-						onChange={(e) => {
-							const href = e.target.value;
-							// Keep the control as an action menu: read-aloud moves through
-							// chapters without syncing this value, so re-picking the same
-							// entry must fire again.
-							e.target.value = "";
-							if (!href) return;
-							stopReading();
-							void displayTarget(href, e.target.selectedOptions[0]?.textContent ?? "");
-						}}
-						style={{ marginLeft: "auto", maxWidth: 180 }}
-						aria-label="目录"
-					>
-						<option value="">目录</option>
-						{toc.map((t) => (
-							<option key={t.href} value={t.href}>
-								{t.label}
-							</option>
-						))}
-					</select>
-				)}
 			</div>
 			<div className={`epub-viewport${turning ? ` turn-${turning}` : ""}`}>
 				<div ref={ref} className="epub-viewport-inner" />
