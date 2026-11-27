@@ -45,6 +45,7 @@ const SETTINGS_LABELS: Record<string, string> = {
 	webSearchMaxResults: "联网搜索条数",
 	skillsExecutionEnabled: "技能执行开关",
 	ttsEngine: "朗读引擎",
+	ttsEngineMode: "朗读引擎策略",
 	ttsModel: "朗读模型",
 	ttsLang: "朗读语言",
 	ttsRate: "朗读语速",

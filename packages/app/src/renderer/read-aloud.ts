@@ -21,6 +21,12 @@ export type ReadState = {
 	index: number;
 	total: number;
 	error?: string;
+	/**
+	 * Engine that produced the audio being played. The player never chooses an
+	 * engine itself, but showing which one spoke makes "本地优先 / 仅在线"
+	 * verifiable instead of a promise the user has to trust.
+	 */
+	engine?: { id: string; label: string };
 };
 
 export type ReadAloudOptions = {
@@ -53,6 +59,8 @@ export class ReadAloud {
 	private generation = 0;
 	private state: ReadState = { status: "idle", index: 0, total: 0 };
 	private objectUrl: string | null = null;
+	/** Engine that produced the audio of the current sentence, if known. */
+	private engine: ReadState["engine"];
 	private readonly cache = new Map<number, Promise<TtsSynthesizeReply>>();
 
 	constructor(opts: ReadAloudOptions) {
@@ -80,6 +88,7 @@ export class ReadAloud {
 	 */
 	load(text: string, startAt = 0, breaks?: readonly number[]): boolean {
 		this.stopAudio();
+		this.engine = undefined;
 		this.segments = splitSentences(text, {
 			maxChars: READ_MAX_CHARS,
 			...(breaks && breaks.length > 0 ? { breaks } : {}),
@@ -187,6 +196,7 @@ export class ReadAloud {
 			return;
 		}
 
+		this.engine = { id: reply.engineId, label: reply.engineLabel ?? reply.engineId };
 		const audio = this.ensureAudio();
 		this.setSource(audio, reply);
 		try {
@@ -232,7 +242,13 @@ export class ReadAloud {
 	}
 
 	private emit(status: ReadStatus, error?: string): void {
-		this.state = { status, index: this.index, total: this.segments.length, error };
+		this.state = {
+			status,
+			index: this.index,
+			total: this.segments.length,
+			error,
+			...(this.engine ? { engine: this.engine } : {}),
+		};
 		this.opts.onState(this.state);
 	}
 }

@@ -14,6 +14,7 @@ import {
 	type VisibleArea,
 } from "../readable.ts";
 import { ReadBar } from "./ReadBar.tsx";
+import { useTtsEngineMode } from "../tts-mode.ts";
 import type { Annotation } from "./AnnotationLayer.tsx";
 import {
 	loadReadingCfi,
@@ -273,6 +274,8 @@ export function EpubViewer({
 	const readRateRef = useRef(1);
 	const [readState, setReadState] = useState<ReadState | null>(null);
 	const [readRate, setReadRate] = useState(1);
+	// Engine policy (auto / online-first / local-first / local-only / online-only).
+	const [ttsMode, setTtsMode] = useTtsEngineMode();
 	const readActiveRef = useRef(false);
 	const readActive = readState !== null && readState.status !== "idle" && readState.status !== "error";
 	const [turning, setTurning] = useState<"next" | "prev" | null>(null);
@@ -1608,6 +1611,8 @@ export function EpubViewer({
 					<ReadBar
 						state={readState}
 						rate={readRate}
+						mode={ttsMode}
+						onMode={setTtsMode}
 						onRate={setReadRate}
 						onToggle={toggleReading}
 						onPrev={() => readerRef.current?.prev()}

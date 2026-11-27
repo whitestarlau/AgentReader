@@ -1,6 +1,6 @@
 # 朗读抽象层（TTS 引擎接口）
 
-> 2026-11-07 | 状态：v1 已落地（2 个引擎 + 缓存 + 回退 + IPC）| 关联：[tts-research.md](tts-research.md)
+> 2026-11-27 | 状态：v1 已落地（4 个引擎 + 缓存 + 回退 + 五档引擎策略 + IPC）| 关联：[tts-research.md](tts-research.md)
 
 ## 0. 这层解决什么
 
@@ -27,7 +27,8 @@
       │ IPC: tts:info / tts:voices / tts:synthesize / tts:speak / tts:cache:*
 主进程
   tts/index.ts            ← 唯一接触 Electron 的文件：读设置、建注册表、缓存、IPC
-  tts/registry.ts         引擎注册 + 失败回退链
+  tts/chain.ts            引擎顺序（五档策略，纯函数，可单测）
+  tts/registry.ts         引擎注册 + 熔断 + 失败回退
   tts/pipeline.ts         长文按句切分、拼接音频、平移边界
   tts/segment.ts          中英混排切句（纯函数，保留 charRange）
   tts/cache.ts            内容寻址音频缓存 + LRU
@@ -113,9 +114,9 @@ interface TtsEngine {
 
 | channel | 入参 | 返回 |
 |---|---|---|
-| `tts:info` | — | `{ engines, engineId, voiceId, rate, cacheBytes, endpointConfigured }` |
+| `tts:info` | — | `{ engines, mode, chain, engineId, voiceId, rate, cacheBytes, endpointConfigured, diagnostics }`；`chain` 是**按当前策略 + 熔断**排好的引擎 id 列表 |
 | `tts:voices` | — | `{ groups: [{ engineId, label, voices }] }` |
-| `tts:synthesize` | `{ text, engineId?, voiceId?, rate? }` | `{ ok:true, engineId, cached, format, sampleRate, durationMs?, boundaries, data } \| { ok:false, kind, message }` |
+| `tts:synthesize` | `{ text, engineId?, voiceId?, rate? }` | `{ ok:true, engineId, engineLabel?, cached, format, sampleRate, durationMs?, boundaries, data } \| { ok:false, kind, message }` |
 | `tts:speak` | 同上 | 同上，但**绕过缓存**（用于「试听音色」） |
 | `tts:cache:clear` | — | `{ freedBytes }` |
 | `tts:cache:size` | — | `number` |
@@ -140,7 +141,8 @@ interface TtsEngine {
 | `ttsLang` | 语言标签 | `zh-CN` |
 | `ttsRate` | 语速，clamp 到 0.5–2 | `1` |
 | `ttsMaxChars` | 单次请求上限 | `4000` |
-| `ttsEngine` | 首选引擎 id | 空（自动选第一个可用） |
+| `ttsEngine` | 首选引擎 id（只在它所属的类别内提前，见 §6.1） | 空（按策略排序） |
+| `ttsEngineMode` | 引擎策略：`auto` / `online-first` / `local-first` / `local-only` / `online-only` | `auto` |
 | `ttsCacheMb` | 缓存上限 | `500` |
 | `ttsEnableMock` | 注册静音引擎（开发用） | 关 |
 | `ttsSherpaModelDir` | 本地模型目录（解包后的 bundle） | 空（未启用） |
@@ -148,6 +150,31 @@ interface TtsEngine {
 | `ttsSherpaThreads` | 本地推理线程数（≤ 性能核数） | 4 |
 | `ttsSherpaKind` | `auto` / `vits` / `matcha` | `auto` |
 | `ttsModelPreset` | 目录里已安装模型中被选中的那个 id | 自动选第一个可用 |
+
+### 6.1 引擎策略（`ttsEngineMode`）
+
+v1 的顺序是写死的：**在线（免费 Edge）优先，本地只在失败时兜底**。这既不透明也不可配置——用户没法说「这本书只用我磁盘上的模型」，也没法在 Edge 抽风时避免每句都等一次连接超时。现在顺序由 `ttsEngineMode` 决定，五档语义：
+
+| 模式 | 顺序 | 跨类回退 | 用在什么场景 |
+|---|---|---|---|
+| `auto`（默认） | 上次成功的引擎 → 在线 → 本地 | 是 | 不想操心；失败一次后**粘住**能用的那个 |
+| `online-first` | 在线 → 本地 | 是 | 要 Edge 的中文音色，断网时还能读 |
+| `local-first` | 本地 → 在线 | 是 | 已下载模型，尽量不联网 |
+| `local-only` | 只有本地 | **否** | 隐私 / 离线 / 只想用自己装的模型 |
+| `online-only` | 只有在线 | **否** | 不想让本地模型占内存，或本地模型出问题时排查 |
+
+分类不看硬编码的 id，而是 `capabilities().offline`：本地 sherpa 与**指向 127.0.0.1 的 OpenAI 兼容端点**都算本地，Edge 与公网端点算在线。
+
+几个刻意决定：
+
+- **`auto` 是粘的**：熔断只屏蔽 60 秒，时间一到又会去试 Edge 并再等一次超时。所以记住「这次运行里最后成功的是谁」，下一句直接从它开始；只在内存里，不跨启动（一次网络抖动不该决定下次启动的引擎）。
+- **`*-only` 不跨类**：`local-only` 且没装模型时 chain 为空，直接报错并提示去下载模型，而不是悄悄联网。错误文案按模式区分（`chain.ts` 的 `emptyChainMessage`）。
+- **`ttsEngine` 只在同类别内提前**：它是个高级开关（没有界面），语义是「在我的这一档里优先用它」，所以 `local-only` + `ttsEngine=edge` 仍然是本地——否则「仅本地」就成了玩笑。
+- **显式 `engineId` 的请求只走那一个引擎**（设置页「试听」）：音色 id 是引擎作用域的，回退到别的引擎只会播出错误的声音。「试听 Edge」在「仅本地」模式下依然会联网——这是用户主动点的一次动作，不是朗读行为。
+- **缓存只认「即将出声」的那一个引擎**：缓存 key 含 engineId，若像以前那样遍历整条链，`本地优先` 里会命中历史 Edge 缓存，`仅本地` 甚至可能放出在线音频。现在只查 `registry.preferred(chain)`（= 策略首选 + 熔断后的实际首发引擎）。
+- **音色按引擎分别解析**：`resolveVoiceId(engineId, …)` 由注册表以 `engineId → TtsRequest` 工厂回调取得。以前整条链共用一个 `voiceId`（按 chain[0] 解析），`本地优先 → 回退 Edge` 会把 `"0"` 当成 Edge 的音色名，必然失败。
+
+界面上有两处：设置页「朗读 → 朗读方式」（策略下拉 + 解析后的顺序 + 「现在会用」）和播放条上的紧凑下拉。播放条还会显示当前这句**实际**由哪个引擎出声（`ReadState.engine`），否则「仅本地」只是一个无法验证的承诺。切换对下一句合成生效，已预取的句子仍用旧策略——和语速滑块一致。
 
 ## 7. 本地模型的下载与安装
 
@@ -181,7 +208,7 @@ interface TtsEngine {
 - **PDF 工具栏「朗读」**：从当前页开始，读完自动翻页，直到文档末尾。
 - **EPUB 工具栏「朗读」**：从当前章节开始，读完自动进入下一节。
 
-播放时底部浮出播放条：上一句 / 暂停 / 下一句、`3 / 17 句`、语速（0.8–2×，对之后合成的句子生效）、停止；加载中显示转圈，出错直接显示原因（例如「还没有配置朗读引擎」）。
+播放时底部浮出播放条：上一句 / 暂停 / 下一句、`3 / 17 句`、**当前出声的引擎**、语速（0.8–2×）、**引擎策略**下拉、停止；加载中显示转圈，出错直接显示原因（例如「仅本地模式：还没有可用的本地模型…」）。引擎名与策略都在条上，是因为朗读时最常问的两个问题就是「这是谁在念」和「能不能换一个」。
 
 数据流：
 
@@ -265,6 +292,7 @@ export class MyTts implements TtsEngine {
 - 音色：设置页「音色」分区按引擎分组列出可选音色（本地模型按 `numSpeakers` 展开，如 AISHELL-3 的 174 个），选择写入 `ttsVoice:<engineId>`；「试听」走 `tts:speak` 绕过缓存，换音色立刻能听出区别。
 - 模型管理器：应用内下载（流式进度、可取消）、完整性校验、`tar` 解包、安装后校验、删除；实测真实下载 129MB（Matcha + vocoder）15.3 秒完成并验证通过。
 - 设置页「朗读」分区：模型卡片（大小 / 许可证 / 占用）、下载进度条、取消 / 删除 / 切换使用，以及当前可用引擎与能力。
+- 引擎策略五档（自动 / 在线优先 / 本地优先 / 仅本地 / 仅在线）：主进程按策略 + 熔断排链（`chain.ts`，纯函数 + 8 项单测），设置页显示解析后的顺序与「现在会用」，播放条可随手切换并显示实际出声引擎；`auto` 记住本次运行最后成功的引擎，`*-only` 无可用引擎时报出可操作的错误而不是悄悄换类。
 - `sherpa-onnx` 本地适配器：模型目录即配置，自动识别 **VITS / Matcha / Kokoro** 三族、自动收集 rule fsts、按 `numSpeakers` 生成音色列表；合成走 `generateAsync`（不阻塞主进程）；输出 16-bit WAV。
 - Kokoro 中文（82M / Apache-2.0）：v1.1 是中文特化版，103 个音色 = 中文 100（55 女声 + 45 男声）+ 3 个英语；**v1.0 与 v1.1 的 sid 布局完全不同**（v1.0 的中文在 45–52 且带名字，v1.1 是 3–57 女 / 58–102 男），适配器按说话人总数分流映射。M1 实测 RTF 0.71–0.89（int8，4 线程）；另提供 fp32 高保真版（365MB）用于排查量化杂音。
 - `openai-compatible` 适配器（零依赖 `fetch`）：可直接接 Kokoro-FastAPI、Speaches 或任何 `/v1/audio/speech` 服务；自动嗅探返回格式（mp3/wav/opus），不信任 `response_format`。
@@ -309,7 +337,7 @@ export class MyTts implements TtsEngine {
 
 ## 11. 验证
 
-- 单测 60 项：切句 9、管线 4、注册表 6、缓存 4、mock 2、OpenAI 兼容适配器 5、WAV 2、sherpa 9、模型管理 7、播放器状态机 6、Edge 令牌 4、注册表熔断 2；其中 1 项 sherpa 集成测试需 `SHERPA_TTS_MODEL_DIR`，默认跳过；全量 66 项通过 65、跳过 1；
+- 单测全量 292 项通过 291、跳过 1（唯一跳过的是需要 `SHERPA_TTS_MODEL_DIR` 的 sherpa 集成测试）；朗读相关含：切句、管线、注册表（失败回退 / 熔断 / 按引擎解析音色）、**策略链 8 项**、缓存、mock、OpenAI 兼容适配器、WAV、sherpa、模型管理、播放器状态机、Edge 令牌；
 - `npm run typecheck --workspace=@agentreader/app` 通过；
 - `npm run build --workspace=@agentreader/app` 通过（主进程 bundle ≈168KB）。
 - `npm run test:electron --workspace=@agentreader/app`（需 `SHERPA_TTS_MODEL_DIR` 指向解包模型）在真实 Electron 里跑一次合成：3.34s 音频 / 1.36s 合成，通过。这是唯一能覆盖「外部缓冲区」这类宿主差异的测试。

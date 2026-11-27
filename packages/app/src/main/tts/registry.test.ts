@@ -130,3 +130,43 @@ test("collects voices from every engine that answers", async () => {
 		["a"],
 	);
 });
+
+test("the request is built per engine so engine-scoped voices never cross over", async () => {
+	const heard: Record<string, string> = {};
+	const recording = (id: string, fail?: TtsErrorKind): TtsEngine => ({
+		id,
+		label: id,
+		capabilities: () => CAPS,
+		listVoices: async () => [],
+		async synthesize(req: TtsRequest): Promise<TtsResult> {
+			heard[id] = req.voiceId;
+			if (fail) throw new TtsError(fail, `${id} failed`, { engineId: id });
+			return {
+				audio: { format: "mp3", sampleRate: 24_000, data: new Uint8Array([1]) },
+				boundaries: [],
+			};
+		},
+	});
+	const registry = new TtsRegistry()
+		.register(recording("sherpa", "internal"))
+		.register(recording("edge"));
+	const out = await registry.synthesize(["sherpa", "edge"], (engineId) => ({
+		text: "你好。",
+		voiceId: engineId === "sherpa" ? "3" : "zh-CN-XiaoxiaoNeural",
+	}));
+	assert.equal(out.engineId, "edge");
+	assert.deepEqual(heard, { sherpa: "3", edge: "zh-CN-XiaoxiaoNeural" });
+});
+
+test("resolveOrder reports the engine that would really speak", async () => {
+	const broken = fakeEngine("a", { fail: "network" });
+	const stable = fakeEngine("b");
+	const registry = new TtsRegistry().register(broken).register(stable);
+	assert.equal(registry.preferred(["a", "b"]), "a");
+	await registry.synthesize(["a", "b"], req);
+	// `a` is cooling down, so the next sentence starts at `b`.
+	assert.equal(registry.preferred(["a", "b"]), "b");
+	assert.deepEqual(registry.resolveOrder(["a", "b"]), ["b"]);
+	// Unknown ids never appear in the order.
+	assert.deepEqual(registry.resolveOrder(["missing", "b"]), ["b"]);
+});

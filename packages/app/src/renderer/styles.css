@@ -2081,6 +2081,24 @@ body.resizing iframe {
 	font-size: 11px;
 	border-radius: 6px;
 }
+/* engine actually speaking this sentence — makes "本地优先 / 仅在线" verifiable */
+.read-bar-engine {
+	max-width: 108px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	padding: 1px 8px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.06);
+	color: var(--vscode-fg-dim);
+}
+/* engine policy switch, same footprint as the speed selector */
+.read-bar-mode {
+	width: auto;
+	min-width: 72px;
+	padding: 2px 6px;
+	font-size: 11px;
+	border-radius: 6px;
+}
 .read-bar-error {
 	max-width: 260px;
 	overflow: hidden;
@@ -2794,6 +2812,39 @@ body.resizing iframe {
 }
 .tts-engine-meta {
 	font-size: 11px;
+	color: var(--vscode-fg-dim);
+}
+/* resolved engine order: 本地 · MeloTTS → 在线 · Edge 朗读（免费） */
+.tts-chain {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	padding: 10px 16px 12px;
+	border-top: 1px solid #2f2f31;
+	font-size: 11px;
+}
+.tts-chain-label {
+	margin-right: 2px;
+	color: var(--vscode-fg-dim);
+}
+.tts-chain-step {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 8px 2px 2px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.04);
+}
+.tts-chain-arrow {
+	color: var(--vscode-fg-dim);
+	opacity: 0.6;
+}
+.tts-chain-empty {
+	color: #f48771;
+}
+.tts-chain-now {
+	margin-left: auto;
 	color: var(--vscode-fg-dim);
 }
 .settings-pill.src-metadata {

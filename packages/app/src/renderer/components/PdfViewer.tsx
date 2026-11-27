@@ -18,6 +18,7 @@ import {
 	type TextMap,
 } from "../readable.ts";
 import { ReadBar } from "./ReadBar.tsx";
+import { useTtsEngineMode } from "../tts-mode.ts";
 import type { OutlineItem } from "../types.ts";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.mjs", import.meta.url).toString();
@@ -208,6 +209,8 @@ export function PdfViewer({
 	const readRateRef = useRef(1);
 	const [readState, setReadState] = useState<ReadState | null>(null);
 	const [readRate, setReadRate] = useState(1);
+	// Engine policy (auto / online-first / local-first / local-only / online-only).
+	const [ttsMode, setTtsMode] = useTtsEngineMode();
 	// While a session is active the reader owns navigation; the ref keeps the
 	// (once-installed) key and click handlers honest.
 	const readActiveRef = useRef(false);
@@ -1644,6 +1647,8 @@ export function PdfViewer({
 				<ReadBar
 					state={readState}
 					rate={readRate}
+					mode={ttsMode}
+					onMode={setTtsMode}
 					onRate={setReadRate}
 					onToggle={toggleReading}
 					onPrev={() => readerRef.current?.prev()}

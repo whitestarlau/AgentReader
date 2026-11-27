@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
 	AiConfig,
 	CustomProvider,
@@ -7,11 +7,16 @@ import type {
 	SkillTrustPayload,
 	WebSearchTestResult,
 } from "../types.ts";
-import type {
-	TtsInfo,
-	TtsModelInfo,
-	TtsModelProgress,
-	TtsVoiceGroup,
+import {
+	DEFAULT_TTS_ENGINE_MODE,
+	normalizeTtsEngineMode,
+	TTS_ENGINE_MODES,
+	type TtsEngineMode,
+	ttsEngineModeDesc,
+	type TtsInfo,
+	type TtsModelInfo,
+	type TtsModelProgress,
+	type TtsVoiceGroup,
 } from "../../shared/tts.ts";
 import { formatBytes } from "../format.ts";
 import { formatTokens } from "../tokens.ts";
@@ -131,7 +136,7 @@ const SECTION_GROUPS: { title: string; items: SectionDef[] }[] = [
 				id: "tts",
 				label: "朗读",
 				icon: "download",
-				desc: "下载本地朗读模型、查看可用引擎。模型由应用自动解包和管理。",
+				desc: "选择在线 / 本地的优先级，下载本地模型，挑音色。模型由应用自动解包和管理。",
 			},
 		],
 	},
@@ -209,6 +214,7 @@ export function Settings({
 	const [ttsModels, setTtsModels] = useState<TtsModelInfo[]>([]);
 	const [ttsModelDir, setTtsModelDir] = useState("");
 	const [ttsInfo, setTtsInfo] = useState<TtsInfo | null>(null);
+	const [ttsMode, setTtsMode] = useState<TtsEngineMode>(DEFAULT_TTS_ENGINE_MODE);
 	const [ttsProgress, setTtsProgress] = useState<Record<string, TtsModelProgress>>({});
 	const [ttsError, setTtsError] = useState<string | null>(null);
 	const [ttsLoading, setTtsLoading] = useState(false);
@@ -282,7 +288,10 @@ export function Settings({
 			} else if (modelsResult.status === "rejected") {
 				errors.push(`模型列表：${errorText(modelsResult.reason)}`);
 			}
-			if (infoResult.status === "fulfilled") setTtsInfo(infoResult.value);
+			if (infoResult.status === "fulfilled") {
+				setTtsInfo(infoResult.value);
+				setTtsMode(normalizeTtsEngineMode(infoResult.value.mode));
+			}
 			else errors.push(`引擎信息：${errorText(infoResult.reason)}`);
 
 			if (voicesResult.status === "fulfilled" && voicesResult.value) {
@@ -307,6 +316,25 @@ export function Settings({
 		if (section !== "tts") return;
 		void loadTts();
 	}, [section, loadTts]);
+
+	// The main process owns the chain; re-read it instead of recomputing the order
+	// here (cooldowns and installed models both feed into it).
+	const chooseMode = useCallback(async (next: TtsEngineMode) => {
+		setTtsMode(next);
+		await window.api.saveSettings({ ttsEngineMode: next });
+		try {
+			setTtsInfo(await window.api.ttsInfo());
+		} catch {
+			// The select still shows the new value; the next reload catches up.
+		}
+	}, []);
+
+	const engineById = useMemo(
+		() => new Map((ttsInfo?.engines ?? []).map((e) => [e.id, e] as const)),
+		[ttsInfo],
+	);
+	const ttsChain = ttsInfo?.chain ?? [];
+	const hasLocalEngine = (ttsInfo?.engines ?? []).some((e) => e.capabilities.offline);
 
 	const chooseVoice = useCallback(async (engineId: string, voiceId: string) => {
 		setVoiceChoice((prev) => ({ ...prev, [engineId]: voiceId }));
@@ -1178,6 +1206,58 @@ export function Settings({
 
 							{section === "tts" && (
 								<>
+									<Card title="朗读方式" desc="决定朗读时先用在线引擎还是本地模型；改动对下一句合成生效。">
+										<Field
+											label="引擎策略"
+											hint="在线 / 本地的优先关系"
+											controlHint={ttsEngineModeDesc(ttsMode)}
+										>
+											<select
+												value={ttsMode}
+												aria-label="引擎策略"
+												onChange={(e) => void chooseMode(normalizeTtsEngineMode(e.target.value))}
+											>
+												{TTS_ENGINE_MODES.map((m) => (
+													<option key={m.id} value={m.id}>
+														{m.label}
+													</option>
+												))}
+											</select>
+										</Field>
+										<div className="tts-chain">
+											<span className="tts-chain-label">当前顺序</span>
+											{ttsChain.length === 0 ? (
+												<span className="tts-chain-empty">
+													{ttsMode === "local-only" && !hasLocalEngine
+														? "还没有本地模型：先下载一个，否则朗读会直接报错。"
+														: "当前没有可用引擎。"}
+												</span>
+											) : (
+												ttsChain.map((id, i) => {
+													const engine = engineById.get(id);
+													const local = engine?.capabilities.offline ?? false;
+													return (
+														<Fragment key={id}>
+															{i > 0 && <span className="tts-chain-arrow">→</span>}
+															<span className="tts-chain-step">
+																<span className={local ? "settings-pill ok" : "settings-pill"}>
+																	{local ? "本地" : "在线"}
+																</span>
+																{engine?.label ?? id}
+															</span>
+														</Fragment>
+													);
+												})
+											)}
+											{ttsInfo && ttsChain.length > 0 && (
+												<span className="tts-chain-now">
+													现在会用：
+													{engineById.get(ttsChain[0] ?? "")?.label ?? ttsChain[0]}
+												</span>
+											)}
+										</div>
+									</Card>
+
 									<Card
 										title="本地朗读模型"
 										desc="下载与解包由应用完成；装好后本地引擎自动可用，不需要填写任何路径。"
@@ -1328,13 +1408,16 @@ export function Settings({
 										))}
 									</Card>
 
-									<Card title="朗读引擎" desc="播放器会使用列表里第一个可用引擎；本地引擎离线可用。">
+									<Card
+										title="朗读引擎"
+										desc="按上面的策略排序；标「本地」的引擎不联网，其余需要联网。"
+									>
 										<div className="tts-engines">
 											{(ttsInfo?.engines ?? []).map((e) => (
 												<div key={e.id} className="tts-engine">
 													<span className="tts-engine-name">{e.label}</span>
 													<span className="tts-engine-meta">
-														{e.capabilities.offline ? "离线" : "联网"} · 高亮精度：
+														{e.capabilities.offline ? "本地 · 离线可用" : "在线 · 需要联网"} · 高亮精度：
 														{e.capabilities.boundaries === "word"
 															? "字级"
 															: e.capabilities.boundaries === "sentence"

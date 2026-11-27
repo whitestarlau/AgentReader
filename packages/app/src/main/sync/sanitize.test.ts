@@ -33,6 +33,7 @@ test("ordinary preferences sync", () => {
 		["webSearchEnabled", "1"],
 		["webSearchBackend", "auto"],
 		["ttsEngine", "edge"],
+		["ttsEngineMode", "local-first"],
 		["ttsRate", "1.2"],
 		["ttsVoice:sherpa", "12"],
 		["theme", "dark"],

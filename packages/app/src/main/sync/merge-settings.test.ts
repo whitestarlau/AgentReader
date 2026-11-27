@@ -63,12 +63,25 @@ const KEYS = [
 	"webSearchEnabled",
 	"webSearchBackend",
 	"ttsEngine",
+	"ttsEngineMode",
 	"ttsRate",
 	"ttsVoice:sherpa",
 	"theme",
 	"skillsExecutionEnabled",
 ];
-const VALUES = ["0", "1", "chi_sim+eng", "8", "auto", "brave", "edge", "sherpa", "1.2", "dark"];
+const VALUES = [
+	"0",
+	"1",
+	"chi_sim+eng",
+	"8",
+	"auto",
+	"brave",
+	"edge",
+	"sherpa",
+	"1.2",
+	"dark",
+	"local-first",
+];
 
 function randomState(clock: () => Stamp, mutate: number, random: () => number): SettingsState {
 	const values: Record<string, string> = {};

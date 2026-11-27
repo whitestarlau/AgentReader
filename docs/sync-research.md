@@ -449,7 +449,7 @@ Gist 之所以最省，是因为「一个 gist = 一个批次」这个语义天�
 
 | 文件 | 内容 | 谁在写 | 同步建议 |
 |---|---|---|---|
-| `settings.json` | 扁平 `Record<string, string>`：`ocrLang`、`agentMaxTurns`、`webSearch{Enabled,Backend,MaxResults}`、`skillsExecutionEnabled`、`ttsEngine`、`ttsVoice`、`ttsVoice:<engineId>`（按引擎分键）、`ttsRate`、`ttsModel`、`ttsLang`、`ttsVoices`、`ttsMaxChars`、`ttsCacheMb`、`ttsEndpoint`、`ttsSherpa*`、`theme`、遗留的 `baseUrl`/`model` | 界面 + 程序混写 | **净化后同步**（本节主角） |
+| `settings.json` | 扁平 `Record<string, string>`：`ocrLang`、`agentMaxTurns`、`webSearch{Enabled,Backend,MaxResults}`、`skillsExecutionEnabled`、`ttsEngine`、`ttsEngineMode`、`ttsVoice`、`ttsVoice:<engineId>`（按引擎分键）、`ttsRate`、`ttsModel`、`ttsLang`、`ttsVoices`、`ttsMaxChars`、`ttsCacheMb`、`ttsEndpoint`、`ttsSherpa*`、`theme`、遗留的 `baseUrl`/`model` | 界面 + 程序混写 | **净化后同步**（本节主角） |
 | `custom-providers.json` | 手动添加的 OpenAI 兼容提供商 | 仅程序写 | **同步**（整文件） |
 | `model-overrides.json` | 按 provider/model 的上下文覆盖 | 仅程序写 | **同步**（整文件） |
 | `models.json` | JSONC，**带注释**，以用户手改为主 | 用户写 | **默认不同步**（§4.5） |

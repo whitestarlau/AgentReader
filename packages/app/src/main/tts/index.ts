@@ -2,18 +2,21 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { app, ipcMain } from "electron";
-import type {
-	TtsInfo,
-	TtsModelProgress,
-	TtsModelsPayload,
-	TtsSynthesizeReply,
-	TtsSynthesizeRequest,
-	TtsVoiceGroup,
+import {
+	normalizeTtsEngineMode,
+	type TtsEngineMode,
+	type TtsInfo,
+	type TtsModelProgress,
+	type TtsModelsPayload,
+	type TtsSynthesizeReply,
+	type TtsSynthesizeRequest,
+	type TtsVoiceGroup,
 } from "../../shared/tts.ts";
 import { getProviderKey } from "../ai-auth.ts";
 import { readSettings, updateSettings } from "../settings.ts";
 import { TtsCache } from "./cache.ts";
 import { getModel, PREFERRED_MODEL_ID, TTS_MODELS } from "./catalog.ts";
+import { buildChain, emptyChainMessage } from "./chain.ts";
 import { cacheKey } from "./keys.ts";
 import {
 	cancelDownload,
@@ -58,6 +61,16 @@ function modelsRoot(): string {
 }
 
 let cache: TtsCache | null = null;
+
+/**
+ * Engine that last produced audio in this app run.
+ *
+ * `auto` mode starts there: after the free online tier fails once, every later
+ * sentence should go straight to the local model instead of paying the connect
+ * timeout again (the circuit breaker only covers a minute). In memory on
+ * purpose — one run's luck should not decide the next launch.
+ */
+let lastGoodEngine: string | null = null;
 
 function ttsCache(): TtsCache {
 	if (!cache) {
@@ -164,19 +177,31 @@ function parseList(raw: string | undefined): string[] | undefined {
 	return list && list.length > 0 ? list : undefined;
 }
 
-/** Preferred engine first, then every other configured one (mock is opt-in only). */
-function chainFor(registry: TtsRegistry, requested?: string): string[] {
-	const available = registry.ids().filter((id) => id !== "mock");
+/**
+ * The effective policy: mode from settings, the pinned engine (advanced
+ * `ttsEngine` key), the last engine that actually worked, and the request's
+ * optional one-off engine.
+ */
+function resolveChain(
+	registry: TtsRegistry,
+	requested?: string,
+): { mode: TtsEngineMode; chain: string[] } {
 	const settings = readSettings();
-	const preferred = [requested, settings.ttsEngine].filter((s): s is string => Boolean(s?.trim()));
-	const ordered: string[] = [];
-	for (const id of preferred) {
-		if (registry.get(id) && !ordered.includes(id)) ordered.push(id);
-	}
-	for (const id of available) {
-		if (!ordered.includes(id)) ordered.push(id);
-	}
-	return ordered;
+	const mode = normalizeTtsEngineMode(settings.ttsEngineMode);
+	// The silent development engine is reachable by naming it, never by a mode —
+	// otherwise `local-only` would happily read a book in silence.
+	if (requested === "mock" && registry.get("mock")) return { mode, chain: ["mock"] };
+	const chain = buildChain({
+		// The ttsEnableMock engine is for development; it must never be chosen
+		// implicitly, only by naming it in a request.
+		available: registry.ids().filter((id) => id !== "mock"),
+		isLocal: (id) => registry.get(id)?.capabilities().offline ?? false,
+		mode,
+		requested,
+		pinned: settings.ttsEngine?.trim() || undefined,
+		lastGood: lastGoodEngine,
+	});
+	return { mode, chain };
 }
 
 /** Cache fingerprint of an engine; empty for engines that do not define one. */
@@ -190,10 +215,6 @@ function currentRate(override?: number): number {
 	return Math.min(2, Math.max(0.5, raw));
 }
 
-function defaultVoice(engineId: string, requested?: string): string {
-	return resolveVoiceId(engineId, requested, readSettings());
-}
-
 type SynthesizePayload = TtsSynthesizeRequest & {
 	/** Preview ignores the cache so a voice change is actually audible. */
 	preview?: boolean;
@@ -204,49 +225,76 @@ async function synthesize(payload: SynthesizePayload): Promise<TtsSynthesizeRepl
 	if (!text) return { ok: false, kind: "unsupported", message: "没有可朗读的文本" };
 
 	const registry = buildRegistry();
-	const chain = chainFor(registry, payload.engineId);
-	if (payload.engineId === "mock") chain.unshift("mock");
+	const { mode, chain } = resolveChain(registry, payload.engineId);
 	if (chain.length === 0) {
-		return { ok: false, kind: "not-configured", message: "还没有配置朗读引擎（设置 → 朗读）" };
+		return { ok: false, kind: "not-configured", message: emptyChainMessage(mode) };
 	}
 
+	const settings = readSettings();
 	const rate = currentRate(payload.rate);
-	const voiceId = payload.voiceId ?? defaultVoice(chain[0] ?? "", payload.voiceId);
+	// Voice ids are engine scoped, so the id is resolved per engine — otherwise a
+	// fallback would hand Edge's neural voice name to the local model (or `0` to
+	// Edge) and fail for no good reason.
+	const voiceFor = (engineId: string) => resolveVoiceId(engineId, payload.voiceId, settings);
+	const labelFor = (engineId: string) => registry.get(engineId)?.label ?? engineId;
 
 	// Cache first: a re-read page or a replayed sentence must not hit the network.
-	if (!payload.preview) {
-		for (const engineId of chain) {
-			const key = cacheKey({ engineId, tag: engineTag(registry, engineId), voiceId, rate, text });
-			const hit = ttsCache().read(key);
-			if (hit) {
-				return {
-					ok: true,
-					engineId,
-					cached: true,
-					format: hit.audio.format,
-					sampleRate: hit.audio.sampleRate,
-					durationMs: hit.durationMs,
-					boundaries: hit.boundaries,
-					data: hit.audio.data,
-				};
-			}
+	//
+	// Only the engine that is about to speak is consulted. Looking through the
+	// whole chain would replay audio from the *other* class — a page cached with
+	// Edge would come back as online audio in "本地优先", or worse, in "仅本地".
+	const head = registry.preferred(chain);
+	if (!payload.preview && head) {
+		const key = cacheKey({
+			engineId: head,
+			tag: engineTag(registry, head),
+			voiceId: voiceFor(head),
+			rate,
+			text,
+		});
+		const hit = ttsCache().read(key);
+		if (hit) {
+			return {
+				ok: true,
+				engineId: head,
+				engineLabel: labelFor(head),
+				cached: true,
+				format: hit.audio.format,
+				sampleRate: hit.audio.sampleRate,
+				durationMs: hit.durationMs,
+				boundaries: hit.boundaries,
+				data: hit.audio.data,
+			};
 		}
 	}
 
 	try {
-		const outcome = await registry.synthesize(chain, { text, voiceId, rate });
+		const outcome = await registry.synthesize(chain, (engineId) => ({
+			text,
+			voiceId: voiceFor(engineId),
+			rate,
+		}));
 		const engineId = outcome.engineId;
 		const result = outcome.result;
 
 		if (!payload.preview) {
+			// Remember what actually worked so `auto` can start there next time.
+			lastGoodEngine = engineId;
 			ttsCache().put(
-				cacheKey({ engineId, tag: engineTag(registry, engineId), voiceId, rate, text }),
+				cacheKey({
+					engineId,
+					tag: engineTag(registry, engineId),
+					voiceId: voiceFor(engineId),
+					rate,
+					text,
+				}),
 				result,
 			);
 		}
 		return {
 			ok: true,
 			engineId,
+			engineLabel: labelFor(engineId),
 			cached: false,
 			format: result.audio.format,
 			sampleRate: result.audio.sampleRate,
@@ -264,11 +312,17 @@ export function registerTtsIpc() {
 	ipcMain.handle("tts:info", (): TtsInfo => {
 		const registry = buildRegistry();
 		const settings = readSettings();
-		const chain = chainFor(registry);
+		const { mode, chain } = resolveChain(registry);
+		// Show what a synthesis would really try: an engine that just failed is
+		// cooling down, so claiming "现在会用 Edge" would be a lie.
+		const order = registry.resolveOrder(chain);
+		const head = order[0] ?? null;
 		return {
 			engines: registry.list(),
-			engineId: chain[0] ?? null,
-			voiceId: chain[0] ? resolveVoiceId(chain[0], undefined, settings) : null,
+			mode,
+			chain: order,
+			engineId: head,
+			voiceId: head ? resolveVoiceId(head, undefined, settings) : null,
 			rate: currentRate(),
 			cacheBytes: ttsCache().size(),
 			endpointConfigured: Boolean(settings.ttsEndpoint),

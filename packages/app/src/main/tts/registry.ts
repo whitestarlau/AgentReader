@@ -86,7 +86,33 @@ export class TtsRegistry {
 	}
 
 	/**
+	 * Engines in the order a synthesis would try them, applying the cooldown.
+	 *
+	 * The player needs this *before* synthesizing: it checks the audio cache for
+	 * the engine that is about to speak, and "the engine about to speak" must
+	 * account for engines that just failed.
+	 */
+	resolveOrder(chain: string[]): string[] {
+		const known = chain.filter((id) => this.engines.has(id));
+		const now = Date.now();
+		const healthy = known.filter((id) => (this.cooldownUntil.get(id) ?? 0) <= now);
+		// When everything is cooling down we still have to try something.
+		return healthy.length > 0 ? healthy : known;
+	}
+
+	/** The engine a synthesis would start with right now. */
+	preferred(chain: string[]): string | undefined {
+		return this.resolveOrder(chain)[0];
+	}
+
+	/**
 	 * Synthesize with the first engine in `chain` that succeeds.
+	 *
+	 * `request` is either a ready request (every engine gets the same one) or a
+	 * factory `engineId → request`. The factory exists because voice ids are
+	 * engine scoped: the default voice of "sherpa" (`0`) is meaningless to Edge,
+	 * and handing Edge's neural voice name to sherpa would make the fallback
+	 * fail. The caller resolves the voice per engine.
 	 *
 	 * Aborts are terminal (the user pressed stop) — never fall through. Every
 	 * other failure is recorded and the next engine is tried, so a broken free
@@ -94,16 +120,13 @@ export class TtsRegistry {
 	 */
 	async synthesize(
 		chain: string[],
-		req: TtsRequest,
+		request: TtsRequest | ((engineId: string) => TtsRequest),
 		onFallback?: (note: FallbackNote) => void,
 	): Promise<SynthesisOutcome> {
 		const attempts: { engineId: string; error: TtsError }[] = [];
 		const tried: string[] = [];
-		const now = Date.now();
-		const known = chain.filter((id) => this.engines.has(id));
-		// Skip engines that just failed, unless that would leave nothing to try.
-		const healthy = known.filter((id) => (this.cooldownUntil.get(id) ?? 0) <= now);
-		const order = healthy.length > 0 ? healthy : known;
+		const requestFor = typeof request === "function" ? request : () => request;
+		const order = this.resolveOrder(chain);
 
 		for (const id of order) {
 			const engine = this.engines.get(id);
@@ -112,7 +135,7 @@ export class TtsRegistry {
 			try {
 				// Long text is split at sentence boundaries before it reaches the
 				// engine, so every engine only has to honor its own per-call cap.
-				const result = await synthesizeText(engine, req);
+				const result = await synthesizeText(engine, requestFor(id));
 				this.cooldownUntil.delete(id);
 				return { engineId: id, result };
 			} catch (e) {

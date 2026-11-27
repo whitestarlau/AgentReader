@@ -1,3 +1,4 @@
+import { TTS_ENGINE_MODES, type TtsEngineMode, ttsEngineModeDesc } from "../../shared/tts.ts";
 import type { ReadState } from "../read-aloud.ts";
 import { Icon } from "./Icons.tsx";
 
@@ -5,6 +6,11 @@ import { Icon } from "./Icons.tsx";
  * Floating transport for read-aloud: it sits at the bottom of the reading area
  * so the reading toolbar stays about the document, and it only appears while a
  * session is active.
+ *
+ * The engine selector lives here (and in the settings page) because the choice
+ * is per-book in practice: the same reader wants the free online voice for a
+ * novel and the on-device model for something confidential. Switching applies to
+ * the next synthesized sentence — the queued ones were already paid for.
  */
 
 const RATES = [0.8, 1, 1.2, 1.5, 2];
@@ -12,6 +18,8 @@ const RATES = [0.8, 1, 1.2, 1.5, 2];
 export function ReadBar({
 	state,
 	rate,
+	mode,
+	onMode,
 	onRate,
 	onToggle,
 	onPrev,
@@ -20,6 +28,8 @@ export function ReadBar({
 }: {
 	state: ReadState;
 	rate: number;
+	mode: TtsEngineMode;
+	onMode: (mode: TtsEngineMode) => void;
 	onRate: (rate: number) => void;
 	onToggle: () => void;
 	onPrev: () => void;
@@ -47,6 +57,11 @@ export function ReadBar({
 			<span className="read-bar-count">
 				{state.total > 0 ? `${Math.min(state.index + 1, state.total)} / ${state.total} 句` : "—"}
 			</span>
+			{state.engine && (
+				<span className="read-bar-engine" title={`当前朗读引擎：${state.engine.label}`}>
+					{state.engine.label}
+				</span>
+			)}
 			<select
 				className="read-bar-rate"
 				value={rate}
@@ -56,6 +71,19 @@ export function ReadBar({
 				{RATES.map((r) => (
 					<option key={r} value={r}>
 						{r}×
+					</option>
+				))}
+			</select>
+			<select
+				className="read-bar-mode"
+				value={mode}
+				onChange={(e) => onMode(e.target.value as TtsEngineMode)}
+				title={`引擎策略：${ttsEngineModeDesc(mode)}`}
+				aria-label="引擎策略"
+			>
+				{TTS_ENGINE_MODES.map((m) => (
+					<option key={m.id} value={m.id} title={m.desc}>
+						{m.label}
 					</option>
 				))}
 			</select>
