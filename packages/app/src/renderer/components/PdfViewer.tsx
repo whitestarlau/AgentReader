@@ -17,7 +17,8 @@ import {
 	revealRangeIn,
 	type TextMap,
 } from "../readable.ts";
-import { ReadBar } from "./ReadBar.tsx";
+import { ReadTransport } from "./ReadTransport.tsx";
+import { ToolButton, ToolMenu, ToolSeparator, ToolSpacer } from "./Toolbar.tsx";
 import { useTtsEngineMode } from "../tts-mode.ts";
 import type { OutlineItem } from "../types.ts";
 
@@ -215,6 +216,8 @@ export function PdfViewer({
 	// (once-installed) key and click handlers honest.
 	const readActiveRef = useRef(false);
 	const readActive = readState !== null && readState.status !== "idle" && readState.status !== "error";
+	/** A session exists (even paused / failed): the toolbar is the transport. */
+	const reading = readState !== null && readState.status !== "idle";
 	// Bumped on start/stop; async page advances abort when it changes.
 	const readSessionRef = useRef(0);
 	const stopReading = useCallback(() => {
@@ -252,8 +255,6 @@ export function PdfViewer({
 	const [selectionMenu, setSelectionMenu] = useState<SelectionMenu | null>(null);
 	const [activeAnnId, setActiveAnnId] = useState<string | null>(null);
 	const [copied, setCopied] = useState(false);
-	const [ocrMenuOpen, setOcrMenuOpen] = useState(false);
-	const ocrMenuRef = useRef<HTMLSpanElement>(null);
 
 	const restoreRef = useRef<{ page: number; offset: number } | null>(null);
 	const initializedRef = useRef(false);
@@ -547,24 +548,6 @@ export function PdfViewer({
 		},
 		[capturePageAnchor, recomputeScale],
 	);
-
-	// OCR is a secondary action; keeping it in a popover keeps the reading
-	// toolbar on one row even with both sidebars open.
-	useEffect(() => {
-		if (!ocrMenuOpen) return;
-		const onDoc = (e: MouseEvent) => {
-			if (ocrMenuRef.current && !ocrMenuRef.current.contains(e.target as Node)) setOcrMenuOpen(false);
-		};
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") setOcrMenuOpen(false);
-		};
-		document.addEventListener("mousedown", onDoc);
-		window.addEventListener("keydown", onKey);
-		return () => {
-			document.removeEventListener("mousedown", onDoc);
-			window.removeEventListener("keydown", onKey);
-		};
-	}, [ocrMenuOpen]);
 
 	const applyViewMode = useCallback(
 		(mode: ViewMode) => {
@@ -1287,6 +1270,7 @@ export function PdfViewer({
 
 	const pageList = useMemo(() => Array.from({ length: total }, (_, i) => i + 1), [total]);
 	const zoomLabel = `${Math.round(scale * 100)}%`;
+	const zoomText = zoom.mode === "fit-width" ? "适应宽度" : zoom.mode === "fit-page" ? "适应页面" : "自定义";
 	const progress = total > 1 ? ((clamp(pageNum, 1, total) - 1) / (total - 1)) * 100 : 0;
 
 	const renderPdfPage = (n: number, size: PageSize, active: boolean, isCurrent: boolean) => (
@@ -1465,130 +1449,101 @@ export function PdfViewer({
 
 	return (
 		<div ref={areaRef} className="editor-area">
-			<div className="editor-toolbar pdf-toolbar">
-				<div className="toolbar-group">
-					<button type="button" className="icon-btn pdf-jump-edge" onClick={() => jumpToPage(1)} disabled={!pdf || pageNum <= 1 || readActive} title="首页 (Home)">
-						⇤
-					</button>
-					<button type="button" className="icon-btn" onClick={() => jumpToPage(pageNum - 1)} disabled={!pdf || pageNum <= 1 || readActive} title="上一页">
-						<Icon name="chevronLeft" size={14} />
-					</button>
-					<span className="pdf-page-field">
-						<PageNumberInput page={pageNum} total={total} disabled={!pdf} onCommit={(n) => jumpToPage(n)} />
-						<span className="pdf-page-total">/ {total || "–"}</span>
-					</span>
-					<button type="button" className="icon-btn" onClick={() => jumpToPage(pageNum + 1)} disabled={!pdf || pageNum >= total || readActive} title="下一页">
-						<Icon name="chevronRight" size={14} />
-					</button>
-					<button type="button" className="icon-btn pdf-jump-edge" onClick={() => jumpToPage(total)} disabled={!pdf || pageNum >= total || readActive} title="末页 (End)">
-						⇥
-					</button>
-				</div>
-
-				<div className="toolbar-group" role="group" aria-label="阅读模式">
-					<button
-						type="button"
-						className={`icon-btn${viewMode === "continuous" ? " active" : ""}`}
-						onClick={() => applyViewMode("continuous")}
-						title="连续滚动（适合长文档）"
-						aria-pressed={viewMode === "continuous"}
-						style={{ width: "auto", padding: "0 8px" }}
-					>
-						连续
-					</button>
-					<button
-						type="button"
-						className={`icon-btn${viewMode === "paged" ? " active" : ""}`}
-						onClick={() => applyViewMode("paged")}
-						title="单页翻页"
-						aria-pressed={viewMode === "paged"}
-						style={{ width: "auto", padding: "0 8px" }}
-					>
-						单页
-					</button>
-				</div>
-
-				<div className="toolbar-group" role="group" aria-label="缩放">
-					<button type="button" className="icon-btn" onClick={() => applyCustomScale(scale - 0.15)} disabled={!pdf} title="缩小 (-)">
-						－
-					</button>
-					<span className="pdf-zoom-label" title={`当前缩放 ${Math.round(scale * 100)}%（${zoom.mode === "fit-width" ? "适应宽度" : zoom.mode === "fit-page" ? "适应页面" : "自定义"}）`}>
-						{zoomLabel}
-					</span>
-					<button type="button" className="icon-btn" onClick={() => applyCustomScale(scale + 0.15)} disabled={!pdf} title="放大 (+)">
-						＋
-					</button>
-					<button
-						type="button"
-						className={`icon-btn${zoom.mode === "fit-width" ? " active" : ""}`}
-						onClick={() => applyFit("fit-width")}
-						title="适应宽度 (0)"
-						aria-pressed={zoom.mode === "fit-width"}
-						style={{ width: "auto", padding: "0 8px" }}
-					>
-						适宽
-					</button>
-					<button
-						type="button"
-						className={`icon-btn${zoom.mode === "fit-page" ? " active" : ""}`}
-						onClick={() => applyFit("fit-page")}
-						title="适应页面 (9)"
-						aria-pressed={zoom.mode === "fit-page"}
-						style={{ width: "auto", padding: "0 8px" }}
-					>
-						适页
-					</button>
-				</div>
-
-				<div className="toolbar-group" role="group" aria-label="朗读">
-					<button
-						type="button"
-						className={`icon-btn${readState && readState.status !== "idle" ? " active" : ""}`}
-						onClick={toggleReading}
-						disabled={!pdf}
-						title="朗读本页（句子高亮跟随，读完自动翻页）"
-						style={{ width: "auto", padding: "0 8px" }}
-					>
-						<Icon
-							name={
-								readState?.status === "playing" || readState?.status === "loading" ? "pause" : "play"
-							}
-							size={12}
-						/>{" "}
-						朗读
-					</button>
-				</div>
-
-				<div className="toolbar-sep" />
-
-				<span className="pdf-ocr-wrap" ref={ocrMenuRef}>
-					<button type="button" className="icon-btn" onClick={() => setOcrMenuOpen((v) => !v)} disabled={!pdf} title="OCR（扫描版文字识别）" style={{ width: "auto", padding: "0 8px" }}>
-						OCR{ocrJob?.running && <span className="pdf-ocr-dot" />}
-					</button>
-					{ocrMenuOpen && (
-						<div className="pdf-ocr-menu" data-toolbar>
-							<button type="button" onClick={() => { setOcrMenuOpen(false); void ocrCurrentPage(); }} disabled={!pdf || !!ocrJob?.running}>
-								识别本页
-							</button>
-							<button type="button" onClick={() => { setOcrMenuOpen(false); if (ocrJob?.running) cancelOcr.current = true; else void ocrWholeDoc(); }} disabled={!pdf}>
-								{ocrJob?.running ? "停止识别" : "识别全书"}
-							</button>
-							<div className="pdf-ocr-menu-hint">识别结果缓存，供 AI 检索</div>
-						</div>
-					)}
-				</span>
-				{scanned && !ocrJob?.running && (
-					<span className="toolbar-badge" title="该页没有文本层，可用 OCR 识别">
-						扫描版
-					</span>
+			<div className="editor-toolbar">
+				{reading ? (
+					<ReadTransport
+						state={readState}
+						rate={readRate}
+						mode={ttsMode}
+						onRate={setReadRate}
+						onMode={setTtsMode}
+						onToggle={toggleReading}
+						onPrev={() => readerRef.current?.prev()}
+						onNext={() => readerRef.current?.next()}
+						onStop={stopReading}
+					/>
+				) : (
+					<>
+						<ToolButton
+							icon="chevronLeft"
+							title="上一页（←）"
+							onClick={() => jumpToPage(pageNum - 1)}
+							disabled={!pdf || pageNum <= 1}
+						/>
+						<span className="tb-page">
+							<PageNumberInput page={pageNum} total={total} disabled={!pdf} onCommit={(n) => jumpToPage(n)} />
+							<span className="tb-page-total">/ {total || "–"}</span>
+						</span>
+						<ToolButton
+							icon="chevronRight"
+							title="下一页（→）"
+							onClick={() => jumpToPage(pageNum + 1)}
+							disabled={!pdf || pageNum >= total}
+						/>
+						<ToolSeparator />
+						<ToolButton
+							icon="play"
+							label="朗读"
+							primary
+							title="朗读本页（句子高亮跟随，读完自动翻页）"
+							onClick={toggleReading}
+							disabled={!pdf}
+						/>
+						<ToolSpacer />
+						{scanned && !ocrJob?.running ? <span className="tb-badge" title="该页没有文本层，可用 OCR 识别">扫描版</span> : null}
+						{ocrJob?.running ? (
+							<span className="tb-muted" title={ocrJob.status}>
+								OCR {ocrJob.page}/{ocrJob.total}
+							</span>
+						) : null}
+						<ToolMenu
+							title={`缩放 ${zoomLabel}（${zoomText}）`}
+							label={zoomLabel}
+							items={[
+								{
+									section: "缩放",
+									label: "适应宽度",
+									hint: "0",
+									checked: zoom.mode === "fit-width",
+									onSelect: () => applyFit("fit-width"),
+								},
+								{
+									label: "适应页面",
+									hint: "9",
+									checked: zoom.mode === "fit-page",
+									onSelect: () => applyFit("fit-page"),
+								},
+								{ label: "放大", hint: "+", onSelect: () => applyCustomScale(scale + 0.15) },
+								{ label: "缩小", hint: "−", onSelect: () => applyCustomScale(scale - 0.15) },
+								{
+									section: "阅读方式",
+									label: "连续滚动",
+									checked: viewMode === "continuous",
+									onSelect: () => applyViewMode("continuous"),
+								},
+								{
+									label: "单页翻页",
+									checked: viewMode === "paged",
+									onSelect: () => applyViewMode("paged"),
+								},
+								{
+									section: "OCR",
+									label: "识别本页",
+									disabled: !pdf || Boolean(ocrJob?.running),
+									onSelect: () => void ocrCurrentPage(),
+								},
+								{
+									label: ocrJob?.running ? "停止识别" : "识别全书",
+									disabled: !pdf,
+									onSelect: () => {
+										if (ocrJob?.running) cancelOcr.current = true;
+										else void ocrWholeDoc();
+									},
+								},
+							]}
+						/>
+					</>
 				)}
-				{ocrJob?.running && (
-					<span className="toolbar-muted" title={ocrJob.status}>
-						{ocrJob.page}/{ocrJob.total}
-					</span>
-				)}
-
-				<span style={{ flex: 1 }} />
 			</div>
 
 			<div className="pdf-reading-progress" aria-hidden="true">
@@ -1642,20 +1597,6 @@ export function PdfViewer({
 					</div>
 				) : null}
 			</div>
-
-			{readState && readState.status !== "idle" && (
-				<ReadBar
-					state={readState}
-					rate={readRate}
-					mode={ttsMode}
-					onMode={setTtsMode}
-					onRate={setReadRate}
-					onToggle={toggleReading}
-					onPrev={() => readerRef.current?.prev()}
-					onNext={() => readerRef.current?.next()}
-					onStop={stopReading}
-				/>
-			)}
 
 			{selectionMenu && (
 				<div
@@ -1723,7 +1664,7 @@ function PageNumberInput({ page, total, disabled, onCommit }: { page: number; to
 	};
 	return (
 		<input
-			className="pdf-page-input"
+			className="tb-page-input"
 			value={editing ? draft : String(page)}
 			onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, ""))}
 			onFocus={() => {

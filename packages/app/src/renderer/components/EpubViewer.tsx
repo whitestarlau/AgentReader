@@ -13,7 +13,8 @@ import {
 	type MultiText,
 	type VisibleArea,
 } from "../readable.ts";
-import { ReadBar } from "./ReadBar.tsx";
+import { ReadTransport } from "./ReadTransport.tsx";
+import { ToolButton, ToolMenu, ToolSpacer } from "./Toolbar.tsx";
 import { useTtsEngineMode } from "../tts-mode.ts";
 import type { Annotation } from "./AnnotationLayer.tsx";
 import {
@@ -278,6 +279,8 @@ export function EpubViewer({
 	const [ttsMode, setTtsMode] = useTtsEngineMode();
 	const readActiveRef = useRef(false);
 	const readActive = readState !== null && readState.status !== "idle" && readState.status !== "error";
+	/** A session exists (even paused / failed): the toolbar is the transport. */
+	const reading = readState !== null && readState.status !== "idle";
 	const [turning, setTurning] = useState<"next" | "prev" | null>(null);
 	const turnAnimRef = useRef<Animation | null>(null);
 	const turnPageRef = useRef<(dir: 1 | -1) => void>(() => {});
@@ -294,8 +297,6 @@ export function EpubViewer({
 	// Reflow entry point installed by the load effect; the ResizeObserver below
 	// is the single layout-change trigger.
 	const reflowRef = useRef<() => void>(() => {});
-	const [atStart, setAtStart] = useState(true);
-	const [atEnd, setAtEnd] = useState(false);
 	const [spreadMode, setSpreadMode] = useState<SpreadMode>(readSpreadMode);
 	const spreadModeRef = useRef<SpreadMode>(spreadMode);
 	spreadModeRef.current = spreadMode;
@@ -454,15 +455,6 @@ export function EpubViewer({
 		[docId],
 	);
 
-	const stepChapter = useCallback((delta: number) => {
-		const rendition = renditionRef.current;
-		const book = bookRef.current;
-		if (!rendition || !book) return;
-		const idx = currentChapterIndex(rendition, flowModeRef.current);
-		const section = book.spine.get(Math.max(0, idx + delta)) as { href?: string } | undefined;
-		if (section?.href) Promise.resolve(rendition.display(section.href)).catch(() => {});
-	}, []);
-
 	useEffect(() => {
 		let book: EpubBook | null = null;
 		let ro: ResizeObserver | null = null;
@@ -562,8 +554,6 @@ export function EpubViewer({
 			const update = (located?: LocatedLike, force = false) => {
 				setMenu(null);
 				const loc = located ?? (rendition.currentLocation() as LocatedLike | undefined);
-				setAtStart(!!loc?.atStart);
-				setAtEnd(!!loc?.atEnd);
 				// Report the current chapter (1-based). EPUB is reflowable and has no
 				// stable page numbers, so the UI and the AI both anchor on chapters.
 				const chapter = currentChapterIndex(rendition, flow, loc) + 1;
@@ -1522,104 +1512,65 @@ export function EpubViewer({
 	return (
 		<div ref={areaRef} className="editor-area" style={{ background: "#fff" }}>
 			<div className="editor-toolbar">
-				<button
-					type="button"
-					className="icon-btn"
-					onClick={() => (flowMode === "scrolled" ? stepChapter(-1) : turnPage(-1))}
-					disabled={atStart || readActive}
-					title="上一章"
-					style={{ width: "auto", padding: "0 8px" }}
-				>
-					<Icon name="chevronLeft" size={14} /> 上一章
-				</button>
-				<button
-					type="button"
-					className="icon-btn"
-					onClick={() => (flowMode === "scrolled" ? stepChapter(1) : turnPage(1))}
-					disabled={atEnd || readActive}
-					title="下一章"
-					style={{ width: "auto", padding: "0 8px" }}
-				>
-					下一章 <Icon name="chevronRight" size={14} />
-				</button>
-				<span className="toolbar-sep" />
-				<div className="toolbar-group" role="group" aria-label="阅读方式">
-					<button
-						type="button"
-						className={`icon-btn${flowMode === "paged" ? " active" : ""}`}
-						onClick={() => applyFlowMode("paged")}
-						title="翻页阅读（单/双栏）"
-						aria-pressed={flowMode === "paged"}
-						style={{ width: "auto", padding: "0 8px" }}
-					>
-						翻页
-					</button>
-					<button
-						type="button"
-						className={`icon-btn${flowMode === "scrolled" ? " active" : ""}`}
-						onClick={() => applyFlowMode("scrolled")}
-						title="连续滑动阅读"
-						aria-pressed={flowMode === "scrolled"}
-						style={{ width: "auto", padding: "0 8px" }}
-					>
-						滑动
-					</button>
-				</div>
-				{flowMode === "paged" && <div className="toolbar-group" role="group" aria-label="分栏方式">
-					<button
-						type="button"
-						className={`icon-btn${spreadMode === "single" ? " active" : ""}`}
-						onClick={() => applySpread("single")}
-						title="单栏"
-						aria-pressed={spreadMode === "single"}
-						style={{ width: "auto", padding: "0 8px" }}
-					>
-						单栏
-					</button>
-					<button
-						type="button"
-						className={`icon-btn${spreadMode === "double" ? " active" : ""}`}
-						onClick={() => applySpread("double")}
-						title="双栏"
-						aria-pressed={spreadMode === "double"}
-						style={{ width: "auto", padding: "0 8px" }}
-					>
-						双栏
-					</button>
-				</div>}
-				<span className="toolbar-muted" style={{ marginLeft: 8 }}>
-					{flowMode === "scrolled" ? "滚动阅读 · 选中文本可高亮或引用" : "方向键翻页 · 选中文本可高亮或引用"}
-				</span>
-				<button
-					type="button"
-					className={`icon-btn${readState && readState.status !== "idle" ? " active" : ""}`}
-					onClick={toggleReading}
-					disabled={!ready}
-					title="朗读本章（句子高亮跟随，读完自动进入下一章）"
-					style={{ width: "auto", padding: "0 8px" }}
-				>
-					<Icon
-						name={readState?.status === "playing" || readState?.status === "loading" ? "pause" : "play"}
-						size={12}
-					/>{" "}
-					朗读
-				</button>
-			</div>
-			<div className={`epub-viewport${turning ? ` turn-${turning}` : ""}`}>
-				<div ref={ref} className="epub-viewport-inner" />
-				{readState && readState.status !== "idle" && (
-					<ReadBar
+				{reading ? (
+					<ReadTransport
 						state={readState}
 						rate={readRate}
 						mode={ttsMode}
-						onMode={setTtsMode}
 						onRate={setReadRate}
+						onMode={setTtsMode}
 						onToggle={toggleReading}
 						onPrev={() => readerRef.current?.prev()}
 						onNext={() => readerRef.current?.next()}
 						onStop={stopReading}
 					/>
+				) : (
+					<>
+						<ToolButton
+							icon="play"
+							label="朗读"
+							primary
+							title="朗读本章（句子高亮跟随，读完自动进入下一章）"
+							onClick={toggleReading}
+							disabled={!ready}
+						/>
+						<ToolSpacer />
+						<ToolMenu
+							title="阅读方式"
+							items={[
+								{
+									section: "阅读方式",
+									label: "翻页",
+									checked: flowMode === "paged",
+									onSelect: () => applyFlowMode("paged"),
+								},
+								{
+									label: "连续滑动",
+									checked: flowMode === "scrolled",
+									onSelect: () => applyFlowMode("scrolled"),
+								},
+								...(flowMode === "paged"
+									? [
+											{
+												section: "分栏",
+												label: "单栏",
+												checked: spreadMode === "single",
+												onSelect: () => applySpread("single"),
+											},
+											{
+												label: "双栏",
+												checked: spreadMode === "double",
+												onSelect: () => applySpread("double"),
+											},
+										]
+									: []),
+							]}
+						/>
+					</>
 				)}
+			</div>
+						<div className={`epub-viewport${turning ? ` turn-${turning}` : ""}`}>
+				<div ref={ref} className="epub-viewport-inner" />
 				{!ready && (
 					<div className="epub-loading">
 						<span className="pdf-spinner" />
